@@ -132,12 +132,7 @@ Register a DELETE endpoint. Both `path_pattern` and `handler` must be comptime-k
 try app.delete("/todos/:id", handleDelete);
 ```
 
-#### `patch(comptime path_pattern: []const u8, comptime handler: anytype) !void`
-Register a PATCH endpoint. Both `path_pattern` and `handler` must be comptime-known.
 
-```zig
-try app.patch("/todos/:id", handlePatch);
-```
 
 ### Route Groups
 
@@ -2018,6 +2013,9 @@ return Response.ok().withJson(data);
 #### `withHeader(name: []const u8, value: []const u8) Response`
 Add a custom header. For Content-Type headers, use `withContentType()` instead.
 
+> [!WARNING]
+> This method is currently a no-op due to limitations in the underlying HTTP server library. Custom headers are stored but not sent to the client. This will be addressed in a future release.
+
 ```zig
 return Response.json(data).withHeader("X-Custom-Header", "value");
 ```
@@ -2054,6 +2052,9 @@ return Response.serveFile("style.css", contents);
 #### `withCookie(name: []const u8, value: []const u8, options: CookieOptions) Response`
 Set a cookie.
 
+> [!WARNING]
+> This method is currently a no-op due to limitations in the underlying HTTP server library. Cookies are not sent to the client. This will be addressed in a future release.
+
 ```zig
 const options = CookieOptions{
     .maxAge = 3600,
@@ -2073,6 +2074,9 @@ return Response.redirect("/dashboard").withStatus(301); // Permanent redirect
 
 #### `noCache() Response`
 Set cache-control headers to prevent caching. Sets no-cache, no-store, must-revalidate, Pragma: no-cache, and Expires: 0.
+
+> [!WARNING]
+> This method is currently a no-op due to limitations in the underlying HTTP server library. Cache headers are not sent to the client. This will be addressed in a future release.
 
 ```zig
 return Response.json(data).noCache();

@@ -1484,8 +1484,8 @@ fn handleGetStats(request: *Request) Response {
     // Check cache
     if (ctx.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type)
-            .withHeader("X-Cache", "HIT");
+            .withContentType(entry.content_type);
+            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
     }
 
     // Fetch data from database
@@ -1500,7 +1500,7 @@ fn handleGetStats(request: *Request) Response {
     };
     ctx.cacheSet(cache_key, json, 10000, "application/json");
 
-    return Response.json(json).withHeader("X-Cache", "MISS");
+    return Response.json(json); // .withHeader("X-Cache", "MISS"); // TODO: Uncomment when custom headers are supported
 }
 ```
 
@@ -1541,8 +1541,8 @@ fn handleSearchTodos(request: *Request) Response {
     // Check cache
     if (request.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type)
-            .withHeader("X-Cache", "HIT");
+            .withContentType(entry.content_type);
+            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
     }
 
     // ... rest of handler logic
@@ -1578,8 +1578,8 @@ fn handleSearchTodos(request: *Request) Response {
 
     if (ctx.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type)
-            .withHeader("X-Cache", "HIT");
+            .withContentType(entry.content_type);
+            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
     }
 
     const orm = ctx.orm() catch unreachable;
