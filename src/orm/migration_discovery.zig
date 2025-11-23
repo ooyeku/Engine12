@@ -299,8 +299,9 @@ fn parseMigrationFile(
     // Allocate copies of SQL strings if they weren't allocated by multiline parser
     const up_copy = if (up_allocated) up_sql else try allocator.dupe(u8, up_sql);
     const down_copy = if (down_allocated) down_sql else try allocator.dupe(u8, down_sql);
+    const name_copy = try allocator.dupe(u8, name);
 
-    return Migration.init(version, name, up_copy, down_copy);
+    return Migration.init(version, name_copy, up_copy, down_copy);
 }
 
 test "discoverMigrations with empty directory" {

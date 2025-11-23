@@ -25,6 +25,7 @@ pub const User = struct {
     email: []const u8,
     password_hash: []const u8,
     created_at: i64,
+    updated_at: i64,
 };
 
 /// User input for registration/login
@@ -146,7 +147,8 @@ pub const BasicAuthValve = struct {
             \\  username TEXT UNIQUE NOT NULL,
             \\  email TEXT UNIQUE NOT NULL,
             \\  password_hash TEXT NOT NULL,
-            \\  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            \\  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            \\  updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
             \\);
             \\CREATE INDEX IF NOT EXISTS idx_users_username ON {s}(username);
             \\CREATE INDEX IF NOT EXISTS idx_users_email ON {s}(email);
@@ -305,8 +307,8 @@ pub const BasicAuthValve = struct {
 
         const insert_sql = std.fmt.allocPrint(
             allocator,
-            "INSERT INTO {s} (username, email, password_hash, created_at) VALUES ('{s}', '{s}', '{s}', {d})",
-            .{ self.config.user_table_name, escaped_username, escaped_email, escaped_password_hash, now },
+            "INSERT INTO {s} (username, email, password_hash, created_at, updated_at) VALUES ('{s}', '{s}', '{s}', {d}, {d})",
+            .{ self.config.user_table_name, escaped_username, escaped_email, escaped_password_hash, now, now },
         ) catch {
             self.config.orm.allocator.free(username_copy);
             self.config.orm.allocator.free(email_copy);
@@ -613,6 +615,7 @@ pub const BasicAuthValve = struct {
                 .email = try self.config.orm.allocator.dupe(u8, user.email),
                 .password_hash = try self.config.orm.allocator.dupe(u8, user.password_hash),
                 .created_at = user.created_at,
+                .updated_at = user.updated_at,
             };
         }
 

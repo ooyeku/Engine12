@@ -318,12 +318,46 @@ async function deleteTodo(id) {
             return;
         }
         
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to delete todo');
+        // Handle 204 No Content - no body to parse
+        if (response.status === 204) {
+            await fetchTodos();
+            await fetchStats();
+            return;
         }
         
-        await response.json();
+        if (!response.ok) {
+            // Handle error response - try to parse JSON, but handle empty body gracefully
+            let errorMessage = 'Failed to delete todo';
+            try {
+                const text = await response.text();
+                if (text && text.trim().length > 0) {
+                    try {
+                        const error = JSON.parse(text);
+                        errorMessage = error.error || errorMessage;
+                    } catch (e) {
+                        // Not valid JSON, use text as error message
+                        errorMessage = text;
+                    }
+                } else {
+                    // Empty body, use status text
+                    errorMessage = `HTTP ${response.status}: ${response.statusText || errorMessage}`;
+                }
+            } catch (e) {
+                // If reading response fails, use status text
+                errorMessage = `HTTP ${response.status}: ${response.statusText || errorMessage}`;
+            }
+            throw new Error(errorMessage);
+        }
+        
+        // Success case (200 OK) - try to parse JSON if content exists
+        try {
+            const text = await response.text();
+            if (text && text.trim().length > 0) {
+                JSON.parse(text);
+            }
+        } catch (e) {
+            // Ignore parsing errors for success responses
+        }
         await fetchTodos();
         await fetchStats();
     } catch (error) {
