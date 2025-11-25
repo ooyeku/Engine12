@@ -298,6 +298,12 @@ Now let's add persistent storage with SQLite.
 
 **Note**: The ORM maps columns to struct fields by name, not by position. This means column order in your queries doesn't need to match struct field order - the ORM will automatically match columns by name.
 
+**New in this version**:
+- `whereWithOptions()` - Query with ORDER BY support
+- `upsert()` / `upsertIgnore()` - Insert or replace records silently
+- `whereManaged()` - Automatic memory management for query results
+- Improved error messages with SQL, table name, and context
+
 ### 4.1 Initialize Database
 
 **Recommended**: Use Engine12's built-in database initialization:
@@ -1014,11 +1020,32 @@ return Response.notFound("Todo not found");
 
 ### 9.4 JSON Serialization
 
-Use `jsonFrom()` to automatically serialize structs:
+Use `fromStruct()` or `jsonFrom()` to automatically serialize structs:
 
 ```zig
 const todo = Todo{ .id = 1, .title = "Hello", .completed = false };
+
+// New: fromStruct() - cleaner API
+return try Response.fromStruct(Todo, todo, allocator);
+
+// Or: fromStructArray() for arrays
+const todos = [_]Todo{ todo1, todo2 };
+return try Response.fromStructArray(Todo, &todos, allocator);
+
+// Legacy: jsonFrom() still works
 return Response.jsonFrom(Todo, todo, allocator);
+```
+
+### 9.5 File Responses
+
+Serve files directly from disk:
+
+```zig
+// Serve a file with automatic MIME type detection
+return try Response.fromFile("static/report.pdf", allocator);
+
+// Create a download response
+return Response.download("report.pdf", pdf_data);
 ```
 
 ## Step 10: Using Valves

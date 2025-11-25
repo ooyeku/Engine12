@@ -32,7 +32,12 @@ pub const WebSocketRoom = struct {
     }
 
     /// Broadcast a text message to all connections in the room
+    /// Thread-safe: Uses mutex protection and atomic checks
     pub fn broadcast(self: *WebSocketRoom, message: []const u8) !void {
+        // Duplicate message to ensure it persists across threads
+        const message_copy = try self.allocator.dupe(u8, message);
+        defer self.allocator.free(message_copy);
+
         // Copy connection pointers while holding lock
         var connections_copy = std.ArrayListUnmanaged(*connection.WebSocketConnection){};
         defer connections_copy.deinit(self.allocator);
@@ -58,7 +63,8 @@ pub const WebSocketRoom = struct {
             }
 
             // Try to send - connection errors are handled gracefully
-            conn.sendText(message) catch |err| {
+            // Use message_copy to ensure thread safety
+            conn.sendText(message_copy) catch |err| {
                 // Connection error (closed, network issue, etc.) - skip it
                 // Log error for debugging but don't crash
                 std.debug.print("[WebSocketRoom] Error sending message to connection: {}\n", .{err});
@@ -94,7 +100,12 @@ pub const WebSocketRoom = struct {
     }
 
     /// Broadcast a binary message to all connections in the room
+    /// Thread-safe: Uses mutex protection and atomic checks
     pub fn broadcastBinary(self: *WebSocketRoom, data: []const u8) !void {
+        // Duplicate data to ensure it persists across threads
+        const data_copy = try self.allocator.dupe(u8, data);
+        defer self.allocator.free(data_copy);
+
         // Copy connection pointers while holding lock
         var connections_copy = std.ArrayListUnmanaged(*connection.WebSocketConnection){};
         defer connections_copy.deinit(self.allocator);
@@ -111,7 +122,8 @@ pub const WebSocketRoom = struct {
 
         for (connections_copy.items) |conn| {
             if (safeIsOpen(conn)) {
-                conn.sendBinary(data) catch |err| {
+                // Use data_copy to ensure thread safety
+                conn.sendBinary(data_copy) catch |err| {
                     // Connection error - log for debugging but don't crash
                     std.debug.print("[WebSocketRoom] Error sending binary to connection: {}\n", .{err});
                     continue;

@@ -185,9 +185,22 @@ chmod 755 /path/to/database/directory
 
 **Problem**: Memory leaks with ORM queries.
 
-**Solution**: Always free allocated strings:
+**Solution**: Use managed query methods for automatic memory management:
 
 ```zig
+// Recommended: Use managed methods (automatic cleanup)
+var result = try orm.findAllManaged(Todo);
+defer result.deinit(); // Automatically frees all string fields
+
+for (result.getItems()) |todo| {
+    // Use todo - no manual memory management needed
+}
+```
+
+Or manually free allocated strings:
+
+```zig
+// Manual approach (still supported)
 var todos = try orm.findAll(Todo);
 defer {
     for (todos.items) |todo| {
@@ -196,6 +209,49 @@ defer {
     }
     todos.deinit(allocator);
 }
+```
+
+**Problem**: Need to sort query results but `where()` doesn't support ORDER BY.
+
+**Solution**: Use `whereWithOptions()` for sorted queries:
+
+```zig
+var items = try orm.whereWithOptions(Todo, "completed = 1", .{
+    .order_by = "created_at",
+    .ascending = false, // DESC order
+});
+defer {
+    for (items.items) |todo| {
+        allocator.free(todo.title);
+    }
+    items.deinit(allocator);
+}
+```
+
+Or use `whereManagedWithOptions()` for automatic memory management:
+
+```zig
+var result = try orm.whereManagedWithOptions(Todo, "completed = 1", .{
+    .order_by = "created_at",
+    .ascending = false,
+});
+defer result.deinit();
+```
+
+**Problem**: UNIQUE constraint violations spam logs during bulk operations.
+
+**Solution**: Use `upsertIgnore()` for silent handling of duplicates:
+
+```zig
+// Silent insert - ignores duplicates without logging
+try orm.upsertIgnore(Todo, todo);
+```
+
+Or use `upsert()` to replace existing records:
+
+```zig
+// Replace existing record if UNIQUE constraint violated
+try orm.upsert(Todo, todo);
 ```
 
 **Problem**: `findAll()` or `where()` fails with `error.ColumnMismatch`.
@@ -468,7 +524,12 @@ var todos = try query_result.toArrayList(Todo);
 
 **Problem**: Segmentation fault when serving static files.
 
-**Solution**: This was a memory management issue that has been fixed. Ensure you're using the latest version of Engine12. The framework now properly manages memory for static file mount paths and FileServer instances.
+**Solution**: This was a memory management issue that has been fixed. The framework now:
+1. Properly duplicates mount path strings before passing to the router
+2. Uses persistent memory for route patterns
+3. Ensures FileServer instances are stored and not freed prematurely
+
+Ensure you're using the latest version of Engine12.
 
 **Problem**: Static files work initially but fail after some requests.
 
@@ -476,6 +537,17 @@ var todos = try query_result.toArrayList(Todo);
 1. You're using the latest version of Engine12 (fixes have been applied)
 2. Static file discovery is called during initialization, not in request handlers
 3. FileServer instances are properly stored and not freed prematurely
+
+**Problem**: Static file routes not matching for JS/CSS files.
+
+**Solution**: The framework automatically registers common static file patterns:
+- `/css/:file`, `/css/style.css`, `/css/styles.css`
+- `/js/:file`, `/js/app.js`, `/js/collapsible.js`
+- `/images/:file`, `/fonts/:file`
+
+If your files aren't matching, ensure:
+1. Directory structure follows conventions (`static/css/`, `static/js/`)
+2. Use `discoverStaticFiles("static")` for automatic discovery
 
 ## Middleware Issues
 

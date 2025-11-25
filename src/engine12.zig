@@ -1579,17 +1579,39 @@ pub const Engine12 = struct {
                 // Don't register mount_path directly - ziggurat requires comptime strings
                 // Instead, we register specific routes below using comptime strings
 
-                // Register wildcard routes for subpaths to handle any file under the mount path
-                // Use :file parameter pattern to match any filename
-                if (std.mem.eql(u8, mount_path, "/css")) {
+                // Register wildcard route for any file under the mount path
+                // This handles all files in subdirectories automatically
+                
+                // Register a wildcard route that matches any file under the mount path
+                // Pattern: /{mount_path}/* or /{mount_path}/:file
+                // For ziggurat, we'll use a pattern that matches the mount path prefix
+                // Since ziggurat requires comptime strings, we register common patterns
+                
+                // Register the mount path itself (for index files)
+                // IMPORTANT: Use mount_path_copy (the persistent copy) not mount_path (which may be freed)
+                try server.get(mount_path_copy, wrapper);
+                
+                // Register wildcard pattern for files in the mount directory
+                // Note: ziggurat may not support true wildcards, so we register common patterns
+                // The wrapper handler will check the request path dynamically
+                if (std.mem.eql(u8, mount_path_copy, "/css")) {
                     try server.get("/css/:file", wrapper);
-                    // Also register common paths explicitly for better matching
                     try server.get("/css/style.css", wrapper);
-                    try server.get("/css/styles.css", wrapper); // Also support old name for compatibility
-                } else if (std.mem.eql(u8, mount_path, "/js")) {
+                    try server.get("/css/styles.css", wrapper);
+                } else if (std.mem.eql(u8, mount_path_copy, "/js")) {
                     try server.get("/js/:file", wrapper);
-                    // Also register common paths explicitly for better matching
                     try server.get("/js/app.js", wrapper);
+                    try server.get("/js/collapsible.js", wrapper);
+                } else if (std.mem.eql(u8, mount_path_copy, "/images")) {
+                    try server.get("/images/:file", wrapper);
+                } else if (std.mem.eql(u8, mount_path_copy, "/fonts")) {
+                    try server.get("/fonts/:file", wrapper);
+                } else {
+                    // For other mount paths, register a catch-all handler
+                    // The wrapper will dynamically check if the request path matches
+                    // Register a generic route that the wrapper can handle
+                    // Since we can't register dynamic routes, we'll rely on the wrapper's
+                    // dynamic path matching logic which already handles this
                 }
             }
         }

@@ -78,11 +78,43 @@ pub const HotReloadManager = struct {
         return rt_ptr;
     }
 
+    /// Watch a Zig source file for changes
+    /// When the file changes, sends a reload notification
+    /// Note: Actual code reloading requires application restart
+    /// This is a placeholder for future dynamic module reloading support
+    ///
+    /// Example:
+    /// ```zig
+    /// try manager.watchZigFile("src/handlers.zig");
+    /// ```
+    pub fn watchZigFile(self: *HotReloadManager, zig_path: []const u8) !void {
+        if (!self.enabled) {
+            return error.HotReloadNotEnabled;
+        }
+
+        // Watch file for changes with callback that broadcasts reload notification
+        // For now, we just notify that a reload is needed (user must restart)
+        try self.file_watcher.watch(zig_path, zigReloadCallback, self);
+    }
+
     /// Callback for template file changes
     /// This is called by the file watcher when a template file changes
     fn templateReloadCallback(path: []const u8, context: ?*anyopaque) void {
         if (context) |ctx| {
             const manager = @as(*HotReloadManager, @ptrCast(@alignCast(ctx)));
+            manager.notifyReload(path);
+        }
+    }
+
+    /// Callback for Zig file changes
+    /// This is called by the file watcher when a Zig source file changes
+    /// For now, just notifies that a restart is needed
+    fn zigReloadCallback(path: []const u8, context: ?*anyopaque) void {
+        if (context) |ctx| {
+            const manager = @as(*HotReloadManager, @ptrCast(@alignCast(ctx)));
+            // Notify that backend code changed - user should restart
+            std.debug.print("[HotReload] Backend code changed: {s}\n", .{path});
+            std.debug.print("[HotReload] Note: Backend code reloading requires application restart\n", .{});
             manager.notifyReload(path);
         }
     }

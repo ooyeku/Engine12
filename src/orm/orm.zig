@@ -91,6 +91,25 @@ pub fn Result(comptime T: type) type {
     };
 }
 
+pub const QueryError = struct {
+    operation: []const u8,
+    table_name: []const u8,
+    sql: []const u8,
+    parameters: ?[]const u8 = null,
+    underlying_error: Database.Error,
+
+    pub fn format(self: QueryError, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("[ORM Error] {s} failed for table '{s}'\n", .{ self.operation, self.table_name });
+        try writer.print("  SQL: {s}\n", .{self.sql});
+        if (self.parameters) |params| {
+            try writer.print("  Parameters: {s}\n", .{params});
+        }
+        try writer.print("  Error: {}\n", .{self.underlying_error});
+    }
+};
+
 pub const ORM = struct {
     db: Database,
     allocator: std.mem.Allocator,
@@ -224,6 +243,156 @@ pub const ORM = struct {
             std.debug.print("\n", .{});
             std.debug.print("  Error: {}\n", .{err});
             return err;
+        };
+    }
+
+    /// Upsert a record (INSERT OR REPLACE)
+    /// Replaces existing record if UNIQUE constraint is violated
+    /// Suppresses error logging for UNIQUE constraint violations
+    ///
+    /// Example:
+    /// ```zig
+    /// try orm.upsert(Todo, todo); // Replaces existing record if UNIQUE constraint violated
+    /// ```
+    pub fn upsert(self: *ORM, comptime T: type, instance: T) !void {
+        const table_name = try self.getTableName(T);
+        defer self.allocator.free(table_name);
+        var fields = std.ArrayListUnmanaged([]const u8){};
+        defer fields.deinit(self.allocator);
+
+        var values = std.ArrayListUnmanaged([]const u8){};
+
+        inline for (std.meta.fields(T)) |field| {
+            const is_id_field = comptime std.mem.eql(u8, field.name, "id");
+            if (is_id_field) {
+                const id_value = @field(instance, field.name);
+                if (id_value != 0) {
+                    try fields.append(self.allocator, field.name);
+                    const value_str = try self.valueToString(id_value);
+                    try values.append(self.allocator, value_str);
+                }
+            } else {
+                const value = @field(instance, field.name);
+                const field_type = @TypeOf(value);
+
+                // Check if field is optional and null
+                const is_optional_null = switch (@typeInfo(field_type)) {
+                    .optional => value == null,
+                    else => false,
+                };
+
+                // Skip optional fields that are null (don't include in INSERT)
+                if (!is_optional_null) {
+                    try fields.append(self.allocator, field.name);
+                    const value_str = try self.valueToString(value);
+                    try values.append(self.allocator, value_str);
+                }
+            }
+        }
+
+        defer {
+            for (values.items) |item| {
+                self.allocator.free(item);
+            }
+            values.deinit(self.allocator);
+        }
+
+        // Validate that we have at least one field to insert
+        if (fields.items.len == 0) {
+            std.debug.print("[ORM Error] upsert() failed for table '{s}'\n", .{table_name});
+            std.debug.print("  Reason: No fields to insert (all fields are null or id is 0)\n", .{});
+            return error.InvalidArgument;
+        }
+
+        const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
+        defer self.allocator.free(fields_str);
+
+        const values_str = try std.mem.join(self.allocator, ", ", values.items);
+        defer self.allocator.free(values_str);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT OR REPLACE INTO {s} ({s}) VALUES ({s})",
+            .{ table_name, fields_str, values_str },
+        );
+        defer self.allocator.free(sql);
+
+        // INSERT OR REPLACE handles constraint violations silently
+        try self.db.execute(sql);
+    }
+
+    /// Upsert a record silently (INSERT OR IGNORE)
+    /// Silently ignores if UNIQUE constraint is violated
+    /// Suppresses all error logging
+    ///
+    /// Example:
+    /// ```zig
+    /// try orm.upsertIgnore(Todo, todo); // Silently ignores if UNIQUE constraint violated
+    /// ```
+    pub fn upsertIgnore(self: *ORM, comptime T: type, instance: T) !void {
+        const table_name = try self.getTableName(T);
+        defer self.allocator.free(table_name);
+        var fields = std.ArrayListUnmanaged([]const u8){};
+        defer fields.deinit(self.allocator);
+
+        var values = std.ArrayListUnmanaged([]const u8){};
+
+        inline for (std.meta.fields(T)) |field| {
+            const is_id_field = comptime std.mem.eql(u8, field.name, "id");
+            if (is_id_field) {
+                const id_value = @field(instance, field.name);
+                if (id_value != 0) {
+                    try fields.append(self.allocator, field.name);
+                    const value_str = try self.valueToString(id_value);
+                    try values.append(self.allocator, value_str);
+                }
+            } else {
+                const value = @field(instance, field.name);
+                const field_type = @TypeOf(value);
+
+                // Check if field is optional and null
+                const is_optional_null = switch (@typeInfo(field_type)) {
+                    .optional => value == null,
+                    else => false,
+                };
+
+                // Skip optional fields that are null (don't include in INSERT)
+                if (!is_optional_null) {
+                    try fields.append(self.allocator, field.name);
+                    const value_str = try self.valueToString(value);
+                    try values.append(self.allocator, value_str);
+                }
+            }
+        }
+
+        defer {
+            for (values.items) |item| {
+                self.allocator.free(item);
+            }
+            values.deinit(self.allocator);
+        }
+
+        // Validate that we have at least one field to insert
+        if (fields.items.len == 0) {
+            return error.InvalidArgument;
+        }
+
+        const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
+        defer self.allocator.free(fields_str);
+
+        const values_str = try std.mem.join(self.allocator, ", ", values.items);
+        defer self.allocator.free(values_str);
+
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT OR IGNORE INTO {s} ({s}) VALUES ({s})",
+            .{ table_name, fields_str, values_str },
+        );
+        defer self.allocator.free(sql);
+
+        // INSERT OR IGNORE handles constraint violations silently - don't return error
+        self.db.execute(sql) catch {
+            // Silently ignore errors - this is the expected behavior for upsertIgnore
         };
     }
 
@@ -415,8 +584,7 @@ pub const ORM = struct {
             const field_count = std.meta.fields(T).len;
             const column_count = query_result.columnCount();
 
-            // Provide detailed error message for debugging
-            std.debug.print("ORM findAll() error for table '{s}'\n", .{table_name});
+            std.debug.print("[ORM Error] findAll() deserialization failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  Expected {d} fields, got {d} columns\n", .{ field_count, column_count });
             std.debug.print("  Error: {}\n", .{err});
@@ -443,7 +611,50 @@ pub const ORM = struct {
         return Result(T).init(items, self.allocator);
     }
 
+    /// Find records matching a condition with automatic memory management
+    /// Returns a Result wrapper that automatically frees string fields on deinit
+    ///
+    /// Example:
+    /// ```zig
+    /// var result = try orm.whereManaged(Todo, "completed = 1");
+    /// defer result.deinit();
+    /// for (result.getItems()) |todo| {
+    ///     // Use todo - strings are automatically freed when result.deinit() is called
+    /// }
+    /// ```
+    pub fn whereManaged(self: *ORM, comptime T: type, condition: []const u8) !Result(T) {
+        return self.whereManagedWithOptions(T, condition, .{});
+    }
+
+    /// Find records matching a condition with options and automatic memory management
+    /// Returns a Result wrapper that automatically frees string fields on deinit
+    ///
+    /// Example:
+    /// ```zig
+    /// var result = try orm.whereManagedWithOptions(Todo, "completed = 1", .{
+    ///     .order_by = "created_at",
+    ///     .ascending = false,
+    /// });
+    /// defer result.deinit();
+    /// for (result.getItems()) |todo| {
+    ///     // Use todo - strings are automatically freed when result.deinit() is called
+    /// }
+    /// ```
+    pub fn whereManagedWithOptions(self: *ORM, comptime T: type, condition: []const u8, options: WhereOptions) !Result(T) {
+        const items = try self.whereWithOptions(T, condition, options);
+        return Result(T).init(items, self.allocator);
+    }
+
+    pub const WhereOptions = struct {
+        order_by: ?[]const u8 = null,
+        ascending: bool = true,
+    };
+
     pub fn where(self: *ORM, comptime T: type, condition: []const u8) !std.ArrayListUnmanaged(T) {
+        return self.whereWithOptions(T, condition, .{});
+    }
+
+    pub fn whereWithOptions(self: *ORM, comptime T: type, condition: []const u8, options: WhereOptions) !std.ArrayListUnmanaged(T) {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
 
@@ -498,13 +709,25 @@ pub const ORM = struct {
         }
         try sql_buf.writer(self.allocator).print(" FROM {s} WHERE {s}", .{ table_name, condition });
 
+        // Add ORDER BY clause if specified
+        if (options.order_by) |order_field| {
+            try sql_buf.writer(self.allocator).print(" ORDER BY {s}", .{order_field});
+            if (!options.ascending) {
+                try sql_buf.writer(self.allocator).print(" DESC", .{});
+            }
+        }
+
         const sql = try sql_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(sql);
 
         var query_result = self.db.query(sql) catch |err| {
+            // Log error with available context (avoid allocations in error path)
             std.debug.print("[ORM Error] where() failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  Condition: {s}\n", .{condition});
+            if (options.order_by) |order_field| {
+                std.debug.print("  ORDER BY: {s} ({s})\n", .{ order_field, if (options.ascending) "ASC" else "DESC" });
+            }
             std.debug.print("  Error: {}\n", .{err});
             return err;
         };
@@ -515,9 +738,12 @@ pub const ORM = struct {
             const field_count = std.meta.fields(T).len;
             const column_count = query_result.columnCount();
 
-            // Provide detailed error message for debugging
-            std.debug.print("ORM where() error for table '{s}'\n", .{table_name});
+            std.debug.print("[ORM Error] where() deserialization failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
+            std.debug.print("  Condition: {s}\n", .{condition});
+            if (options.order_by) |order_field| {
+                std.debug.print("  ORDER BY: {s} ({s})\n", .{ order_field, if (options.ascending) "ASC" else "DESC" });
+            }
             std.debug.print("  Expected {d} fields, got {d} columns\n", .{ field_count, column_count });
             std.debug.print("  Error: {}\n", .{err});
 

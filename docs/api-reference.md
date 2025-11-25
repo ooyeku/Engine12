@@ -1895,6 +1895,54 @@ Create an HTML response.
 return Response.html("<html><body>Hello</body></html>");
 ```
 
+#### `fromStruct(comptime T: type, value: T, allocator: Allocator) !Response`
+Create a JSON response from a struct. Automatically serializes using `Json.serialize()` and sets Content-Type to `application/json`.
+
+```zig
+const todo = Todo{ .id = 1, .title = "Learn Zig", .completed = false };
+return try Response.fromStruct(Todo, todo, allocator);
+```
+
+**Benefits**: Eliminates manual JSON serialization boilerplate. Memory is automatically managed.
+
+#### `fromStructArray(comptime T: type, items: []const T, allocator: Allocator) !Response`
+Create a JSON response from an array of structs. Automatically serializes to a JSON array.
+
+```zig
+const todos = [_]Todo{ todo1, todo2, todo3 };
+return try Response.fromStructArray(Todo, &todos, allocator);
+```
+
+#### `fromFile(file_path: []const u8, allocator: Allocator) !Response`
+Create a response by reading a file from disk. Automatically detects MIME type from file extension.
+
+```zig
+return try Response.fromFile("static/report.pdf", allocator);
+```
+
+**Supported errors**:
+- `error.FileNotFound`: File does not exist
+- `error.EndOfStream`: Unexpected end of file during read
+- `error.OutOfMemory`: Failed to allocate memory for file contents
+
+**Use case**: Useful for serving dynamically generated files or files not in static directories.
+
+#### `stream(content_type: []const u8, data: []const u8) Response`
+Create a response suitable for streaming. Currently a placeholder for future streaming support.
+
+```zig
+return Response.stream("text/plain", large_data);
+```
+
+**Note**: True streaming requires underlying HTTP server support. Currently serves the full data at once.
+
+#### `download(filename: []const u8, data: []const u8) Response`
+Create a file download response. Sets appropriate headers for file download.
+
+```zig
+return Response.download("report.pdf", pdf_data);
+```
+
 ### Status Codes
 
 #### `ok() Response`
@@ -2298,6 +2346,44 @@ try orm.create(Todo, todo);
 
 **Note**: Optional enum fields are also supported. Null optional fields are skipped in INSERT/UPDATE operations.
 
+#### `upsert(comptime T: type, instance: T) !void`
+Insert or replace a record. Uses `INSERT OR REPLACE` for SQLite. If a UNIQUE constraint is violated, the existing record is replaced.
+
+```zig
+const todo = Todo{
+    .id = 1,
+    .title = try allocator.dupe(u8, "Updated or new todo"),
+    .completed = false,
+    .created_at = std.time.milliTimestamp(),
+    .updated_at = std.time.milliTimestamp(),
+};
+
+try orm.upsert(Todo, todo); // Replaces existing record if UNIQUE constraint violated
+```
+
+**Use case**: Useful for search indexing or sync operations where you want to update existing records or create new ones without checking first.
+
+#### `upsertIgnore(comptime T: type, instance: T) !void`
+Insert a record, silently ignoring UNIQUE constraint violations. Uses `INSERT OR IGNORE` for SQLite. Does not log errors for constraint violations.
+
+```zig
+const todo = Todo{
+    .id = 0,
+    .title = try allocator.dupe(u8, "New todo"),
+    .completed = false,
+    .created_at = std.time.milliTimestamp(),
+    .updated_at = std.time.milliTimestamp(),
+};
+
+try orm.upsertIgnore(Todo, todo); // Silently ignored if UNIQUE constraint violated
+```
+
+**Use case**: Useful when you want to insert records that may already exist without spam logging or error handling. Perfect for batch imports or idempotent operations.
+
+**Difference from `upsert`**:
+- `upsert()`: Replaces the existing record (INSERT OR REPLACE)
+- `upsertIgnore()`: Ignores the insert, keeping the existing record (INSERT OR IGNORE)
+
 #### `find(comptime T: type, id: i64) !?T`
 Find a record by ID. Columns are mapped to struct fields by name, so column order doesn't matter.
 
@@ -2381,6 +2467,59 @@ defer {
 **Note**: The condition string is inserted directly into the SQL query. Be careful with user input to prevent SQL injection. Consider using parameterized queries or the Query Builder for dynamic conditions.
 
 **Column Mapping**: Columns are mapped to struct fields by name, so column order doesn't matter.
+
+#### `whereWithOptions(comptime T: type, condition: []const u8, options: WhereOptions) !ArrayListUnmanaged(T)`
+Find records matching a condition with sorting options. Allows ORDER BY without post-fetch sorting.
+
+**WhereOptions struct:**
+```zig
+pub const WhereOptions = struct {
+    order_by: ?[]const u8 = null,  // Column name to sort by
+    ascending: bool = true,         // Sort direction (true = ASC, false = DESC)
+};
+```
+
+**Example:**
+```zig
+// Get completed todos sorted by created_at descending
+var items = try orm.whereWithOptions(Todo, "completed = 1", .{
+    .order_by = "created_at",
+    .ascending = false,
+});
+defer {
+    for (items.items) |todo| {
+        allocator.free(todo.title);
+    }
+    items.deinit(allocator);
+}
+```
+
+**Benefits**: Eliminates the need to sort results in application code after fetching, reducing memory overhead and complexity.
+
+#### `whereManaged(comptime T: type, condition: []const u8) !Result(T)`
+Find records matching a condition with automatic memory management. Returns a `Result` wrapper that automatically frees string fields on `deinit()`.
+
+```zig
+var result = try orm.whereManaged(Todo, "completed = 1");
+defer result.deinit();
+for (result.getItems()) |todo| {
+    // Use todo - strings are automatically freed when result.deinit() is called
+}
+```
+
+#### `whereManagedWithOptions(comptime T: type, condition: []const u8, options: WhereOptions) !Result(T)`
+Find records matching a condition with sorting and automatic memory management.
+
+```zig
+var result = try orm.whereManagedWithOptions(Todo, "completed = 1", .{
+    .order_by = "created_at",
+    .ascending = false,
+});
+defer result.deinit();
+for (result.getItems()) |todo| {
+    // Use todo - sorted by created_at DESC, strings auto-freed
+}
+```
 
 #### `findAllManaged(comptime T: type) !Result(T)`
 Find all records with automatic memory management. Returns a `Result` wrapper that automatically frees string fields on `deinit()`.

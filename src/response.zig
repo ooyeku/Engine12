@@ -53,6 +53,62 @@ pub const Response = struct {
     /// Status code (stored separately since ziggurat may not support status codes directly)
     _status_code: ?u16 = null,
 
+    /// Create a JSON response from a struct
+    /// Automatically serializes the struct to JSON using Json.serialize()
+    /// Sets Content-Type header to application/json
+    ///
+    /// Example:
+    /// ```zig
+    /// const todo = Todo{ .id = 1, .title = "Test" };
+    /// return Response.fromStruct(Todo, todo, allocator);
+    /// ```
+    pub fn fromStruct(comptime T: type, value: T, allocator: std.mem.Allocator) !Response {
+        const json_str = try json_module.Json.serialize(T, value, allocator);
+        defer allocator.free(json_str);
+        
+        // Copy to persistent memory for response
+        const persistent_body = persistent_allocator.dupe(u8, json_str) catch {
+            return error.OutOfMemory;
+        };
+        
+        var resp = Response{
+            .inner = ziggurat.response.Response.json(persistent_body),
+            ._persistent_body = persistent_body,
+            ._custom_headers = null,
+            ._status_code = null,
+        };
+        
+        return resp.withContentType("application/json");
+    }
+
+    /// Create a JSON response from an array of structs
+    /// Automatically serializes the array to JSON using Json.serializeArray()
+    /// Sets Content-Type header to application/json
+    ///
+    /// Example:
+    /// ```zig
+    /// const todos = [_]Todo{ todo1, todo2 };
+    /// return Response.fromStructArray(Todo, &todos, allocator);
+    /// ```
+    pub fn fromStructArray(comptime T: type, items: []const T, allocator: std.mem.Allocator) !Response {
+        const json_str = try json_module.Json.serializeArray(T, items, allocator);
+        defer allocator.free(json_str);
+        
+        // Copy to persistent memory for response
+        const persistent_body = persistent_allocator.dupe(u8, json_str) catch {
+            return error.OutOfMemory;
+        };
+        
+        var resp = Response{
+            .inner = ziggurat.response.Response.json(persistent_body),
+            ._persistent_body = persistent_body,
+            ._custom_headers = null,
+            ._status_code = null,
+        };
+        
+        return resp.withContentType("application/json");
+    }
+
     /// Create a JSON response
     /// The body string will be copied to persistent memory automatically
     ///
@@ -633,6 +689,53 @@ pub const Response = struct {
         // In the future, this would set the Set-Cookie header
         _ = cookie_str;
         return self;
+    }
+
+    /// Create a response from a file path
+    /// Reads the file and serves it with appropriate content type
+    /// Supports streaming for large files
+    ///
+    /// Example:
+    /// ```zig
+    /// return Response.fromFile("static/report.pdf", allocator);
+    /// ```
+    pub fn fromFile(file_path: []const u8, allocator: std.mem.Allocator) !Response {
+        const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
+            return err;
+        };
+        defer file.close();
+
+        const stat = file.stat() catch |err| {
+            return err;
+        };
+        
+        const file_size = @as(usize, @intCast(stat.size));
+        const contents = allocator.alloc(u8, file_size) catch |err| {
+            return err;
+        };
+        defer allocator.free(contents);
+        
+        const bytes_read = file.readAll(contents) catch |err| {
+            return err;
+        };
+        if (bytes_read != contents.len) {
+            return error.EndOfStream;
+        }
+
+        // Copy to persistent memory for response
+        const persistent_body = persistent_allocator.dupe(u8, contents) catch {
+            return error.OutOfMemory;
+        };
+
+        const mime_type = getMimeTypeFromPath(file_path);
+        var resp = Response{
+            .inner = ziggurat.response.Response.text(persistent_body),
+            ._persistent_body = persistent_body,
+            ._custom_headers = null,
+            ._status_code = null,
+        };
+
+        return resp.withContentType(mime_type);
     }
 
     /// Create a file download response
