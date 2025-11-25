@@ -15,6 +15,7 @@ typedef void E12Result;
 typedef void E12Row;
 typedef void E12Transaction;
 typedef void E12ConnectionPool;
+typedef void E12StmtCache;
 
 // Error codes
 typedef enum {
@@ -167,6 +168,41 @@ void e12_pool_release(E12ConnectionPool* pool, E12Database* db);
 /// Close a connection pool
 /// @param pool Pool handle to close
 void e12_pool_close(E12ConnectionPool* pool);
+
+// ============================================================================
+// Prepared Statement Cache Operations
+// ============================================================================
+
+/// Create a prepared statement cache for a database
+/// The cache stores compiled SQL statements for reuse, improving performance
+/// @param db Database handle
+/// @param max_statements Maximum number of statements to cache (0 = default 128)
+/// @param out_cache Output parameter for the cache handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_cache_create(E12Database* db, size_t max_statements, E12StmtCache** out_cache);
+
+/// Get or prepare a statement from the cache
+/// If the SQL is cached, returns the cached statement (reset for reuse)
+/// If not cached, prepares a new statement and caches it
+/// @param cache Cache handle
+/// @param sql SQL statement string
+/// @param out_result Output parameter for the result handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_cache_query(E12StmtCache* cache, const char* sql, E12Result** out_result);
+
+/// Clear all cached statements
+/// @param cache Cache handle
+void e12_stmt_cache_clear(E12StmtCache* cache);
+
+/// Destroy the statement cache and free all resources
+/// @param cache Cache handle to destroy
+void e12_stmt_cache_destroy(E12StmtCache* cache);
+
+/// Get cache statistics
+/// @param cache Cache handle
+/// @param out_hits Output parameter for cache hits
+/// @param out_misses Output parameter for cache misses
+void e12_stmt_cache_stats(E12StmtCache* cache, uint64_t* out_hits, uint64_t* out_misses);
 
 // ============================================================================
 // Error Handling

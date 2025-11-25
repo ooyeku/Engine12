@@ -20,6 +20,73 @@ pub const ConnectionPoolConfig = struct {
     }
 };
 
+/// Prepared statement cache for improved query performance
+/// Caches compiled SQL statements for reuse, avoiding repeated parsing
+pub const PreparedStatementCache = struct {
+    c_cache: *c.E12StmtCache,
+    allocator: std.mem.Allocator,
+
+    pub const Error = error{
+        CacheCreationFailed,
+        QueryFailed,
+        InvalidArgument,
+        OutOfMemory,
+    };
+
+    /// Create a new prepared statement cache for a database
+    /// max_statements: Maximum number of statements to cache (0 = default 128)
+    pub fn init(db: *Database, max_statements: usize, allocator: std.mem.Allocator) !PreparedStatementCache {
+        var c_cache: ?*c.E12StmtCache = null;
+        const err = c.e12_stmt_cache_create(db.c_db, max_statements, &c_cache);
+
+        if (err != c.E12_ORM_OK) {
+            return error.CacheCreationFailed;
+        }
+
+        return PreparedStatementCache{
+            .c_cache = c_cache.?,
+            .allocator = allocator,
+        };
+    }
+
+    /// Execute a cached query
+    /// Uses cached prepared statement if available, otherwise prepares and caches
+    pub fn query(self: *PreparedStatementCache, sql: []const u8) !QueryResult {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        var c_result: ?*c.E12Result = null;
+        const err = c.e12_stmt_cache_query(self.c_cache, c_sql, &c_result);
+
+        if (err != c.E12_ORM_OK) {
+            return error.QueryFailed;
+        }
+
+        return QueryResult{
+            .c_result = c_result.?,
+            .allocator = self.allocator,
+        };
+    }
+
+    /// Get cache statistics
+    pub fn getStats(self: *PreparedStatementCache) struct { hits: u64, misses: u64 } {
+        var hits: u64 = 0;
+        var misses: u64 = 0;
+        c.e12_stmt_cache_stats(self.c_cache, &hits, &misses);
+        return .{ .hits = hits, .misses = misses };
+    }
+
+    /// Clear all cached statements
+    pub fn clear(self: *PreparedStatementCache) void {
+        c.e12_stmt_cache_clear(self.c_cache);
+    }
+
+    /// Destroy the cache and free all resources
+    pub fn deinit(self: *PreparedStatementCache) void {
+        c.e12_stmt_cache_destroy(self.c_cache);
+    }
+};
+
 pub const ConnectionPool = struct {
     db_path: []const u8,
     config: ConnectionPoolConfig,
@@ -137,10 +204,21 @@ pub const Database = struct {
             };
         }
 
-        return Database{
+        var db = Database{
             .c_db = c_db.?,
             .allocator = allocator,
         };
+
+        // Apply SQLite performance optimizations automatically
+        // WAL mode allows concurrent reads during writes (major performance boost)
+        // These pragmas are safe and improve performance for all workloads
+        db.execute("PRAGMA journal_mode = WAL") catch {};
+        db.execute("PRAGMA synchronous = NORMAL") catch {};
+        db.execute("PRAGMA cache_size = -64000") catch {}; // 64MB cache
+        db.execute("PRAGMA busy_timeout = 5000") catch {}; // 5 second timeout
+        db.execute("PRAGMA temp_store = MEMORY") catch {};
+
+        return db;
     }
 
     pub fn close(self: *Database) void {

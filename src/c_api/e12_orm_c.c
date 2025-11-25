@@ -34,6 +34,7 @@ typedef struct {
     int column_count;
     bool has_row;
     bool row_fetched;
+    bool owns_stmt;     // If true, finalize stmt on free; if false, stmt is cached
 } E12ResultImpl;
 
 // Row structure (just a pointer to the result)
@@ -47,6 +48,34 @@ typedef struct {
     bool committed;
     bool rolled_back;
 } E12TransactionImpl;
+
+// Prepared statement cache entry
+typedef struct E12StmtCacheEntry {
+    char* sql;                      // SQL string (owned)
+    sqlite3_stmt* stmt;             // Prepared statement
+    struct E12StmtCacheEntry* next; // Next entry in bucket
+} E12StmtCacheEntry;
+
+// Prepared statement cache structure
+typedef struct {
+    E12DatabaseImpl* db;            // Database handle
+    E12StmtCacheEntry** buckets;    // Hash table buckets
+    size_t bucket_count;            // Number of buckets
+    size_t entry_count;             // Number of cached statements
+    size_t max_statements;          // Maximum statements to cache
+    uint64_t hits;                  // Cache hits
+    uint64_t misses;                // Cache misses
+} E12StmtCacheImpl;
+
+// Simple hash function for SQL strings
+static size_t hash_sql(const char* sql, size_t bucket_count) {
+    size_t hash = 5381;
+    int c;
+    while ((c = *sql++)) {
+        hash = ((hash << 5) + hash) + c; // hash * 33 + c
+    }
+    return hash % bucket_count;
+}
 
 // ============================================================================
 // Database Operations
@@ -152,6 +181,7 @@ E12ORMErrorCode e12_db_query(E12Database* db, const char* sql, E12Result** out_r
     result_impl->column_count = sqlite3_column_count(stmt);
     result_impl->has_row = false;
     result_impl->row_fetched = false;
+    result_impl->owns_stmt = true;  // Regular query owns its statement
     
     *out_result = (E12Result*)result_impl;
     return E12_ORM_OK;
@@ -217,7 +247,8 @@ void e12_result_free(E12Result* result) {
     if (!result) return;
     
     E12ResultImpl* result_impl = (E12ResultImpl*)result;
-    if (result_impl->stmt) {
+    // Only finalize if we own the statement (not from cache)
+    if (result_impl->stmt && result_impl->owns_stmt) {
         sqlite3_finalize(result_impl->stmt);
     }
     free(result_impl);
@@ -429,6 +460,189 @@ void e12_pool_release(E12ConnectionPool* pool, E12Database* db) {
 
 void e12_pool_close(E12ConnectionPool* pool) {
     (void)pool;
+}
+
+// ============================================================================
+// Prepared Statement Cache Operations
+// ============================================================================
+
+E12ORMErrorCode e12_stmt_cache_create(E12Database* db, size_t max_statements, E12StmtCache** out_cache) {
+    clear_error();
+    
+    if (!db || !out_cache) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12StmtCacheImpl* cache = (E12StmtCacheImpl*)malloc(sizeof(E12StmtCacheImpl));
+    if (!cache) {
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        return E12_ORM_ERROR;
+    }
+    
+    // Default to 128 statements if not specified
+    if (max_statements == 0) {
+        max_statements = 128;
+    }
+    
+    // Use prime number of buckets for better distribution
+    size_t bucket_count = max_statements * 2 + 1;
+    
+    cache->buckets = (E12StmtCacheEntry**)calloc(bucket_count, sizeof(E12StmtCacheEntry*));
+    if (!cache->buckets) {
+        free(cache);
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        return E12_ORM_ERROR;
+    }
+    
+    cache->db = (E12DatabaseImpl*)db;
+    cache->bucket_count = bucket_count;
+    cache->entry_count = 0;
+    cache->max_statements = max_statements;
+    cache->hits = 0;
+    cache->misses = 0;
+    
+    *out_cache = (E12StmtCache*)cache;
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_cache_query(E12StmtCache* cache, const char* sql, E12Result** out_result) {
+    clear_error();
+    
+    if (!cache || !sql || !out_result) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12StmtCacheImpl* cache_impl = (E12StmtCacheImpl*)cache;
+    size_t bucket_idx = hash_sql(sql, cache_impl->bucket_count);
+    
+    // Look for existing cached statement
+    E12StmtCacheEntry* entry = cache_impl->buckets[bucket_idx];
+    while (entry) {
+        if (strcmp(entry->sql, sql) == 0) {
+            // Cache hit! Reset and reuse statement
+            cache_impl->hits++;
+            sqlite3_reset(entry->stmt);
+            sqlite3_clear_bindings(entry->stmt);
+            
+            // Create result wrapper
+            E12ResultImpl* result_impl = (E12ResultImpl*)malloc(sizeof(E12ResultImpl));
+            if (!result_impl) {
+                set_error(E12_ORM_ERROR, "Memory allocation failed");
+                return E12_ORM_ERROR;
+            }
+            
+            result_impl->stmt = entry->stmt;
+            result_impl->column_count = sqlite3_column_count(entry->stmt);
+            result_impl->has_row = false;
+            result_impl->row_fetched = false;
+            result_impl->owns_stmt = false;  // Cached statement - don't finalize on free
+            
+            *out_result = (E12Result*)result_impl;
+            return E12_ORM_OK;
+        }
+        entry = entry->next;
+    }
+    
+    // Cache miss - prepare new statement
+    cache_impl->misses++;
+    
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(cache_impl->db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(cache_impl->db->db));
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    // Track whether we cached the statement
+    bool stmt_cached = false;
+    
+    // Cache the statement if we have room
+    if (cache_impl->entry_count < cache_impl->max_statements) {
+        E12StmtCacheEntry* new_entry = (E12StmtCacheEntry*)malloc(sizeof(E12StmtCacheEntry));
+        if (new_entry) {
+            new_entry->sql = strdup(sql);
+            if (new_entry->sql) {
+                new_entry->stmt = stmt;
+                new_entry->next = cache_impl->buckets[bucket_idx];
+                cache_impl->buckets[bucket_idx] = new_entry;
+                cache_impl->entry_count++;
+                stmt_cached = true;
+            } else {
+                free(new_entry);
+            }
+        }
+    }
+    
+    // Create result wrapper
+    E12ResultImpl* result_impl = (E12ResultImpl*)malloc(sizeof(E12ResultImpl));
+    if (!result_impl) {
+        // Only finalize if we didn't cache it
+        if (!stmt_cached) {
+            sqlite3_finalize(stmt);
+        }
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        return E12_ORM_ERROR;
+    }
+    
+    result_impl->stmt = stmt;
+    result_impl->column_count = sqlite3_column_count(stmt);
+    result_impl->has_row = false;
+    result_impl->row_fetched = false;
+    result_impl->owns_stmt = !stmt_cached;  // Only owns if not cached
+    
+    *out_result = (E12Result*)result_impl;
+    return E12_ORM_OK;
+}
+
+void e12_stmt_cache_clear(E12StmtCache* cache) {
+    if (!cache) return;
+    
+    E12StmtCacheImpl* cache_impl = (E12StmtCacheImpl*)cache;
+    
+    for (size_t i = 0; i < cache_impl->bucket_count; i++) {
+        E12StmtCacheEntry* entry = cache_impl->buckets[i];
+        while (entry) {
+            E12StmtCacheEntry* next = entry->next;
+            sqlite3_finalize(entry->stmt);
+            free(entry->sql);
+            free(entry);
+            entry = next;
+        }
+        cache_impl->buckets[i] = NULL;
+    }
+    
+    cache_impl->entry_count = 0;
+}
+
+void e12_stmt_cache_destroy(E12StmtCache* cache) {
+    if (!cache) return;
+    
+    E12StmtCacheImpl* cache_impl = (E12StmtCacheImpl*)cache;
+    
+    // Clear all cached statements
+    e12_stmt_cache_clear(cache);
+    
+    // Free buckets array and cache
+    free(cache_impl->buckets);
+    free(cache_impl);
+}
+
+void e12_stmt_cache_stats(E12StmtCache* cache, uint64_t* out_hits, uint64_t* out_misses) {
+    if (!cache) {
+        if (out_hits) *out_hits = 0;
+        if (out_misses) *out_misses = 0;
+        return;
+    }
+    
+    E12StmtCacheImpl* cache_impl = (E12StmtCacheImpl*)cache;
+    if (out_hits) *out_hits = cache_impl->hits;
+    if (out_misses) *out_misses = cache_impl->misses;
 }
 
 // ============================================================================

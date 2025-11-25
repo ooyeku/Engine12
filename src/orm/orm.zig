@@ -12,6 +12,10 @@ const MigrationRegistry = @import("migration.zig").MigrationRegistry;
 pub const SqlEscape = @import("sql_escape.zig").SqlEscape;
 pub const Schema = @import("schema.zig").Schema;
 pub const DatabaseSingleton = @import("singleton.zig").DatabaseSingleton;
+pub const DatabasePoolConfig = @import("singleton.zig").DatabasePoolConfig;
+pub const PreparedStatementCache = @import("database.zig").PreparedStatementCache;
+pub const ConnectionPool = @import("database.zig").ConnectionPool;
+pub const ConnectionPoolConfig = @import("database.zig").ConnectionPoolConfig;
 
 // Re-export migration types
 pub const MigrationType = Migration;

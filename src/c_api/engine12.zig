@@ -1766,9 +1766,9 @@ export fn e12_metrics_get_counter(metrics_ptr: ?*anyopaque, name: [*c]const u8) 
     const name_slice = std.mem.span(name);
     // Check if it's a known counter
     if (std.mem.eql(u8, name_slice, "requests")) {
-        return m.request_count;
+        return m.getRequestCount();
     } else if (std.mem.eql(u8, name_slice, "errors")) {
-        return m.error_count;
+        return m.getErrorCount();
     }
     // Try to get from route timings
     const timing = m.route_timings.get(name_slice);

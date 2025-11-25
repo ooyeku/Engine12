@@ -37,43 +37,66 @@ pub const Metric = struct {
     }
 };
 
-/// Metrics collector
+/// Metrics collector with thread-safe atomic counters
 pub const MetricsCollector = struct {
     metrics: std.ArrayListUnmanaged(Metric),
     allocator: std.mem.Allocator,
 
-    // Route timing data
+    // Route timing data (protected by mutex for complex operations)
     route_timings: std.StringHashMap(RouteTiming),
+    route_timings_mutex: std.Thread.Mutex = .{},
 
-    // Request counters
-    request_count: u64 = 0,
-    error_count: u64 = 0,
+    // Thread-safe atomic request counters
+    request_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    error_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    // Mutex for metrics list (complex operations)
+    metrics_mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) MetricsCollector {
         return MetricsCollector{
             .metrics = std.ArrayListUnmanaged(Metric){},
             .allocator = allocator,
             .route_timings = std.StringHashMap(RouteTiming).init(allocator),
+            .route_timings_mutex = .{},
+            .request_count = std.atomic.Value(u64).init(0),
+            .error_count = std.atomic.Value(u64).init(0),
+            .metrics_mutex = .{},
         };
     }
 
-    /// Record a metric
+    /// Record a metric (thread-safe)
     pub fn record(self: *MetricsCollector, metric: Metric) !void {
+        self.metrics_mutex.lock();
+        defer self.metrics_mutex.unlock();
         try self.metrics.append(self.allocator, metric);
     }
 
-    /// Increment request counter
+    /// Increment request counter (lock-free, thread-safe)
     pub fn incrementRequest(self: *MetricsCollector) void {
-        self.request_count += 1;
+        _ = self.request_count.fetchAdd(1, .monotonic);
     }
 
-    /// Increment error counter
+    /// Increment error counter (lock-free, thread-safe)
     pub fn incrementError(self: *MetricsCollector) void {
-        self.error_count += 1;
+        _ = self.error_count.fetchAdd(1, .monotonic);
     }
 
-    /// Record route timing
+    /// Get current request count (thread-safe)
+    pub fn getRequestCount(self: *const MetricsCollector) u64 {
+        return self.request_count.load(.monotonic);
+    }
+
+    /// Get current error count (thread-safe)
+    pub fn getErrorCount(self: *const MetricsCollector) u64 {
+        return self.error_count.load(.monotonic);
+    }
+
+    /// Record route timing (thread-safe)
     pub fn recordRouteTiming(self: *MetricsCollector, route: []const u8, duration_ms: u64) !void {
+        self.route_timings_mutex.lock();
+        defer self.route_timings_mutex.unlock();
+
         const timing_ptr = self.route_timings.getPtr(route);
         if (timing_ptr) |timing| {
             timing.count += 1;
@@ -92,18 +115,21 @@ pub const MetricsCollector = struct {
         }
     }
 
-    /// Get Prometheus format metrics
-    pub fn getPrometheusMetrics(self: *const MetricsCollector) ![]const u8 {
+    /// Get Prometheus format metrics (thread-safe)
+    pub fn getPrometheusMetrics(self: *MetricsCollector) ![]const u8 {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(self.allocator);
 
-        // Request counter
-        try writer.print("http_requests_total {d}\n", .{self.request_count});
+        // Request counter (atomic load)
+        try writer.print("http_requests_total {d}\n", .{self.request_count.load(.monotonic)});
 
-        // Error counter
-        try writer.print("http_errors_total {d}\n", .{self.error_count});
+        // Error counter (atomic load)
+        try writer.print("http_errors_total {d}\n", .{self.error_count.load(.monotonic)});
 
-        // Route timings
+        // Route timings (mutex protected)
+        self.route_timings_mutex.lock();
+        defer self.route_timings_mutex.unlock();
+
         var iterator = self.route_timings.iterator();
         while (iterator.next()) |entry| {
             const timing = entry.value_ptr;
@@ -170,9 +196,9 @@ test "MetricsCollector incrementRequest" {
     var collector = MetricsCollector.init(std.testing.allocator);
     defer collector.deinit();
 
-    try std.testing.expectEqual(collector.request_count, 0);
+    try std.testing.expectEqual(collector.getRequestCount(), 0);
     collector.incrementRequest();
-    try std.testing.expectEqual(collector.request_count, 1);
+    try std.testing.expectEqual(collector.getRequestCount(), 1);
 }
 
 test "MetricsCollector recordRouteTiming" {
@@ -201,11 +227,11 @@ test "MetricsCollector incrementError" {
     var collector = MetricsCollector.init(std.testing.allocator);
     defer collector.deinit();
 
-    try std.testing.expectEqual(collector.error_count, 0);
+    try std.testing.expectEqual(collector.getErrorCount(), 0);
     collector.incrementError();
-    try std.testing.expectEqual(collector.error_count, 1);
+    try std.testing.expectEqual(collector.getErrorCount(), 1);
     collector.incrementError();
-    try std.testing.expectEqual(collector.error_count, 2);
+    try std.testing.expectEqual(collector.getErrorCount(), 2);
 }
 
 test "MetricsCollector recordRouteTiming calculates stats correctly" {
@@ -280,7 +306,7 @@ test "RequestTiming finish records metrics" {
     std.Thread.sleep(10 * std.time.ns_per_ms);
     try timing.finish(&collector);
 
-    try std.testing.expectEqual(collector.request_count, 1);
+    try std.testing.expectEqual(collector.getRequestCount(), 1);
     try std.testing.expect(collector.route_timings.get("/api/test") != null);
 }
 

@@ -43,3 +43,6 @@ zig-lock.json
 *.rej
 
 todo.db
+todo.db-journal
+todo.db-shm
+todo.db-wal
