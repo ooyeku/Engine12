@@ -81,12 +81,21 @@ Configuration options for the HTTP server.
 
 ```zig
 pub const ServerConfig = struct {
-    host: []const u8 = "127.0.0.1",  // Server bind address
-    port: u16 = 8080,                 // Server port
-    read_timeout: u32 = 5000,         // Read timeout in ms
-    write_timeout: u32 = 5000,        // Write timeout in ms
+    host: []const u8 = "127.0.0.1",      // Server bind address
+    port: u16 = 8080,                     // Server port
+    read_timeout: u32 = 5000,             // Read timeout in ms
+    write_timeout: u32 = 5000,            // Write timeout in ms
+    worker_threads: u16 = 4,              // Number of worker threads (0 = single-threaded)
+    buffer_size: usize = 8192,            // HTTP request buffer size (8KB)
+    max_header_size: usize = 16384,       // Maximum header size (16KB)
+    max_body_size: usize = 10485760,      // Maximum body size (10MB)
 };
 ```
+
+**Worker Threads:**
+- Default: 4 worker threads for concurrent request handling
+- Set to 0 to use legacy single-threaded mode
+- Increase for high-concurrency workloads (e.g., 8-16 for production)
 
 #### `configure(config: ServerConfig) void`
 Configure server settings. Must be called before `start()`.
@@ -98,6 +107,7 @@ app.configure(.{
     .port = 3000,
     .read_timeout = 10000,
     .write_timeout = 10000,
+    .worker_threads = 8,  // Use 8 worker threads for higher concurrency
 });
 try app.start();
 ```

@@ -78,8 +78,9 @@ exe.linkLibC();
 
 ## Features
 
+- **High Performance** - Multi-threaded request handling with configurable worker threads (default: 4)
 - **HTTP Routing** - GET, POST, PUT, DELETE, PATCH with route parameters
-- **Server Configuration** - Configurable host, port, and timeouts via `configure()` or `setPort()`/`setHost()`
+- **Server Configuration** - Configurable host, port, timeouts, and worker threads via `configure()`
 - **WebSocket Support** - Real-time bidirectional communication with room management
 - **Hot Reloading** - Automatic template and static file reloading in development mode
 - **Auto-Discovery** - Automatic migration, static file, and template discovery to reduce boilerplate

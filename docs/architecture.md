@@ -20,11 +20,13 @@ The main `Engine12` struct (`src/engine12.zig`) serves as the application contai
 
 ### HTTP Server Integration
 
-Engine12 uses the `ziggurat` library for HTTP server functionality:
+Engine12 uses the `ziggurat` library for HTTP server functionality with a custom multi-threaded layer:
 
 - Routes are registered with ziggurat's `Server` builder
 - Request/Response wrappers bridge ziggurat and Engine12 APIs
-- The server runs in a background thread to allow non-blocking operation
+- **Thread Pool**: Engine12 implements its own thread pool on top of ziggurat for concurrent request handling
+- **Accept Thread**: A dedicated thread accepts connections and distributes them to workers
+- **Worker Threads**: Multiple worker threads (default: 4) process requests concurrently using ziggurat's public APIs
 
 ### Request/Response Handling
 
@@ -255,11 +257,47 @@ The middleware chain checks these and returns appropriate responses.
 
 ## Concurrency Model
 
+### Multi-Threaded HTTP Server
+
+Engine12 uses a thread pool architecture for handling HTTP requests concurrently:
+
+```
+                    +------------------+
+    Connections --> | Accept Thread    | --> Connection Queue
+                    +------------------+
+                              |
+              +---------------+---------------+
+              |               |               |
+        +-----------+   +-----------+   +-----------+
+        | Worker 1  |   | Worker 2  |   | Worker N  |
+        +-----------+   +-----------+   +-----------+
+              |               |               |
+              v               v               v
+         [Request]       [Request]       [Request]
+```
+
+**Key Components:**
+
+1. **Accept Thread**: Dedicated thread that accepts incoming connections and pushes them to a queue
+2. **Connection Queue**: Thread-safe bounded queue (1024 slots) using mutex and condition variables
+3. **Worker Threads**: Configurable number of threads (default: 4) that pull connections from the queue and handle requests
+
+**Configuration:**
+
+```zig
+app.configure(.{
+    .worker_threads = 8,  // Number of worker threads (default: 4)
+});
+```
+
+Set `worker_threads = 0` to fall back to single-threaded mode (legacy behavior).
+
 ### Request Handling
 
-- Each request runs in ziggurat's thread pool
+- Each request runs in a worker thread from the thread pool
 - Request allocator is arena-based for fast cleanup
 - No shared mutable state between requests
+- Workers handle the full request lifecycle: parse, middleware, route, respond
 
 ### Background Tasks
 
@@ -274,6 +312,8 @@ Background tasks use the `vigil` supervision library:
 - Global state uses mutexes where needed
 - Request handlers are thread-safe (no shared state)
 - Database connections are per-request or pooled
+- Connection queue uses mutex and condition variables for thread-safe access
+- Worker threads operate independently with no shared mutable state
 
 ## Memory Management
 

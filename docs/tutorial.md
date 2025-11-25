@@ -33,6 +33,7 @@ This tutorial will guide you through building a complete web application with En
   - [7.1 Build for Production](#71-build-for-production)
   - [7.2 Run Server](#72-run-server)
   - [7.3 Production Considerations](#73-production-considerations)
+  - [7.4 Performance Tuning](#74-performance-tuning)
 - [Step 8: OpenAPI Documentation](#step-8-openapi-documentation)
   - [8.1 Enable OpenAPI Documentation](#81-enable-openapi-documentation)
   - [8.2 Accessing the Documentation](#82-accessing-the-documentation)
@@ -976,6 +977,51 @@ zig build -Doptimize=ReleaseSafe
 - Set up process management (systemd, supervisor, etc.)
 - Configure logging
 - Set up reverse proxy (nginx, etc.)
+
+### 7.4 Performance Tuning
+
+Engine12 uses a multi-threaded architecture with configurable worker threads for high-performance request handling.
+
+**Configure Worker Threads:**
+
+```zig
+var app = try Engine12.initProduction();
+app.configure(.{
+    .host = "0.0.0.0",
+    .port = 8080,
+    .worker_threads = 8,  // Increase for higher concurrency (default: 4)
+});
+```
+
+**Recommendations:**
+
+| Workload Type | Recommended Workers | Notes |
+|---------------|---------------------|-------|
+| Low traffic | 2-4 | Default is sufficient |
+| Medium traffic | 4-8 | Match CPU cores |
+| High traffic | 8-16 | Consider CPU cores and I/O patterns |
+| I/O bound | 2x CPU cores | More workers for waiting on I/O |
+| CPU bound | 1x CPU cores | Avoid oversubscription |
+
+**Buffer Configuration:**
+
+```zig
+app.configure(.{
+    .buffer_size = 8192,        // Request buffer (8KB default)
+    .max_header_size = 16384,   // Max header size (16KB default)
+    .max_body_size = 10485760,  // Max body size (10MB default)
+});
+```
+
+**Legacy Single-Threaded Mode:**
+
+For debugging or special cases, set `worker_threads = 0` to use single-threaded mode:
+
+```zig
+app.configure(.{
+    .worker_threads = 0,  // Single-threaded (legacy behavior)
+});
+```
 
 ## Step 8: OpenAPI Documentation
 

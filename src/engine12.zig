@@ -1,4 +1,6 @@
 const std = @import("std");
+const posix = std.posix;
+const net = std.net;
 const vigil = @import("vigil");
 const ziggurat = @import("ziggurat");
 const types = @import("types.zig");
@@ -131,6 +133,221 @@ pub var global_active_request_tracker: ?*shutdown_utils.ActiveRequestTracker = n
 
 /// Global OpenAPI generator pointer (for documentation handlers)
 var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
+
+/// Thread-safe connection queue for the thread pool
+/// Workers pull sockets from this queue to handle requests
+const ConnectionQueue = struct {
+    const Self = @This();
+    const MAX_QUEUE_SIZE = 1024;
+
+    queue: [MAX_QUEUE_SIZE]posix.socket_t = undefined,
+    head: usize = 0,
+    tail: usize = 0,
+    count: usize = 0,
+    mutex: std.Thread.Mutex = .{},
+    not_empty: std.Thread.Condition = .{},
+    not_full: std.Thread.Condition = .{},
+    shutdown: bool = false,
+
+    /// Push a socket to the queue (blocking if full)
+    pub fn push(self: *Self, socket: posix.socket_t) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Wait while queue is full (unless shutting down)
+        while (self.count >= MAX_QUEUE_SIZE and !self.shutdown) {
+            self.not_full.wait(&self.mutex);
+        }
+
+        if (self.shutdown) {
+            posix.close(socket);
+            return;
+        }
+
+        self.queue[self.tail] = socket;
+        self.tail = (self.tail + 1) % MAX_QUEUE_SIZE;
+        self.count += 1;
+
+        self.not_empty.signal();
+    }
+
+    /// Pop a socket from the queue (blocking if empty)
+    /// Returns null if shutdown is signaled
+    pub fn pop(self: *Self) ?posix.socket_t {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Wait while queue is empty (unless shutting down)
+        while (self.count == 0 and !self.shutdown) {
+            self.not_empty.wait(&self.mutex);
+        }
+
+        if (self.count == 0) {
+            return null; // Shutdown with empty queue
+        }
+
+        const socket = self.queue[self.head];
+        self.head = (self.head + 1) % MAX_QUEUE_SIZE;
+        self.count -= 1;
+
+        self.not_full.signal();
+        return socket;
+    }
+
+    /// Signal all workers to shutdown
+    pub fn signalShutdown(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.shutdown = true;
+        self.not_empty.broadcast();
+        self.not_full.broadcast();
+    }
+};
+
+/// Global connection queue for thread pool (set during startHttpServer)
+var global_connection_queue: ?*ConnectionQueue = null;
+
+/// Global server reference for workers (set during startHttpServer)
+var global_server_for_workers: ?*ziggurat.Server = null;
+
+/// Global server config for workers (set during startHttpServer)
+var global_server_config: ?ServerConfig = null;
+
+/// Handle a connection in a worker thread
+/// This reimplements ziggurat's handleConnection but allows multi-threaded execution
+fn handleConnectionThreaded(socket: posix.socket_t) void {
+    const server = global_server_for_workers orelse return;
+    const config = global_server_config orelse return;
+
+    defer posix.close(socket);
+
+    // Set socket timeouts
+    setSocketTimeouts(socket, config) catch return;
+
+    // Allocate buffer for request
+    var buf: [65536]u8 = undefined; // 64KB buffer
+    var total_read: usize = 0;
+
+    // Read request data
+    const read_result = posix.read(socket, &buf);
+    if (read_result) |bytes_read| {
+        if (bytes_read == 0) return; // Empty request
+        total_read = bytes_read;
+    } else |_| {
+        return; // Read error
+    }
+
+    // Find header end
+    const header_end_marker = "\r\n\r\n";
+    var header_end_pos: ?usize = null;
+
+    if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
+        header_end_pos = pos;
+    }
+
+    // If headers not complete, try to read more
+    while (header_end_pos == null and total_read < buf.len) {
+        const additional_result = posix.read(socket, buf[total_read..]);
+        if (additional_result) |bytes| {
+            if (bytes == 0) break;
+            total_read += bytes;
+
+            if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
+                header_end_pos = pos;
+            }
+        } else |_| {
+            break;
+        }
+    }
+
+    // Parse request
+    var request = ziggurat.request.Request.init(allocator);
+    defer request.deinit();
+
+    request.parse(buf[0..total_read]) catch {
+        const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
+        _ = posix.write(socket, bad_request) catch {};
+        return;
+    };
+
+    // Check Content-Length and read body if needed
+    if (request.headers.get("Content-Length")) |cl_str| {
+        const expected_body_len = std.fmt.parseInt(usize, cl_str, 10) catch 0;
+        const header_len = if (header_end_pos) |pos| pos + header_end_marker.len else total_read;
+        const current_body_len = if (total_read > header_len) total_read - header_len else 0;
+
+        if (expected_body_len > current_body_len) {
+            const remaining = expected_body_len - current_body_len;
+
+            // Read remaining body
+            var body_read: usize = 0;
+            while (body_read < remaining and (total_read + body_read) < buf.len) {
+                const chunk_result = posix.read(socket, buf[total_read + body_read ..]);
+                if (chunk_result) |bytes| {
+                    if (bytes == 0) break;
+                    body_read += bytes;
+                } else |_| {
+                    break;
+                }
+            }
+            total_read += body_read;
+
+            // Re-parse with full body
+            request.deinit();
+            request = ziggurat.request.Request.init(allocator);
+            request.parse(buf[0..total_read]) catch {
+                const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
+                _ = posix.write(socket, bad_request) catch {};
+                return;
+            };
+        }
+    }
+
+    // Process middleware
+    if (server.inner.middleware.process(&request)) |mw_response| {
+        const formatted = mw_response.format() catch return;
+        defer std.heap.page_allocator.free(formatted);
+        _ = posix.write(socket, formatted) catch {};
+        return;
+    }
+
+    // Match route and call handler
+    const response = if (server.inner.router.matchRoute(&request)) |route_response|
+        route_response
+    else
+        ziggurat.response.Response.init(.not_found, "text/plain", "Not Found");
+
+    // Format and send response
+    const formatted_response = response.format() catch return;
+    defer std.heap.page_allocator.free(formatted_response);
+    _ = posix.write(socket, formatted_response) catch {};
+}
+
+/// Set socket timeouts
+fn setSocketTimeouts(socket: posix.socket_t, config: ServerConfig) !void {
+    const read_timeout = posix.timeval{
+        .sec = @intCast(config.read_timeout / 1000),
+        .usec = @intCast((config.read_timeout % 1000) * 1000),
+    };
+    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(read_timeout));
+
+    const write_timeout = posix.timeval{
+        .sec = @intCast(config.write_timeout / 1000),
+        .usec = @intCast((config.write_timeout % 1000) * 1000),
+    };
+    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(write_timeout));
+}
+
+/// Worker thread function - pulls connections from queue and handles them
+fn workerThreadFn() void {
+    const queue = global_connection_queue orelse return;
+
+    while (true) {
+        const socket = queue.pop() orelse break; // Null means shutdown
+        handleConnectionThreaded(socket);
+    }
+}
 
 /// Create a runtime route wrapper that dispatches to handlers stored in the runtime route registry
 /// This allows valves to register routes dynamically at runtime
@@ -350,6 +567,15 @@ pub const ServerConfig = struct {
     read_timeout: u32 = 5000,
     /// Write timeout in milliseconds (default: 5000)
     write_timeout: u32 = 5000,
+    /// Number of worker threads for handling requests (default: 4)
+    /// Set to 0 to use single-threaded mode (legacy behavior)
+    worker_threads: u16 = 4,
+    /// Buffer size for reading HTTP requests (default: 8KB)
+    buffer_size: usize = 8192,
+    /// Maximum header size (default: 16KB)
+    max_header_size: usize = 16384,
+    /// Maximum body size (default: 10MB)
+    max_body_size: usize = 10 * 1024 * 1024,
 };
 
 pub const Engine12 = struct {
@@ -1644,16 +1870,16 @@ pub const Engine12 = struct {
 
                 // Register wildcard route for any file under the mount path
                 // This handles all files in subdirectories automatically
-                
+
                 // Register a wildcard route that matches any file under the mount path
                 // Pattern: /{mount_path}/* or /{mount_path}/:file
                 // For ziggurat, we'll use a pattern that matches the mount path prefix
                 // Since ziggurat requires comptime strings, we register common patterns
-                
+
                 // Register the mount path itself (for index files)
                 // IMPORTANT: Use mount_path_copy (the persistent copy) not mount_path (which may be freed)
                 try server.get(mount_path_copy, wrapper);
-                
+
                 // Register wildcard pattern for files in the mount directory
                 // Note: ziggurat may not support true wildcards, so we register common patterns
                 // The wrapper handler will check the request path dynamically
@@ -1906,19 +2132,70 @@ pub const Engine12 = struct {
         // Mark server as built - no more routes can be registered
         self.server_built = true;
 
-        // Start the server in a background thread (ziggurat's start() is blocking)
         if (self.built_server) |*server| {
-            const ServerThread = struct {
-                server_ptr: *ziggurat.Server,
-                fn run(ctx: @This()) void {
-                    ctx.server_ptr.start() catch |err| {
-                        std.debug.print("[HTTP] Server error: {}\n", .{err});
-                    };
+            const num_workers = self.server_config.worker_threads;
+
+            // If worker_threads is 0, use legacy single-threaded mode
+            if (num_workers == 0) {
+                const ServerThread = struct {
+                    server_ptr: *ziggurat.Server,
+                    fn run(ctx: @This()) void {
+                        ctx.server_ptr.start() catch |err| {
+                            std.debug.print("[HTTP] Server error: {}\n", .{err});
+                        };
+                    }
+                };
+
+                var thread = try std.Thread.spawn(.{}, ServerThread.run, .{ServerThread{ .server_ptr = server }});
+                thread.detach();
+                return;
+            }
+
+            // Multi-threaded mode with thread pool
+            std.debug.print("[HTTP] Starting with {d} worker threads\n", .{num_workers});
+
+            // Allocate and initialize connection queue
+            const queue = try self.allocator.create(ConnectionQueue);
+            queue.* = ConnectionQueue{};
+            global_connection_queue = queue;
+            global_server_for_workers = server;
+            global_server_config = self.server_config;
+
+            // Spawn worker threads
+            var i: u16 = 0;
+            while (i < num_workers) : (i += 1) {
+                var worker_thread = try std.Thread.spawn(.{}, workerThreadFn, .{});
+                worker_thread.detach();
+            }
+
+            // Spawn accept thread
+            const AcceptThread = struct {
+                fn run() void {
+                    const srv = global_server_for_workers orelse return;
+                    const q = global_connection_queue orelse return;
+
+                    while (!q.shutdown) {
+                        var client_address: net.Address = undefined;
+                        var client_address_len: posix.socklen_t = @sizeOf(net.Address);
+
+                        const socket = posix.accept(
+                            srv.inner.listener,
+                            &client_address.any,
+                            &client_address_len,
+                            0,
+                        ) catch |err| {
+                            if (q.shutdown) break;
+                            std.debug.print("[HTTP] Accept error: {}\n", .{err});
+                            continue;
+                        };
+
+                        q.push(socket);
+                    }
                 }
             };
 
-            var thread = try std.Thread.spawn(.{}, ServerThread.run, .{ServerThread{ .server_ptr = server }});
-            thread.detach();
+            var accept_thread = try std.Thread.spawn(.{}, AcceptThread.run, .{});
+            accept_thread.detach();
             return;
         }
 

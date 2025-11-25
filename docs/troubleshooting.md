@@ -673,6 +673,48 @@ If your files aren't matching, ensure:
 3. Profile with `perf` or similar tools
 4. Check for inefficient template rendering
 
+### Low Throughput
+
+**Problem**: Server has lower throughput than expected.
+
+**Solution**: 
+1. Increase worker threads for higher concurrency:
+   ```zig
+   app.configure(.{
+       .worker_threads = 8,  // Default is 4
+   });
+   ```
+2. Check database queries - slow queries block worker threads
+3. Ensure handlers don't perform long blocking operations
+4. For I/O-bound workloads, use more workers than CPU cores
+
+**Problem**: Performance degrades with many concurrent connections.
+
+**Solution**:
+1. The connection queue has a limit of 1024 pending connections
+2. Increase worker threads to process requests faster
+3. Consider load balancing across multiple server instances
+4. Check for resource exhaustion (file descriptors, memory)
+
+### Thread Pool Issues
+
+**Problem**: Want to use single-threaded mode for debugging.
+
+**Solution**: Set `worker_threads = 0`:
+```zig
+app.configure(.{
+    .worker_threads = 0,  // Single-threaded (legacy) mode
+});
+```
+
+**Problem**: Thread-related crashes or undefined behavior.
+
+**Solution**:
+1. Ensure handlers don't share mutable state without synchronization
+2. Use request's arena allocator for per-request data
+3. Avoid storing references to request data beyond the handler's scope
+4. Use atomic operations or mutexes for shared state
+
 ## Debugging Tips
 
 ### Enable Debug Logging
