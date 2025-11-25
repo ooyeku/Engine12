@@ -512,15 +512,10 @@ pub fn main() !void {
     var app = try createApp();
     defer app.deinit();
 
-    try app.start();
-    app.printStatus();
-
     if (database.getLogger()) |logger| {
-        const entry = logger.info("Server started - Press Ctrl+C to stop") catch return;
-        entry.log();
+        const entry = logger.info("Server starting - Press Ctrl+C to stop") catch null;
+        if (entry) |e| e.log();
     }
 
-    while (true) {
-        std.Thread.sleep(1000 * std.time.ns_per_ms);
-    }
+    try app.listen(); // Blocks until shutdown
 }

@@ -549,11 +549,7 @@ pub fn main() !void {
     try app.delete("/api/todos/:id", handleDeleteTodo);
     try app.get("/api/stats", handleGetStats);
 
-    try app.start();
-    app.printStatus();
-
-    // Keep server running
-    std.Thread.sleep(std.time.ns_per_min * 60);
+    try app.listen();  // Blocks until shutdown
 }
 ```
 

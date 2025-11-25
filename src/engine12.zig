@@ -339,6 +339,19 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
     }.wrapper;
 }
 
+/// Server configuration options
+/// Use with Engine12.configure() to customize server settings
+pub const ServerConfig = struct {
+    /// Server host address (default: "127.0.0.1")
+    host: []const u8 = "127.0.0.1",
+    /// Server port (default: 8080)
+    port: u16 = 8080,
+    /// Read timeout in milliseconds (default: 5000)
+    read_timeout: u32 = 5000,
+    /// Write timeout in milliseconds (default: 5000)
+    write_timeout: u32 = 5000,
+};
+
 pub const Engine12 = struct {
     const MAX_ROUTES = 5000;
     const MAX_WORKERS = 16;
@@ -348,6 +361,7 @@ pub const Engine12 = struct {
 
     allocator: std.mem.Allocator,
     profile: types.ServerProfile,
+    server_config: ServerConfig = .{},
     is_running: bool = false,
     request_count: u64 = 0,
     start_time: i64 = 0,
@@ -465,6 +479,55 @@ pub const Engine12 = struct {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
     }
 
+    /// Configure server settings (host, port, timeouts)
+    /// Must be called before start()
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initDevelopment();
+    /// app.configure(.{ .port = 3000, .host = "0.0.0.0" });
+    /// try app.start();
+    /// ```
+    pub fn configure(self: *Engine12, config: ServerConfig) void {
+        self.server_config = config;
+    }
+
+    /// Set the server port
+    /// Convenience method - equivalent to configure(.{ .port = port })
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initDevelopment();
+    /// app.setPort(3000);
+    /// try app.start();
+    /// ```
+    pub fn setPort(self: *Engine12, port: u16) void {
+        self.server_config.port = port;
+    }
+
+    /// Set the server host
+    /// Convenience method - equivalent to configure(.{ .host = host })
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initDevelopment();
+    /// app.setHost("0.0.0.0"); // Listen on all interfaces
+    /// try app.start();
+    /// ```
+    pub fn setHost(self: *Engine12, host: []const u8) void {
+        self.server_config.host = host;
+    }
+
+    /// Get the configured port
+    pub fn getPort(self: *Engine12) u16 {
+        return self.server_config.port;
+    }
+
+    /// Get the configured host
+    pub fn getHost(self: *Engine12) []const u8 {
+        return self.server_config.host;
+    }
+
     /// Clean up server resources
     pub fn deinit(self: *Engine12) void {
         self.is_running = false;
@@ -561,10 +624,10 @@ pub const Engine12 = struct {
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
-                .host("127.0.0.1")
-                .port(8080)
-                .readTimeout(5000)
-                .writeTimeout(5000)
+                .host(self.server_config.host)
+                .port(self.server_config.port)
+                .readTimeout(self.server_config.read_timeout)
+                .writeTimeout(self.server_config.write_timeout)
                 .build();
 
             // Register default routes (skip "/" if static files will be served at root or custom handler registered)
@@ -694,10 +757,10 @@ pub const Engine12 = struct {
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
-                .host("127.0.0.1")
-                .port(8080)
-                .readTimeout(5000)
-                .writeTimeout(5000)
+                .host(self.server_config.host)
+                .port(self.server_config.port)
+                .readTimeout(self.server_config.read_timeout)
+                .writeTimeout(self.server_config.write_timeout)
                 .build();
 
             // Register default routes (skip "/" if static files will be served at root or custom handler registered)
@@ -748,10 +811,10 @@ pub const Engine12 = struct {
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
-                .host("127.0.0.1")
-                .port(8080)
-                .readTimeout(5000)
-                .writeTimeout(5000)
+                .host(self.server_config.host)
+                .port(self.server_config.port)
+                .readTimeout(self.server_config.read_timeout)
+                .writeTimeout(self.server_config.write_timeout)
                 .build();
 
             // Register default routes (skip "/" if static files will be served at root or custom handler registered)
@@ -802,10 +865,10 @@ pub const Engine12 = struct {
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
-                .host("127.0.0.1")
-                .port(8080)
-                .readTimeout(5000)
-                .writeTimeout(5000)
+                .host(self.server_config.host)
+                .port(self.server_config.port)
+                .readTimeout(self.server_config.read_timeout)
+                .writeTimeout(self.server_config.write_timeout)
                 .build();
 
             // Register default routes (skip "/" if static files will be served at root or custom handler registered)
@@ -1462,10 +1525,10 @@ pub const Engine12 = struct {
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
-                .host("127.0.0.1")
-                .port(8080)
-                .readTimeout(5000)
-                .writeTimeout(5000)
+                .host(self.server_config.host)
+                .port(self.server_config.port)
+                .readTimeout(self.server_config.read_timeout)
+                .writeTimeout(self.server_config.write_timeout)
                 .build();
 
             // Register default routes (but skip "/" if we're mounting static files at root or custom handler registered)
@@ -1751,6 +1814,8 @@ pub const Engine12 = struct {
     }
 
     /// Start the entire system (HTTP server + background tasks + WebSocket servers)
+    /// This method returns immediately after starting the server.
+    /// Use listen() instead if you want to block until shutdown.
     pub fn start(self: *Engine12) !void {
         self.start_time = std.time.milliTimestamp();
         self.is_running = true;
@@ -1765,6 +1830,26 @@ pub const Engine12 = struct {
             registry.onAppStart() catch |err| {
                 std.debug.print("[Valve] Error during valve onAppStart: {}\n", .{err});
             };
+        }
+    }
+
+    /// Start the server and block until shutdown
+    /// This is the recommended way to run the server for most applications.
+    /// The method will block until stop() is called from another thread or signal handler.
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initDevelopment();
+    /// defer app.deinit();
+    /// try app.listen();  // Blocks until shutdown
+    /// ```
+    pub fn listen(self: *Engine12) !void {
+        try self.start();
+        self.printStatus();
+
+        // Block until is_running becomes false (set by stop())
+        while (self.is_running) {
+            std.Thread.sleep(100 * std.time.ns_per_ms);
         }
     }
 
@@ -1937,8 +2022,8 @@ pub const Engine12 = struct {
             self.routes_count,
             self.workers_count,
         });
-        std.debug.print("\nFrontend: http://127.0.0.1:8080/\n", .{});
-        std.debug.print("API: http://127.0.0.1:8080/api/todos\n\n", .{});
+        std.debug.print("\nFrontend: http://{s}:{d}/\n", .{ self.server_config.host, self.server_config.port });
+        std.debug.print("API: http://{s}:{d}/api/todos\n\n", .{ self.server_config.host, self.server_config.port });
     }
 };
 

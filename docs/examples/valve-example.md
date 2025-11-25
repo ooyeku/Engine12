@@ -163,11 +163,7 @@ pub fn main() !void {
     // Register your routes
     try app.get("/", handleRoot);
 
-    try app.start();
-    app.printStatus();
-    
-    // Keep server running
-    std.Thread.sleep(std.time.ns_per_min * 60);
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleRoot(req: *E12.Request) E12.Response {

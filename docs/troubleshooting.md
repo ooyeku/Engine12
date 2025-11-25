@@ -49,25 +49,41 @@ Update if needed or adjust `minimum_zig_version` in `build.zig.zon`.
    ```bash
    lsof -i :8080
    ```
-2. Kill the process or change the port in `src/engine12.zig` (default: 8080)
+2. Kill the process or change the port using server configuration:
+   ```zig
+   var app = try Engine12.initDevelopment();
+   app.setPort(3000);  // Use a different port
+   // Or: app.configure(.{ .port = 3000, .host = "0.0.0.0" });
+   try app.start();
+   ```
 
 **Problem**: Server starts but immediately exits.
 
-**Solution**: Ensure you're keeping the main thread alive:
+**Solution**: Use `listen()` instead of `start()`. The `listen()` method blocks until shutdown:
 
 ```zig
-// Keep server running
-std.Thread.sleep(std.time.ns_per_min * 60);
+var app = try Engine12.initDevelopment();
+defer app.deinit();
+
+try app.get("/", handleRoot);
+try app.listen();  // Blocks until shutdown (Ctrl+C to stop)
 ```
 
-Or use a signal handler for graceful shutdown.
+If you need the non-blocking `start()` method, you must keep the main thread alive:
+
+```zig
+try app.start();
+while (app.is_running) {
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+}
+```
 
 ### Routes Not Working
 
 **Problem**: Routes return 404 Not Found.
 
 **Solution**:
-1. Verify routes are registered before `app.start()`
+1. Verify routes are registered before `app.listen()` or `app.start()`
 2. Check route patterns match exactly (including leading `/`)
 3. Ensure route parameters use `:param` syntax:
    ```zig
@@ -169,10 +185,27 @@ chmod 755 /path/to/database/directory
 
 ### ORM Issues
 
+**Problem**: ORM can't find table - "no such table" error.
+
+**Solution**: The ORM now uses automatic pluralization for table names:
+- `User` struct -> `users` table
+- `Todo` struct -> `todos` table
+- `Category` struct -> `categories` table
+
+Ensure your database table uses the pluralized name, or use a custom table name:
+
+```zig
+const User = struct {
+    pub const table_name = "user"; // Force singular table name
+    id: i64,
+    username: []const u8,
+};
+```
+
 **Problem**: "Todo not found" even when record exists.
 
 **Solution**: 
-1. Check table name matches struct name (case-sensitive)
+1. Check table name follows pluralization convention (see above)
 2. Verify ID field exists and is named `id`
 3. Ensure `id` field is `i64` type
 

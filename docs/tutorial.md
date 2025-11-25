@@ -70,6 +70,53 @@ This tutorial will guide you through building a complete web application with En
 - A text editor or IDE
 - (Optional) Engine12 CLI tool for project scaffolding: `e12 new`
 
+## Understanding Engine12 Imports
+
+Engine12 uses a clean, consistent import structure. All types are re-exported from the main module:
+
+```zig
+const E12 = @import("engine12");
+
+// Core types
+const Engine12 = E12.Engine12;
+const Request = E12.Request;
+const Response = E12.Response;
+const ServerConfig = E12.ServerConfig;
+
+// ORM types
+const ORM = E12.orm.ORM;
+const Database = E12.orm.Database;
+const Migration = E12.orm.Migration;
+
+// Middleware and utilities
+const Json = E12.Json;
+const HandlerCtx = E12.HandlerCtx;
+const BasicAuthValve = E12.BasicAuthValve;
+
+// WebSocket
+const WebSocketManager = E12.WebSocketManager;
+const WebSocketRoom = E12.WebSocketRoom;
+```
+
+You can also use a single import with a short alias for convenience:
+
+```zig
+const E12 = @import("engine12");
+
+pub fn main() !void {
+    var app = try E12.Engine12.initDevelopment();
+    defer app.deinit();
+    
+    try app.get("/", handleRoot);
+    try app.listen();  // Blocks until shutdown
+}
+
+fn handleRoot(req: *E12.Request) E12.Response {
+    _ = req;
+    return E12.Response.text("Hello!");
+}
+```
+
 ## Step 1: Setup Project
 
 ### 1.1 Create Project Structure
@@ -181,10 +228,7 @@ pub fn main() !void {
     defer app.deinit();
 
     try app.get("/", handleRoot);
-    try app.start();
-
-    // Keep server running
-    std.Thread.sleep(std.time.ns_per_min * 60);
+    try app.listen();  // Blocks until shutdown (Ctrl+C to stop)
 }
 ```
 
@@ -195,6 +239,40 @@ zig build run
 ```
 
 Visit `http://127.0.0.1:8080` in your browser. You should see "Hello, World!".
+
+**Note**: `listen()` blocks until the server is stopped. Use `start()` instead if you need the method to return immediately (non-blocking).
+
+### 2.1 Server Configuration
+
+By default, the server runs on `127.0.0.1:8080`. You can customize this using `configure()` or convenience methods:
+
+```zig
+pub fn main() !void {
+    var app = try Engine12.initDevelopment();
+    defer app.deinit();
+
+    // Option 1: Configure with struct
+    app.configure(.{
+        .host = "0.0.0.0",  // Listen on all interfaces
+        .port = 3000,       // Custom port
+        .read_timeout = 10000,  // 10 seconds
+        .write_timeout = 10000,
+    });
+
+    // Option 2: Use convenience methods
+    app.setPort(3000);
+    app.setHost("0.0.0.0");
+
+    try app.get("/", handleRoot);
+    try app.listen();  // Blocks until shutdown, prints status automatically
+}
+```
+
+**ServerConfig options:**
+- `host`: Server bind address (default: `"127.0.0.1"`)
+- `port`: Server port (default: `8080`)
+- `read_timeout`: Read timeout in ms (default: `5000`)
+- `write_timeout`: Write timeout in ms (default: `5000`)
 
 ## Step 3: Add Routes
 
@@ -275,11 +353,7 @@ pub fn main() !void {
     try app.get("/todos/:id", handleGetTodo);
     try app.delete("/todos/:id", handleDeleteTodo);
 
-    try app.start();
-    app.printStatus();
-
-    // Keep server running
-    std.Thread.sleep(std.time.ns_per_min * 60);
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -298,11 +372,27 @@ Now let's add persistent storage with SQLite.
 
 **Note**: The ORM maps columns to struct fields by name, not by position. This means column order in your queries doesn't need to match struct field order - the ORM will automatically match columns by name.
 
+**Table Naming Convention**:
+The ORM automatically pluralizes struct names for table names:
+- `User` struct -> `users` table
+- `Todo` struct -> `todos` table
+- `Category` struct -> `categories` table
+
+To override this, add a `table_name` declaration to your struct:
+```zig
+const AppUser = struct {
+    pub const table_name = "app_users"; // Custom table name
+    id: i64,
+    username: []const u8,
+};
+```
+
 **New in this version**:
 - `whereWithOptions()` - Query with ORDER BY support
 - `upsert()` / `upsertIgnore()` - Insert or replace records silently
 - `whereManaged()` - Automatic memory management for query results
 - Improved error messages with SQL, table name, and context
+- Automatic table name pluralization
 
 ### 4.1 Initialize Database
 
@@ -597,7 +687,7 @@ pub fn main() !void {
     const template = try app.loadTemplate("templates/index.zt.html");
 
     try app.get("/", handleIndex);
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *E12.Request) E12.Response {
@@ -655,7 +745,7 @@ pub fn main() !void {
 
     // Register route that uses discovered template
     try app.get("/", handleIndex);
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *E12.Request) E12.Response {
@@ -749,7 +839,7 @@ pub fn main() !void {
     });
 
     try app.get("/", handleRoot);
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 // Store app reference globally or pass logger to handler
@@ -914,7 +1004,7 @@ pub fn main() !void {
         .validator = validateTodo,
     });
 
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -1118,7 +1208,7 @@ pub fn main() !void {
     // Register your routes
     try app.get("/", handleRoot);
 
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -1325,8 +1415,8 @@ pub fn main() !void {
     // Register protected route
     try app.get("/protected", handleProtected);
     
-    // Start app (migration runs automatically)
-    try app.start();
+    // Start app (migration runs automatically, blocks until shutdown)
+    try app.listen();
 }
 
 fn handleProtected(req: *E12.Request) E12.Response {
@@ -1759,7 +1849,7 @@ pub fn main() !void {
     try app.get("/", handleIndex);
     try app.restApi("/api/items", Item, config);
     
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *Request) Response {

@@ -29,7 +29,7 @@ pub fn main() !void {
     defer app.deinit();
 
     try app.get("/", handleRoot);
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -79,15 +79,16 @@ exe.linkLibC();
 ## Features
 
 - **HTTP Routing** - GET, POST, PUT, DELETE, PATCH with route parameters
+- **Server Configuration** - Configurable host, port, and timeouts via `configure()` or `setPort()`/`setHost()`
 - **WebSocket Support** - Real-time bidirectional communication with room management
 - **Hot Reloading** - Automatic template and static file reloading in development mode
 - **Auto-Discovery** - Automatic migration, static file, and template discovery to reduce boilerplate
 - **Project Scaffolding** - CLI tool (`e12 new`) to generate projects with recommended structure
 - **Structured Logging** - JSON and human-readable logging with multiple destinations (stdout, file, syslog)
 - **Middleware System** - Pre-request and response middleware chains
-- **SQLite ORM** - Type-safe database operations with migrations
+- **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, and managed memory
 - **Template Engine** - Server-side HTML rendering
-- **Request/Response API** - Clean, memory-safe HTTP handling
+- **Request/Response API** - Clean, memory-safe HTTP handling with struct-to-JSON convenience methods
 - **Rate Limiting** - Per-route rate limiting
 - **CSRF Protection** - Built-in CSRF token validation
 - **Metrics & Health Checks** - Request timing and health monitoring

@@ -74,6 +74,109 @@ const profile = ServerProfile{
 var app = try Engine12.initWithProfile(profile);
 ```
 
+### Server Configuration
+
+#### `ServerConfig` struct
+Configuration options for the HTTP server.
+
+```zig
+pub const ServerConfig = struct {
+    host: []const u8 = "127.0.0.1",  // Server bind address
+    port: u16 = 8080,                 // Server port
+    read_timeout: u32 = 5000,         // Read timeout in ms
+    write_timeout: u32 = 5000,        // Write timeout in ms
+};
+```
+
+#### `configure(config: ServerConfig) void`
+Configure server settings. Must be called before `start()`.
+
+```zig
+var app = try Engine12.initDevelopment();
+app.configure(.{
+    .host = "0.0.0.0",
+    .port = 3000,
+    .read_timeout = 10000,
+    .write_timeout = 10000,
+});
+try app.start();
+```
+
+#### `setPort(port: u16) void`
+Convenience method to set only the server port.
+
+```zig
+app.setPort(3000);
+```
+
+#### `setHost(host: []const u8) void`
+Convenience method to set only the server host.
+
+```zig
+app.setHost("0.0.0.0");  // Listen on all interfaces
+```
+
+#### `getPort() u16`
+Get the configured server port.
+
+```zig
+const port = app.getPort();  // Returns 8080 by default
+```
+
+#### `getHost() []const u8`
+Get the configured server host.
+
+```zig
+const host = app.getHost();  // Returns "127.0.0.1" by default
+```
+
+### Server Lifecycle
+
+#### `listen() !void`
+Start the server and block until shutdown. This is the recommended way to run the server for most applications.
+
+```zig
+var app = try Engine12.initDevelopment();
+defer app.deinit();
+
+try app.get("/", handleRoot);
+try app.listen();  // Blocks until stop() is called or Ctrl+C
+```
+
+The method will print the server status and then block until `stop()` is called from another thread or signal handler.
+
+#### `start() !void`
+Start the server without blocking. Returns immediately after starting all components. Use this when you need non-blocking behavior.
+
+```zig
+var app = try Engine12.initDevelopment();
+defer app.deinit();
+
+try app.get("/", handleRoot);
+try app.start();  // Returns immediately
+
+// Your custom main loop here
+while (app.is_running) {
+    // Do other work
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+}
+```
+
+#### `stop() !void`
+Initiate graceful shutdown. Waits for in-flight requests to complete (with timeout), then stops all components.
+
+```zig
+try app.stop();
+```
+
+**Comparison:**
+
+| Method | Behavior | Use Case |
+|--------|----------|----------|
+| `listen()` | Starts server, blocks until shutdown | Recommended for most applications |
+| `start()` | Starts server, returns immediately | When you need non-blocking behavior |
+| `stop()` | Initiates graceful shutdown | Called from signal handler or another thread |
+
 ### Route Registration
 
 #### `get(comptime path_pattern: []const u8, comptime handler: anytype) !void`
@@ -327,7 +430,7 @@ pub fn main() !void {
         .validator = validateTodo,
     });
 
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -1527,8 +1630,8 @@ var auth_valve = E12.BasicAuthValve.init(.{
 // Register valve
 try app.registerValve(&auth_valve.valve);
 
-// Start app (migration runs automatically on app start)
-try app.start();
+// Start app (migration runs automatically on app start, blocks until shutdown)
+try app.listen();
 ```
 
 **Security Features:**
@@ -1603,7 +1706,7 @@ pub fn main() !void {
     var my_valve = MyValve.init("config-value");
     try app.registerValve(&my_valve.valve);
 
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -2306,6 +2409,40 @@ Close the database connection. Use this with `init()`, use `deinitPtr()` with `i
 var orm = ORM.init(db, allocator);
 defer orm.close();
 ```
+
+### Table Naming Convention
+
+The ORM automatically determines table names from struct names by:
+1. Converting to lowercase
+2. Pluralizing (adding "s", "es", or handling special cases)
+
+**Examples:**
+- `User` struct -> `users` table
+- `Todo` struct -> `todos` table
+- `Category` struct -> `categories` table
+- `Box` struct -> `boxes` table
+- `Person` struct -> `people` table (irregular)
+
+**Custom Table Names:**
+To override the automatic naming, add a `table_name` declaration to your struct:
+
+```zig
+const AppUser = struct {
+    pub const table_name = "app_users";
+    id: i64,
+    username: []const u8,
+    email: []const u8,
+};
+
+// ORM will use "app_users" instead of "appusers"
+try orm.create(AppUser, user);
+```
+
+**Pluralization Rules:**
+- Regular words: add "s" (user -> users, todo -> todos)
+- Words ending in s, x, z, ch, sh: add "es" (box -> boxes, watch -> watches)
+- Words ending in consonant + y: change to "ies" (category -> categories)
+- Irregular words: handled specially (person -> people, child -> children)
 
 ### CRUD Operations
 
@@ -3104,7 +3241,7 @@ pub fn main() !void {
     // Register route that uses discovered template
     try app.get("/", handleIndex);
     
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *Request) Response {
@@ -3735,7 +3872,7 @@ pub fn main() !void {
     // Register route that uses discovered template
     try app.get("/", handleIndex);
     
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *Request) Response {
@@ -3851,7 +3988,7 @@ pub fn main() !void {
     // Serve static files (cache disabled in dev mode)
     try app.serveStatic("/", "./frontend");
 
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 fn handleIndex(req: *Engine12.Request) Engine12.Response {
@@ -4092,7 +4229,7 @@ pub fn main() !void {
     // Register HTTP routes
     try app.get("/", handleRoot);
     
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 ```
 
@@ -4351,7 +4488,7 @@ pub fn main() !void {
 
     // Custom logging in handlers
     try app.get("/", handleRoot);
-    try app.start();
+    try app.listen();  // Blocks until shutdown
 }
 
 // Store app reference globally or pass logger to handler

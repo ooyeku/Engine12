@@ -31,6 +31,7 @@ pub const hot_reload = @import("hot_reload/module.zig");
 
 // Re-export main types for convenience
 pub const Engine12 = engine12.Engine12;
+pub const ServerConfig = engine12.ServerConfig;
 pub const FileServer = fileserver.FileServer;
 pub const Request = request.Request;
 pub const Response = response.Response;

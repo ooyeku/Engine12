@@ -624,9 +624,8 @@ pub fn main() !void {
     // 15. Health checks
     try app.registerHealthCheck(&checkDatabaseHealth);
 
-    // Start server
-    try app.start();
-    app.printStatus();
+    // Start server (blocks until shutdown)
+    try app.listen();
 }
 ```
 

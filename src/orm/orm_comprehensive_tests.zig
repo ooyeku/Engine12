@@ -17,7 +17,8 @@ test "ORM create - basic insert" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    // Table names are now pluralized automatically: User -> users
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
 
@@ -30,7 +31,7 @@ test "ORM create - basic insert" {
     try orm.create(User, user);
 
     // Verify the insert worked
-    var result = try orm.query("SELECT * FROM User");
+    var result = try orm.query("SELECT * FROM users");
     defer result.deinit();
     try std.testing.expect(result.columnCount() == 3);
 
@@ -51,7 +52,8 @@ test "ORM create - with auto-increment id" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    // Table names are now pluralized automatically: User -> users
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
 
     var orm = ORM.init(db, allocator);
 
@@ -87,7 +89,7 @@ test "ORM create - with optional fields (null values skipped)" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
 
     var orm = ORM.init(db, allocator);
 
@@ -100,7 +102,7 @@ test "ORM create - with optional fields (null values skipped)" {
     try orm.create(User, user);
 
     // Verify only name was inserted (description should be NULL in DB)
-    var result = try orm.query("SELECT name, description FROM User");
+    var result = try orm.query("SELECT name, description FROM users");
     defer result.deinit();
 
     const row = result.nextRow();
@@ -122,7 +124,7 @@ test "ORM create - with enum field" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
 
     var orm = ORM.init(db, allocator);
 
@@ -135,7 +137,7 @@ test "ORM create - with enum field" {
     try orm.create(User, user);
 
     // Verify enum was stored as integer
-    var result = try orm.query("SELECT status FROM User");
+    var result = try orm.query("SELECT status FROM users");
     defer result.deinit();
 
     const row = result.nextRow();
@@ -155,8 +157,8 @@ test "ORM find - existing record" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
-    try db.execute("INSERT INTO User (name) VALUES ('Alice')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
 
     var orm = ORM.init(db, allocator);
 
@@ -179,7 +181,7 @@ test "ORM find - non-existent record" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     var orm = ORM.init(db, allocator);
 
@@ -198,10 +200,10 @@ test "ORM findAll - multiple records" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
-    try db.execute("INSERT INTO User (name) VALUES ('Alice')");
-    try db.execute("INSERT INTO User (name) VALUES ('Bob')");
-    try db.execute("INSERT INTO User (name) VALUES ('Charlie')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+    try db.execute("INSERT INTO users (name) VALUES ('Charlie')");
 
     var orm = ORM.init(db, allocator);
 
@@ -230,7 +232,7 @@ test "ORM findAll - empty table" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     var orm = ORM.init(db, allocator);
 
@@ -253,9 +255,9 @@ test "ORM findAll - with enum field" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
-    try db.execute("INSERT INTO User (name, status) VALUES ('Alice', 1)");
-    try db.execute("INSERT INTO User (name, status) VALUES ('Bob', 2)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
+    try db.execute("INSERT INTO users (name, status) VALUES ('Alice', 1)");
+    try db.execute("INSERT INTO users (name, status) VALUES ('Bob', 2)");
 
     var orm = ORM.init(db, allocator);
 
@@ -284,9 +286,9 @@ test "ORM findAll - with optional fields" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
-    try db.execute("INSERT INTO User (name, description) VALUES ('Alice', 'Test')");
-    try db.execute("INSERT INTO User (name, description) VALUES ('Bob', NULL)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
+    try db.execute("INSERT INTO users (name, description) VALUES ('Alice', 'Test')");
+    try db.execute("INSERT INTO users (name, description) VALUES ('Bob', NULL)");
 
     var orm = ORM.init(db, allocator);
 
@@ -316,10 +318,10 @@ test "ORM where - simple condition" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
-    try db.execute("INSERT INTO User (name, age) VALUES ('Alice', 25)");
-    try db.execute("INSERT INTO User (name, age) VALUES ('Bob', 30)");
-    try db.execute("INSERT INTO User (name, age) VALUES ('Charlie', 25)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Alice', 25)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Bob', 30)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Charlie', 25)");
 
     var orm = ORM.init(db, allocator);
 
@@ -347,8 +349,8 @@ test "ORM where - empty result" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
-    try db.execute("INSERT INTO User (name) VALUES ('Alice')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
 
     var orm = ORM.init(db, allocator);
 
@@ -374,8 +376,8 @@ test "ORM update - basic update" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
-    try db.execute("INSERT INTO User (name) VALUES ('Alice')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
 
     var orm = ORM.init(db, allocator);
 
@@ -405,8 +407,8 @@ test "ORM update - with optional fields (null skipped)" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
-    try db.execute("INSERT INTO User (name, description) VALUES ('Alice', 'Original')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, description TEXT)");
+    try db.execute("INSERT INTO users (name, description) VALUES ('Alice', 'Original')");
 
     var orm = ORM.init(db, allocator);
 
@@ -419,7 +421,7 @@ test "ORM update - with optional fields (null skipped)" {
     try orm.update(User, updated_user);
 
     // Verify name was updated but description remains unchanged
-    var result = try orm.query("SELECT name, description FROM User WHERE id = 1");
+    var result = try orm.query("SELECT name, description FROM users WHERE id = 1");
     defer result.deinit();
 
     const row = result.nextRow();
@@ -441,8 +443,8 @@ test "ORM update - with enum field" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
-    try db.execute("INSERT INTO User (name, status) VALUES ('Alice', 0)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, status INTEGER)");
+    try db.execute("INSERT INTO users (name, status) VALUES ('Alice', 0)");
 
     var orm = ORM.init(db, allocator);
 
@@ -472,9 +474,9 @@ test "ORM delete - basic delete" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
-    try db.execute("INSERT INTO User (name) VALUES ('Alice')");
-    try db.execute("INSERT INTO User (name) VALUES ('Bob')");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
 
     var orm = ORM.init(db, allocator);
 
@@ -503,7 +505,7 @@ test "ORM delete - non-existent record" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     var orm = ORM.init(db, allocator);
 
@@ -533,7 +535,7 @@ test "ORM full CRUD cycle" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    try db.execute("CREATE TABLE User (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
 
@@ -588,8 +590,8 @@ test "ORM findAll - column count mismatch detection" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Create table with more columns than struct fields (use lowercase to match getTableName)
-    try db.execute("CREATE TABLE user (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    // Create table with more columns than struct fields (now uses pluralized table name)
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
 
@@ -608,8 +610,8 @@ test "ORM where - column count mismatch detection" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Create table with more columns than struct fields (use lowercase to match getTableName)
-    try db.execute("CREATE TABLE user (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    // Create table with more columns than struct fields (now uses pluralized table name)
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
 
