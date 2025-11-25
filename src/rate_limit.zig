@@ -38,6 +38,7 @@ pub const RateLimitEntry = struct {
 };
 
 /// Rate limiter for tracking requests per IP and per route
+/// Thread-safe: all public methods are protected by a mutex
 pub const RateLimiter = struct {
     /// Per-IP rate limits
     ip_limits: std.StringHashMap(RateLimitEntry),
@@ -53,6 +54,9 @@ pub const RateLimiter = struct {
 
     allocator: std.mem.Allocator,
 
+    /// Mutex for thread-safe access to all hash maps
+    mutex: std.Thread.Mutex = .{},
+
     pub fn init(allocator: std.mem.Allocator, global_config: RateLimitConfig) RateLimiter {
         return RateLimiter{
             .ip_limits = std.StringHashMap(RateLimitEntry).init(allocator),
@@ -60,11 +64,15 @@ pub const RateLimiter = struct {
             .global_config = global_config,
             .route_configs = std.StringHashMap(RateLimitConfig).init(allocator),
             .allocator = allocator,
+            .mutex = .{},
         };
     }
 
     /// Set rate limit config for a specific route
+    /// Thread-safe: protected by mutex
     pub fn setRouteConfig(self: *RateLimiter, route: []const u8, config: RateLimitConfig) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         try self.route_configs.put(route, config);
     }
 
@@ -89,7 +97,11 @@ pub const RateLimiter = struct {
 
     /// Check if request should be rate limited
     /// Returns null if allowed, or an error response if rate limited
+    /// Thread-safe: protected by mutex
     pub fn check(self: *RateLimiter, req: *Request, route: []const u8) !?Response {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const config = self.route_configs.get(route) orelse self.global_config;
         const client_ip = self.getClientIP(req);
 
@@ -135,7 +147,11 @@ pub const RateLimiter = struct {
     }
 
     /// Clean up expired entries periodically
+    /// Thread-safe: protected by mutex
     pub fn cleanup(self: *RateLimiter) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         // Clean up expired IP entries
         var ip_iterator = self.ip_limits.iterator();
         var keys_to_remove = std.ArrayListUnmanaged([]const u8){};

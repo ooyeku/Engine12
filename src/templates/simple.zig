@@ -3,6 +3,7 @@ const std = @import("std");
 /// Simple template rendering utility for runtime template processing
 /// Reads template files from disk and performs basic variable replacement
 /// Works without hot reload (production-safe)
+/// Uses single-pass streaming rendering for O(n) performance
 ///
 /// Example:
 /// ```zig
@@ -38,82 +39,115 @@ pub fn renderSimple(
     // Get variable struct type info
     const VariableType = @TypeOf(variables);
     const type_info = @typeInfo(VariableType);
-    if (type_info != .Struct) {
+    if (type_info != .@"struct") {
         return error.InvalidVariableType;
     }
 
-    var result = try allocator.dupe(u8, template_content);
-    errdefer allocator.free(result);
+    // Use single-pass streaming rendering for O(n) performance
+    return renderStreaming(template_content, variables, allocator);
+}
 
-    // Replace each field in the struct
-    inline for (type_info.Struct.fields) |field| {
-        const field_name = field.name;
-        const field_value = @field(variables, field_name);
+/// Single-pass streaming template rendering
+/// Scans template once, outputs literal segments and variable values directly
+/// Avoids O(n*m) complexity of iterative string replacement
+fn renderStreaming(
+    template: []const u8,
+    variables: anytype,
+    allocator: std.mem.Allocator,
+) ![]u8 {
+    // Pre-allocate output buffer (estimate: template size + some extra for variable values)
+    var output = std.ArrayList(u8).init(allocator);
+    errdefer output.deinit();
+    try output.ensureTotalCapacity(template.len + 1024);
 
-        // Convert field value to string
-        const value_str = switch (@typeInfo(@TypeOf(field_value))) {
-            .Pointer => |ptr_info| switch (ptr_info.size) {
-                .Slice => if (ptr_info.child == u8) field_value else blk: {
-                    // For non-string slices, format as JSON or use default
-                    var buffer = std.ArrayList(u8).init(allocator);
-                    defer buffer.deinit();
-                    try std.fmt.format(buffer.writer(), "{}", .{field_value});
-                    break :blk try buffer.toOwnedSlice();
-                },
-                else => blk: {
-                    var buffer = std.ArrayList(u8).init(allocator);
-                    defer buffer.deinit();
-                    try std.fmt.format(buffer.writer(), "{}", .{field_value});
-                    break :blk try buffer.toOwnedSlice();
-                },
-            },
-            .Int, .ComptimeInt => blk: {
-                var buffer = std.ArrayList(u8).init(allocator);
-                defer buffer.deinit();
-                try std.fmt.format(buffer.writer(), "{d}", .{field_value});
-                break :blk try buffer.toOwnedSlice();
-            },
-            .Float, .ComptimeFloat => blk: {
-                var buffer = std.ArrayList(u8).init(allocator);
-                defer buffer.deinit();
-                try std.fmt.format(buffer.writer(), "{d}", .{field_value});
-                break :blk try buffer.toOwnedSlice();
-            },
-            .Bool => if (field_value) "true" else "false",
-            .Optional => if (field_value) |val| blk: {
-                // Recursively handle optional value
-                var buffer = std.ArrayList(u8).init(allocator);
-                defer buffer.deinit();
-                try std.fmt.format(buffer.writer(), "{}", .{val});
-                break :blk try buffer.toOwnedSlice();
-            } else "",
-            else => blk: {
-                // Default: format as string
-                var buffer = std.ArrayList(u8).init(allocator);
-                defer buffer.deinit();
-                try std.fmt.format(buffer.writer(), "{}", .{field_value});
-                break :blk try buffer.toOwnedSlice();
-            },
-        };
+    var pos: usize = 0;
 
-        // Create replacement pattern: {{ .field_name }}
-        const pattern = try std.fmt.allocPrint(allocator, "{{{{ .{s} }}}}", .{field_name});
-        defer allocator.free(pattern);
-
-        // Replace all occurrences
-        const new_result = try std.mem.replaceOwned(u8, allocator, result, pattern, value_str);
-        allocator.free(result);
-        result = new_result;
-
-        // Free value_str if it was allocated
-        if (@typeInfo(@TypeOf(field_value)) != .Pointer or
-            (@typeInfo(@TypeOf(field_value)) == .Pointer and @typeInfo(@TypeOf(field_value)).Pointer.size != .Slice))
+    while (pos < template.len) {
+        // Look for start of variable placeholder: {{
+        if (pos + 1 < template.len and
+            template[pos] == '{' and
+            template[pos + 1] == '{')
         {
-            allocator.free(value_str);
+            // Find the closing }}
+            const var_start = pos + 2;
+            var var_end = var_start;
+            while (var_end + 1 < template.len) {
+                if (template[var_end] == '}' and template[var_end + 1] == '}') {
+                    break;
+                }
+                var_end += 1;
+            }
+
+            if (var_end + 1 < template.len) {
+                // Extract variable name (trim whitespace and leading dot)
+                var var_name = std.mem.trim(u8, template[var_start..var_end], " \t\n\r");
+                if (var_name.len > 0 and var_name[0] == '.') {
+                    var_name = var_name[1..];
+                }
+
+                // Look up variable value and append to output
+                var found = false;
+                inline for (@typeInfo(@TypeOf(variables)).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field.name, var_name)) {
+                        const field_value = @field(variables, field.name);
+                        try appendFieldValue(&output, field_value, allocator);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    // Variable not found - output placeholder as-is
+                    try output.appendSlice(template[pos .. var_end + 2]);
+                }
+
+                pos = var_end + 2;
+                continue;
+            }
         }
+
+        // Output literal character
+        try output.append(template[pos]);
+        pos += 1;
     }
 
-    return result;
+    return output.toOwnedSlice();
+}
+
+/// Append a field value to the output buffer
+fn appendFieldValue(output: *std.ArrayList(u8), field_value: anytype, allocator: std.mem.Allocator) !void {
+    const T = @TypeOf(field_value);
+    const type_info = @typeInfo(T);
+
+    switch (type_info) {
+        .pointer => |ptr_info| {
+            if (ptr_info.size == .slice and ptr_info.child == u8) {
+                // String - append directly (fast path)
+                try output.appendSlice(field_value);
+            } else {
+                // Other slice types - format
+                try std.fmt.format(output.writer(), "{}", .{field_value});
+            }
+        },
+        .int, .comptime_int => {
+            try std.fmt.format(output.writer(), "{d}", .{field_value});
+        },
+        .float, .comptime_float => {
+            try std.fmt.format(output.writer(), "{d}", .{field_value});
+        },
+        .bool => {
+            try output.appendSlice(if (field_value) "true" else "false");
+        },
+        .optional => {
+            if (field_value) |val| {
+                try appendFieldValue(output, val, allocator);
+            }
+            // null outputs nothing
+        },
+        else => {
+            try std.fmt.format(output.writer(), "{}", .{field_value});
+        },
+    }
 }
 
 test "renderSimple with string variables" {

@@ -3,8 +3,58 @@ const std = @import("std");
 /// JSON serialization and deserialization utilities
 /// Provides comptime type-safe JSON parsing and formatting
 pub const Json = struct {
+    /// Comptime estimate of JSON size for a given type
+    /// Used for pre-allocation to avoid repeated buffer growth
+    /// Returns a conservative estimate (may be larger than actual output)
+    fn estimateJsonSize(comptime T: type) usize {
+        const type_info = @typeInfo(T);
+
+        return switch (type_info) {
+            .@"struct" => blk: {
+                var size: usize = 2; // "{}"
+                inline for (std.meta.fields(T)) |field| {
+                    size += field.name.len + 4; // "field_name":
+                    size += estimateFieldSize(field.type);
+                    size += 1; // comma
+                }
+                break :blk size;
+            },
+            .int => 20, // Max i64 is 19 digits + sign
+            .float => 24, // Max f64 representation
+            .bool => 5, // "false"
+            .optional => |opt_info| estimateFieldSize(opt_info.child) + 4, // "null"
+            .pointer => |ptr_info| {
+                if (ptr_info.size == .slice and ptr_info.child == u8) {
+                    return 256; // Default string estimate
+                }
+                return 128; // Default array estimate
+            },
+            else => 64, // Default estimate for unknown types
+        };
+    }
+
+    fn estimateFieldSize(comptime T: type) usize {
+        const type_info = @typeInfo(T);
+
+        return switch (type_info) {
+            .int => 20,
+            .float => 24,
+            .bool => 5,
+            .optional => |opt_info| estimateFieldSize(opt_info.child) + 4,
+            .pointer => |ptr_info| {
+                if (ptr_info.size == .slice and ptr_info.child == u8) {
+                    return 256; // Default string estimate with quotes and escaping
+                }
+                return 128; // Default array estimate
+            },
+            .@"struct" => estimateJsonSize(T),
+            else => 64,
+        };
+    }
+
     /// Serialize a struct to JSON string
     /// Uses comptime introspection to automatically handle all fields
+    /// Pre-allocates buffer based on type analysis to minimize reallocations
     ///
     /// Example:
     /// ```zig
@@ -16,6 +66,10 @@ pub const Json = struct {
     pub fn serialize(comptime T: type, value: T, allocator: std.mem.Allocator) ![]const u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
+
+        // Pre-allocate based on comptime size estimate to minimize reallocations
+        const estimated_size = comptime estimateJsonSize(T);
+        try list.ensureTotalCapacity(allocator, estimated_size);
 
         try serializeValue(T, value, &list, allocator);
         return list.toOwnedSlice(allocator);
@@ -38,6 +92,7 @@ pub const Json = struct {
     }
 
     /// Serialize an array of structs to JSON array
+    /// Pre-allocates buffer based on type and array length to minimize reallocations
     ///
     /// Example:
     /// ```zig
@@ -48,6 +103,11 @@ pub const Json = struct {
     pub fn serializeArray(comptime T: type, items: []const T, allocator: std.mem.Allocator) ![]const u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
+
+        // Pre-allocate based on comptime size estimate * item count
+        const item_size = comptime estimateJsonSize(T);
+        const estimated_size = 2 + (item_size + 1) * items.len; // [] + items + commas
+        try list.ensureTotalCapacity(allocator, estimated_size);
 
         try list.writer(allocator).print("[", .{});
         for (items, 0..) |item, i| {

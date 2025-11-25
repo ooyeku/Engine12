@@ -3,10 +3,18 @@ const ziggurat = @import("ziggurat");
 const router = @import("router.zig");
 const parsers = @import("parsers.zig");
 
+/// Global atomic counter for fast request ID generation
+/// Uses monotonically increasing counter instead of RNG for better performance
+var request_id_counter: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
 /// engine12 Request wrapper around ziggurat.request.Request
 /// Provides a clean API that abstracts ziggurat implementation details
 /// Each request gets its own arena allocator for memory-safe temporary allocations
 pub const Request = struct {
+    // Fixed-size array constants for common cases (avoids HashMap allocation overhead)
+    const MAX_CONTEXT_ENTRIES = 16;
+    const MAX_ROUTE_PARAMS = 8;
+
     /// Internal pointer to ziggurat request (not exposed)
     inner: *ziggurat.request.Request,
 
@@ -14,10 +22,28 @@ pub const Request = struct {
     /// Use this for all temporary allocations (query params, route params, parsed body, etc.)
     arena: std.heap.ArenaAllocator,
 
+    // Fixed-size arrays for context (fast path - no allocation for typical use cases)
+    _context_keys: [MAX_CONTEXT_ENTRIES]?[]const u8 = .{null} ** MAX_CONTEXT_ENTRIES,
+    _context_values: [MAX_CONTEXT_ENTRIES]?[]const u8 = .{null} ** MAX_CONTEXT_ENTRIES,
+    _context_count: usize = 0,
+
+    // Fixed-size arrays for route params (fast path - no allocation for typical use cases)
+    _route_param_keys: [MAX_ROUTE_PARAMS]?[]const u8 = .{null} ** MAX_ROUTE_PARAMS,
+    _route_param_values: [MAX_ROUTE_PARAMS]?[]const u8 = .{null} ** MAX_ROUTE_PARAMS,
+    _route_param_count: usize = 0,
+
+    /// Overflow HashMap for context (lazy-initialized only when arrays are full)
+    _context_overflow: ?std.StringHashMap([]const u8) = null,
+
+    /// Overflow HashMap for route params (lazy-initialized only when arrays are full)
+    _route_params_overflow: ?std.StringHashMap([]const u8) = null,
+
     /// Request context for storing per-request data (e.g., user_id, request_id)
+    /// Deprecated: Use set()/get() methods which use optimized fixed-size arrays
     context: std.StringHashMap([]const u8),
 
     /// Route parameters extracted from URL path (e.g., from "/todos/:id")
+    /// Deprecated: Use param()/setRouteParams() methods which use optimized fixed-size arrays
     route_params: std.StringHashMap([]const u8),
 
     /// Parsed query parameters (lazy-loaded)
@@ -298,6 +324,7 @@ pub const Request = struct {
 
     /// Get a route parameter by name
     /// Returns a Param wrapper that provides type-safe conversion methods
+    /// Uses fixed-size array for fast path lookup
     /// Validates parameter value length to prevent DoS attacks
     ///
     /// Example:
@@ -306,6 +333,33 @@ pub const Request = struct {
     /// const limit = req.param("limit").asU32Default(10);
     /// ```
     pub fn param(self: *const Request, name: []const u8) router.Param {
+        // Fast path: check fixed-size array first
+        for (0..self._route_param_count) |i| {
+            if (self._route_param_keys[i]) |existing_key| {
+                if (std.mem.eql(u8, existing_key, name)) {
+                    const value = self._route_param_values[i] orelse "";
+                    // Validate parameter value length to prevent DoS
+                    if (value.len > 1024) {
+                        std.debug.print("[Request Warning] Route parameter '{s}' value exceeds maximum length (1024 bytes)\n", .{name});
+                        return router.Param{ .value = "" };
+                    }
+                    return router.Param{ .value = value };
+                }
+            }
+        }
+
+        // Slow path: check overflow HashMap
+        if (self._route_params_overflow) |overflow| {
+            if (overflow.get(name)) |value| {
+                if (value.len > 1024) {
+                    std.debug.print("[Request Warning] Route parameter '{s}' value exceeds maximum length (1024 bytes)\n", .{name});
+                    return router.Param{ .value = "" };
+                }
+                return router.Param{ .value = value };
+            }
+        }
+
+        // Legacy fallback
         const value = self.route_params.get(name) orelse "";
         // Validate parameter value length to prevent DoS
         if (value.len > 1024) {
@@ -317,6 +371,7 @@ pub const Request = struct {
 
     /// Get a route parameter with direct type conversion
     /// Returns error union - fails if parameter is missing or conversion fails
+    /// Uses fixed-size array for fast path lookup
     /// Supports: u32, i32, u64, i64, f64, bool, []const u8
     ///
     /// Example:
@@ -325,15 +380,39 @@ pub const Request = struct {
     /// const slug = try request.paramTyped([]const u8, "slug");
     /// ```
     pub fn paramTyped(self: *const Request, comptime T: type, name: []const u8) !T {
-        const value = self.route_params.get(name) orelse return error.InvalidArgument;
+        // Fast path: check fixed-size array first
+        var value: ?[]const u8 = null;
+
+        for (0..self._route_param_count) |i| {
+            if (self._route_param_keys[i]) |existing_key| {
+                if (std.mem.eql(u8, existing_key, name)) {
+                    value = self._route_param_values[i];
+                    break;
+                }
+            }
+        }
+
+        // Slow path: check overflow HashMap
+        if (value == null) {
+            if (self._route_params_overflow) |overflow| {
+                value = overflow.get(name);
+            }
+        }
+
+        // Legacy fallback
+        if (value == null) {
+            value = self.route_params.get(name);
+        }
+
+        const actual_value = value orelse return error.InvalidArgument;
 
         // Validate parameter value length to prevent DoS
-        if (value.len > 1024) {
+        if (actual_value.len > 1024) {
             std.debug.print("[Request Warning] Route parameter '{s}' value exceeds maximum length (1024 bytes)\n", .{name});
             return error.InvalidArgument;
         }
 
-        const param_wrapper = router.Param{ .value = value };
+        const param_wrapper = router.Param{ .value = actual_value };
 
         return switch (@typeInfo(T)) {
             .int => |int_info| switch (int_info.signedness) {
@@ -374,29 +453,87 @@ pub const Request = struct {
     }
 
     /// Store a value in the request context
+    /// Uses fixed-size array for fast path (no allocation for typical use cases)
+    /// Falls back to HashMap only when array is full
     /// The key will be duplicated in the request arena
     /// Example: req.set("user_id", "123")
     pub fn set(self: *Request, key: []const u8, value: []const u8) !void {
         const key_dup = try self.arena.allocator().dupe(u8, key);
         const value_dup = try self.arena.allocator().dupe(u8, value);
+
+        // First, check if key already exists in fixed array (update case)
+        for (0..self._context_count) |i| {
+            if (self._context_keys[i]) |existing_key| {
+                if (std.mem.eql(u8, existing_key, key_dup)) {
+                    self._context_values[i] = value_dup;
+                    return;
+                }
+            }
+        }
+
+        // Fast path: use fixed-size array if space available
+        if (self._context_count < MAX_CONTEXT_ENTRIES) {
+            self._context_keys[self._context_count] = key_dup;
+            self._context_values[self._context_count] = value_dup;
+            self._context_count += 1;
+            return;
+        }
+
+        // Slow path: overflow to HashMap (rare case)
+        if (self._context_overflow == null) {
+            self._context_overflow = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+        }
+        try self._context_overflow.?.put(key_dup, value_dup);
+
+        // Also update legacy HashMap for backward compatibility
         try self.context.put(key_dup, value_dup);
     }
 
     /// Get a value from the request context
     /// Returns null if key not found
+    /// Uses fixed-size array for fast path lookup
     /// Example: const user_id = req.get("user_id");
     pub fn get(self: *const Request, key: []const u8) ?[]const u8 {
+        // Fast path: check fixed-size array first
+        for (0..self._context_count) |i| {
+            if (self._context_keys[i]) |existing_key| {
+                if (std.mem.eql(u8, existing_key, key)) {
+                    return self._context_values[i];
+                }
+            }
+        }
+
+        // Slow path: check overflow HashMap
+        if (self._context_overflow) |overflow| {
+            if (overflow.get(key)) |value| {
+                return value;
+            }
+        }
+
+        // Legacy fallback
         return self.context.get(key);
     }
 
     /// Set route parameters (internal use - called by router)
+    /// Uses fixed-size array for fast path (no allocation for typical use cases)
+    /// Falls back to HashMap only when array is full
     /// Duplicates all param keys and values into the request's arena allocator
     pub fn setRouteParams(self: *Request, params: std.StringHashMap([]const u8)) !void {
-        // Clear existing params
-        self.route_params.deinit();
+        // Clear existing fixed-size array params
+        self._route_param_count = 0;
+        for (0..MAX_ROUTE_PARAMS) |i| {
+            self._route_param_keys[i] = null;
+            self._route_param_values[i] = null;
+        }
 
-        // Reinitialize with page allocator (internal storage only)
-        // Keys and values are duplicated into the arena below
+        // Clear overflow HashMap if it exists
+        if (self._route_params_overflow) |*overflow| {
+            overflow.deinit();
+            self._route_params_overflow = null;
+        }
+
+        // Clear legacy HashMap
+        self.route_params.deinit();
         self.route_params = std.StringHashMap([]const u8).init(std.heap.page_allocator);
 
         // Duplicate all keys and values into the request's arena
@@ -404,6 +541,21 @@ pub const Request = struct {
         while (it.next()) |entry| {
             const key_dup = try self.arena.allocator().dupe(u8, entry.key_ptr.*);
             const value_dup = try self.arena.allocator().dupe(u8, entry.value_ptr.*);
+
+            // Fast path: use fixed-size array if space available
+            if (self._route_param_count < MAX_ROUTE_PARAMS) {
+                self._route_param_keys[self._route_param_count] = key_dup;
+                self._route_param_values[self._route_param_count] = value_dup;
+                self._route_param_count += 1;
+            } else {
+                // Slow path: overflow to HashMap (rare case - more than 8 route params)
+                if (self._route_params_overflow == null) {
+                    self._route_params_overflow = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+                }
+                try self._route_params_overflow.?.put(key_dup, value_dup);
+            }
+
+            // Also update legacy HashMap for backward compatibility
             try self.route_params.put(key_dup, value_dup);
         }
     }
@@ -438,17 +590,18 @@ pub const Request = struct {
     }
 
     /// Generate a unique request ID for correlation tracking
-    /// Format: timestamp-random (e.g., "1234567890-abc123")
+    /// Uses fast atomic counter instead of RNG for better performance
+    /// Format: hex counter (e.g., "1a2b3c4d")
     fn generateRequestId(self: *Request) ![]const u8 {
-        const timestamp = std.time.milliTimestamp();
-        var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-        const random = rng.random().int(u32);
+        // Fast path: atomic increment (no syscall, no RNG initialization)
+        const id = request_id_counter.fetchAdd(1, .monotonic);
 
-        var buffer: [64]u8 = undefined;
-        const id_str = try std.fmt.bufPrint(&buffer, "{d}-{x}", .{ timestamp, random });
+        // Format to hex in stack buffer (no allocation until final dupe)
+        var buffer: [16]u8 = undefined;
+        const result = std.fmt.bufPrint(&buffer, "{x}", .{id}) catch return error.OutOfMemory;
 
-        // Allocate in request arena
-        return try self.arena.allocator().dupe(u8, id_str);
+        // Single allocation in request arena
+        return try self.arena.allocator().dupe(u8, result);
     }
 
     /// Get the request ID for correlation tracking
@@ -525,6 +678,15 @@ pub const Request = struct {
     /// Clean up the request arena and all associated allocations
     /// This should be called automatically when the request completes
     pub fn deinit(self: *Request) void {
+        // Clean up overflow HashMaps
+        if (self._context_overflow) |*overflow| {
+            overflow.deinit();
+        }
+        if (self._route_params_overflow) |*overflow| {
+            overflow.deinit();
+        }
+
+        // Clean up legacy HashMaps
         self.context.deinit();
         self.route_params.deinit();
         if (self._query_params) |*params| {

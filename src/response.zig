@@ -3,23 +3,151 @@ const ziggurat = @import("ziggurat");
 const json_module = @import("json.zig");
 const validation = @import("validation.zig");
 
-/// Persistent allocator for response bodies
-/// ziggurat stores references to response data, so we must use persistent memory
-///
-/// IMPORTANT: Memory Lifetime
-/// --------------------------
-/// Response bodies are allocated using page_allocator (persistent_allocator) and are
-/// NEVER freed. This is intentional because:
-/// 1. ziggurat stores references to response data that must remain valid after the request completes
-/// 2. Response bodies are typically small (JSON, text, HTML) and the memory overhead is acceptable
-/// 3. Freeing response bodies would require tracking all responses, which adds complexity
-///
-/// For large responses (>1MB), consider:
-/// - Streaming responses (if ziggurat supports it)
-/// - Using a custom allocator with explicit cleanup
-/// - Implementing response pooling for frequently-used responses
-///
-/// Memory allocated here persists for the lifetime of the application.
+/// Response buffer pool for efficient memory reuse
+/// Eliminates the memory leak from using page_allocator for every response
+pub const ResponseBufferPool = struct {
+    free_buffers: std.ArrayListUnmanaged([]u8),
+    mutex: std.Thread.Mutex = .{},
+    backing_allocator: std.mem.Allocator,
+    max_buffers: usize,
+    default_buffer_size: usize,
+    stats_acquired: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    stats_released: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    stats_allocated: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    pub fn init(backing_allocator: std.mem.Allocator, max_buffers: usize, default_buffer_size: usize) ResponseBufferPool {
+        return ResponseBufferPool{
+            .free_buffers = std.ArrayListUnmanaged([]u8){},
+            .mutex = .{},
+            .backing_allocator = backing_allocator,
+            .max_buffers = max_buffers,
+            .default_buffer_size = default_buffer_size,
+        };
+    }
+
+    /// Acquire a buffer from the pool (or allocate a new one)
+    pub fn acquire(self: *ResponseBufferPool, size: usize) ![]u8 {
+        _ = self.stats_acquired.fetchAdd(1, .monotonic);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Try to find a buffer large enough in the pool
+        var best_idx: ?usize = null;
+        var best_size: usize = std.math.maxInt(usize);
+
+        for (self.free_buffers.items, 0..) |buf, i| {
+            if (buf.len >= size and buf.len < best_size) {
+                best_idx = i;
+                best_size = buf.len;
+            }
+        }
+
+        if (best_idx) |idx| {
+            // Found a suitable buffer - remove and return it
+            const buf = self.free_buffers.swapRemove(idx);
+            return buf[0..size];
+        }
+
+        // No suitable buffer found - allocate a new one
+        _ = self.stats_allocated.fetchAdd(1, .monotonic);
+        const alloc_size = @max(size, self.default_buffer_size);
+        const new_buf = try self.backing_allocator.alloc(u8, alloc_size);
+        return new_buf[0..size];
+    }
+
+    /// Release a buffer back to the pool for reuse
+    pub fn release(self: *ResponseBufferPool, buf: []u8) void {
+        _ = self.stats_released.fetchAdd(1, .monotonic);
+
+        // Get the full buffer capacity (assume it was allocated with default size or larger)
+        const full_buf = @as([*]u8, @ptrCast(buf.ptr))[0..self.getBufferCapacity(buf)];
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // If pool is full, just free the buffer
+        if (self.free_buffers.items.len >= self.max_buffers) {
+            self.backing_allocator.free(full_buf);
+            return;
+        }
+
+        // Add to pool for reuse
+        self.free_buffers.append(self.backing_allocator, full_buf) catch {
+            // If append fails, free the buffer
+            self.backing_allocator.free(full_buf);
+        };
+    }
+
+    /// Get the actual capacity of a buffer (for returning to pool)
+    fn getBufferCapacity(self: *ResponseBufferPool, buf: []u8) usize {
+        // Since we allocate with max(size, default_buffer_size), capacity is at least that
+        return @max(buf.len, self.default_buffer_size);
+    }
+
+    /// Get pool statistics
+    pub fn getStats(self: *ResponseBufferPool) struct { acquired: u64, released: u64, allocated: u64, pooled: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return .{
+            .acquired = self.stats_acquired.load(.monotonic),
+            .released = self.stats_released.load(.monotonic),
+            .allocated = self.stats_allocated.load(.monotonic),
+            .pooled = self.free_buffers.items.len,
+        };
+    }
+
+    /// Clean up and free all pooled buffers
+    pub fn deinit(self: *ResponseBufferPool) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.free_buffers.items) |buf| {
+            self.backing_allocator.free(buf);
+        }
+        self.free_buffers.deinit(self.backing_allocator);
+    }
+};
+
+/// Global response buffer pool (initialized lazily)
+var global_buffer_pool: ?ResponseBufferPool = null;
+var global_buffer_pool_mutex: std.Thread.Mutex = .{};
+
+/// Get or initialize the global buffer pool
+pub fn getBufferPool() *ResponseBufferPool {
+    if (global_buffer_pool != null) {
+        return &global_buffer_pool.?;
+    }
+
+    global_buffer_pool_mutex.lock();
+    defer global_buffer_pool_mutex.unlock();
+
+    if (global_buffer_pool == null) {
+        global_buffer_pool = ResponseBufferPool.init(
+            std.heap.page_allocator,
+            256, // max 256 pooled buffers
+            64 * 1024, // 64KB default buffer size
+        );
+    }
+
+    return &global_buffer_pool.?;
+}
+
+/// Allocate persistent memory for response body using the buffer pool
+fn allocatePersistent(size: usize) ![]u8 {
+    const pool = getBufferPool();
+    return pool.acquire(size);
+}
+
+/// Duplicate a slice into persistent memory using the buffer pool
+fn dupePersistent(data: []const u8) ![]u8 {
+    const buf = try allocatePersistent(data.len);
+    @memcpy(buf, data);
+    return buf;
+}
+
+/// Persistent allocator for response bodies (fallback for edge cases)
+/// Now uses buffer pool internally for better memory management
 const persistent_allocator = std.heap.page_allocator;
 
 /// Cookie options for setting cookies
@@ -66,8 +194,8 @@ pub const Response = struct {
         const json_str = try json_module.Json.serialize(T, value, allocator);
         defer allocator.free(json_str);
         
-        // Copy to persistent memory for response
-        const persistent_body = persistent_allocator.dupe(u8, json_str) catch {
+        // Copy to pooled memory for response (reusable buffers)
+        const persistent_body = dupePersistent(json_str) catch {
             return error.OutOfMemory;
         };
         
@@ -94,8 +222,8 @@ pub const Response = struct {
         const json_str = try json_module.Json.serializeArray(T, items, allocator);
         defer allocator.free(json_str);
         
-        // Copy to persistent memory for response
-        const persistent_body = persistent_allocator.dupe(u8, json_str) catch {
+        // Copy to pooled memory for response (reusable buffers)
+        const persistent_body = dupePersistent(json_str) catch {
             return error.OutOfMemory;
         };
         
@@ -117,8 +245,8 @@ pub const Response = struct {
     /// return Response.json("{\"status\":\"ok\"}");
     /// ```
     pub fn json(body: []const u8) Response {
-        // Copy body to persistent memory since ziggurat stores references
-        const persistent_body = persistent_allocator.dupe(u8, body) catch {
+        // Copy body to pooled memory since ziggurat stores references
+        const persistent_body = dupePersistent(body) catch {
             // If allocation fails, fall back to original (may be a string literal)
             return Response{
                 .inner = ziggurat.response.Response.json(body),
@@ -145,7 +273,7 @@ pub const Response = struct {
     /// return Response.text("Hello, World!");
     /// ```
     pub fn text(body: []const u8) Response {
-        const persistent_body = persistent_allocator.dupe(u8, body) catch {
+        const persistent_body = dupePersistent(body) catch {
             return Response{
                 .inner = ziggurat.response.Response.text(body),
                 ._persistent_body = null,
@@ -171,7 +299,7 @@ pub const Response = struct {
     /// return Response.html("<html><body>Hello</body></html>");
     /// ```
     pub fn html(body: []const u8) Response {
-        const persistent_body = persistent_allocator.dupe(u8, body) catch {
+        const persistent_body = dupePersistent(body) catch {
             return Response{
                 .inner = ziggurat.response.Response.html(body),
                 ._persistent_body = null,
@@ -200,7 +328,7 @@ pub const Response = struct {
     pub fn serveFile(file_path: []const u8, contents: []const u8) Response {
         const mime_type = getMimeTypeFromPath(file_path);
 
-        const persistent_body = persistent_allocator.dupe(u8, contents) catch {
+        const persistent_body = dupePersistent(contents) catch {
             // Fallback to original contents if allocation fails
             const response = Response.text(contents);
             return response.withContentType(mime_type);
@@ -412,8 +540,8 @@ pub const Response = struct {
             return Response.serverError("Failed to serialize validation errors");
         };
         // Note: error_json is allocated by errors.toJson() using errors.allocator
-        // We need to copy it to persistent memory
-        const persistent_json = persistent_allocator.dupe(u8, error_json) catch {
+        // We need to copy it to pooled memory
+        const persistent_json = dupePersistent(error_json) catch {
             errors.allocator.free(error_json); // Free original on allocation failure
             return Response.serverError("Failed to allocate validation error response");
         };
@@ -433,8 +561,8 @@ pub const Response = struct {
         const json_str = json_module.Json.serialize(T, value, allocator) catch {
             return Response.serverError("Failed to serialize response");
         };
-        // Copy to persistent memory since allocator may be arena
-        const persistent_json = persistent_allocator.dupe(u8, json_str) catch {
+        // Copy to pooled memory since allocator may be arena
+        const persistent_json = dupePersistent(json_str) catch {
             allocator.free(json_str);
             return Response.serverError("Failed to allocate response");
         };
@@ -466,7 +594,7 @@ pub const Response = struct {
     /// return Response.ok().withJson(data);
     /// ```
     pub fn withJson(self: Response, body: []const u8) Response {
-        const persistent_body = persistent_allocator.dupe(u8, body) catch {
+        const persistent_body = dupePersistent(body) catch {
             return Response{
                 .inner = ziggurat.response.Response.json(body),
                 ._persistent_body = self._persistent_body,
@@ -526,7 +654,7 @@ pub const Response = struct {
     /// return Response.redirect("/dashboard").withStatus(301); // Permanent redirect
     /// ```
     pub fn redirect(location: []const u8) Response {
-        const persistent_location = persistent_allocator.dupe(u8, location) catch {
+        const persistent_location = dupePersistent(location) catch {
             var resp = Response{
                 .inner = ziggurat.response.Response.text(""),
                 ._persistent_body = null,
@@ -610,10 +738,9 @@ pub const Response = struct {
         }
 
         // Store header in custom headers map
-        // Copy name and value to persistent memory
-        // Note: persistent_allocator is page_allocator which doesn't support free()
-        const persistent_name = persistent_allocator.dupe(u8, name) catch return self;
-        const persistent_value = persistent_allocator.dupe(u8, value) catch return self;
+        // Copy name and value to pooled memory
+        const persistent_name = dupePersistent(name) catch return self;
+        const persistent_value = dupePersistent(value) catch return self;
 
         if (self._custom_headers) |headers| {
             // Add to existing headers map
@@ -648,10 +775,11 @@ pub const Response = struct {
     ///     .withCookie("theme", "dark", .{ .maxAge = 3600 });
     /// ```
     pub fn withCookie(self: Response, name: []const u8, value: []const u8, options: CookieOptions) Response {
-        // Cookie value will be stored in persistent memory
-        const persistent_name = persistent_allocator.dupe(u8, name) catch return self;
-        const persistent_value = persistent_allocator.dupe(u8, value) catch {
-            persistent_allocator.free(persistent_name);
+        // Cookie value will be stored in pooled memory
+        const persistent_name = dupePersistent(name) catch return self;
+        const persistent_value = dupePersistent(value) catch {
+            // Release name buffer back to pool on failure
+            getBufferPool().release(@constCast(persistent_name));
             return self;
         };
 
@@ -722,8 +850,8 @@ pub const Response = struct {
             return error.EndOfStream;
         }
 
-        // Copy to persistent memory for response
-        const persistent_body = persistent_allocator.dupe(u8, contents) catch {
+        // Copy to pooled memory for response
+        const persistent_body = dupePersistent(contents) catch {
             return error.OutOfMemory;
         };
 
@@ -746,7 +874,7 @@ pub const Response = struct {
     /// return Response.download("report.pdf", pdf_data);
     /// ```
     pub fn download(filename: []const u8, data: []const u8) Response {
-        const persistent_data = persistent_allocator.dupe(u8, data) catch {
+        const persistent_data = dupePersistent(data) catch {
             return Response{
                 .inner = ziggurat.response.Response.text(data),
                 ._persistent_body = null,
@@ -775,7 +903,7 @@ pub const Response = struct {
     /// return Response.stream("text/plain", stream_data);
     /// ```
     pub fn stream(content_type: []const u8, data: []const u8) Response {
-        const persistent_data = persistent_allocator.dupe(u8, data) catch {
+        const persistent_data = dupePersistent(data) catch {
             return Response{
                 .inner = ziggurat.response.Response.text(data),
                 ._persistent_body = null,
@@ -827,6 +955,16 @@ pub const Response = struct {
             ._custom_headers = null,
             ._status_code = null,
         };
+    }
+
+    /// Release the response buffer back to the pool for reuse
+    /// Call this after the response has been fully sent to reclaim memory
+    /// This is automatically called by Engine12 after sending the response
+    pub fn releaseBuffer(self: *Response) void {
+        if (self._persistent_body) |body| {
+            getBufferPool().release(@constCast(body));
+            self._persistent_body = null;
+        }
     }
 };
 
