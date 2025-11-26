@@ -28,6 +28,7 @@ Complete reference for Engine12's public APIs.
 - [Metrics & Health Checks](#metrics--health-checks)
 - [Background Tasks](#background-tasks)
 - [WebSocket API](#websocket-api)
+- [HTMX Integration](#htmx-integration)
 - [Error Handling](#error-handling)
 - [C API](#c-api)
 
@@ -286,6 +287,10 @@ pub const RestApiConfig = struct {
     cache_ttl_ms: ?u32 = null,
     /// Enable pagination (default: true)
     enable_pagination: bool = true,
+    /// Default pagination limit when no ?limit= parameter is provided (default: 20)
+    default_limit: u32 = 20,
+    /// Maximum allowed pagination limit to prevent excessive data transfer (default: 100)
+    max_limit: u32 = 100,
     /// Enable filtering via ?filter=field:value (default: true)
     enable_filtering: bool = true,
     /// Enable sorting via ?sort=field:asc|desc (default: true)
@@ -340,6 +345,8 @@ try app.restApi("/api/todos", Todo, .{
     .authenticator = requireAuth,
     .authorization = canAccessTodo,
     .enable_pagination = true,
+    .default_limit = 25,   // Default items per page
+    .max_limit = 100,      // Maximum items per page
     .enable_filtering = true,
     .enable_sorting = true,
     .cache_ttl_ms = 30000, // 30 seconds
@@ -359,8 +366,9 @@ try app.restApi("/api/todos", Todo, .{
 - Direction must be either "asc" or "desc"
 
 **Pagination** (`?page=1&limit=20`):
-- Default: page=1, limit=20
-- Validates: page >= 1, limit between 1 and 100
+- Default: page=1, limit=`default_limit` (configurable, default 20)
+- Validates: page >= 1, limit between 1 and `max_limit` (configurable, default 100)
+- Requested limits exceeding `max_limit` are clamped to prevent excessive data transfer
 - Response includes pagination metadata:
 ```json
 {
@@ -378,7 +386,7 @@ try app.restApi("/api/todos", Todo, .{
 
 - **GET /prefix** (List): Returns `{data: [...], meta: {...}}` with pagination metadata
 - **GET /prefix/:id** (Show): Returns single resource JSON
-- **POST /prefix** (Create): Returns created resource with status 201
+- **POST /prefix** (Create): Returns created resource with database-generated ID and status 201
 - **PUT /prefix/:id** (Update): Returns updated resource
 - **DELETE /prefix/:id** (Delete): Returns 204 No Content
 
@@ -3670,6 +3678,24 @@ const todos = try orm.queryBuilder(Todo)
     .build();
 ```
 
+#### `Pagination.fromRequestWithDefaults(req: *Request, default_limit: u32, max_limit: u32) !Pagination`
+Create pagination from request query parameters with configurable defaults. Allows customizing the default limit when no `?limit=` parameter is provided, and the maximum allowed limit.
+
+**Parameters:**
+- `default_limit` - Default limit when not specified in query (e.g., 50)
+- `max_limit` - Maximum allowed limit (requests exceeding this are clamped)
+
+**Validation:**
+- `page` must be >= 1
+- `limit` must be >= 1 (values > `max_limit` are clamped to `max_limit`)
+
+```zig
+// Default to 50 items per page, max 200
+const pagination = Pagination.fromRequestWithDefaults(request, 50, 200) catch {
+    return Response.errorResponse("Invalid pagination parameters", 400);
+};
+```
+
 **Pagination fields:**
 - `page: u32` - Current page number (1-indexed)
 - `limit: u32` - Number of items per page
@@ -4255,6 +4281,334 @@ pub fn init(ctx: *valve.ValveContext) !void {
     
     try ctx.registerWebSocket("/ws/chat", handleChat);
 }
+```
+
+## HTMX Integration
+
+Engine12 provides built-in HTMX support for server-driven interactivity. Write all your frontend logic in Zig - no JavaScript required. HTMX scripts are automatically injected into HTML responses.
+
+### Automatic Enablement
+
+HTMX is automatically enabled when using `initDevelopment()`:
+
+```zig
+var app = try Engine12.initDevelopment();
+// HTMX is now enabled - scripts are auto-injected into HTML responses
+```
+
+For production, enable HTMX explicitly:
+
+```zig
+var app = try Engine12.initProduction();
+app.enableHtmx();
+```
+
+### Configuration
+
+#### `HtmxConfig` struct
+
+```zig
+pub const HtmxConfig = struct {
+    /// Enable HTMX script injection into HTML responses
+    enabled: bool = true,
+    /// HTMX version to use (from unpkg CDN)
+    version: []const u8 = "1.9.10",
+    /// Use CDN for HTMX script (recommended)
+    use_cdn: bool = true,
+    /// CDN base URL for HTMX
+    cdn_url: []const u8 = "https://unpkg.com/htmx.org",
+    /// HTMX extensions to load (e.g., "ws", "sse", "json-enc")
+    extensions: []const []const u8 = &[_][]const u8{},
+    /// Inject HTMX into fragment responses (default: false)
+    inject_fragments: bool = false,
+    /// Enable HTMX debug mode (logs to browser console)
+    debug: bool = false,
+    /// Custom script attributes (e.g., for CSP nonce)
+    script_attributes: []const u8 = "",
+};
+```
+
+#### `enableHtmx() void`
+
+Enable HTMX with default configuration (auto-selects development or production config).
+
+```zig
+app.enableHtmx();
+```
+
+#### `enableHtmxWithConfig(config: HtmxConfig) void`
+
+Enable HTMX with custom configuration.
+
+```zig
+app.enableHtmxWithConfig(.{
+    .version = "2.0.0",
+    .extensions = &[_][]const u8{"ws", "sse"},
+    .debug = true,
+});
+```
+
+#### `disableHtmx() void`
+
+Disable HTMX injection.
+
+```zig
+app.disableHtmx();
+```
+
+### Request Detection
+
+#### `isHtmx() bool`
+
+Check if the request was made by HTMX.
+
+```zig
+fn handler(req: *Request) Response {
+    if (req.isHtmx()) {
+        // Return fragment for HTMX
+        return Response.fragment("<div>Updated content</div>");
+    }
+    // Return full page
+    return Response.html(fullPageHtml);
+}
+```
+
+#### `isHtmxBoosted() bool`
+
+Check if this is a boosted HTMX request (expects full page with HTMX enhancements).
+
+```zig
+if (req.isHtmxBoosted()) {
+    // Return full page (boosted link/form)
+}
+```
+
+#### `isHtmxPartial() bool`
+
+Check if this is a partial HTMX request (expects HTML fragment).
+
+```zig
+if (req.isHtmxPartial()) {
+    // Return just the fragment
+    return Response.fragment("<li>New item</li>");
+}
+```
+
+#### `htmxTarget() ?[]const u8`
+
+Get the ID of the target element that will receive the response.
+
+```zig
+if (req.htmxTarget()) |target| {
+    std.debug.print("Target element: {s}\n", .{target});
+}
+```
+
+#### `htmxTrigger() ?[]const u8`
+
+Get the ID of the element that triggered the request.
+
+```zig
+if (req.htmxTrigger()) |trigger| {
+    std.debug.print("Triggered by: {s}\n", .{trigger});
+}
+```
+
+### Response Helpers
+
+#### `Response.fragment(html: []const u8) Response`
+
+Create an HTML fragment response. Fragments are partial HTML that update part of the page.
+
+```zig
+return Response.fragment("<div class=\"todo-item\">New Todo</div>");
+```
+
+#### `htmxTrigger(event: []const u8) Response`
+
+Trigger a client-side event after the response is received.
+
+```zig
+return Response.fragment("<div>Done</div>")
+    .htmxTrigger("todoCreated");
+```
+
+HTML:
+```html
+<div hx-trigger="todoCreated from:body" hx-get="/todos/count">
+    Count: <span id="count">0</span>
+</div>
+```
+
+#### `htmxTriggerAfterSwap(event: []const u8) Response`
+
+Trigger a client-side event after the swap is complete.
+
+```zig
+return Response.fragment("<div>Done</div>")
+    .htmxTriggerAfterSwap("swapComplete");
+```
+
+#### `htmxTriggerAfterSettle(event: []const u8) Response`
+
+Trigger a client-side event after the settle step is complete.
+
+```zig
+return Response.fragment("<div>Done</div>")
+    .htmxTriggerAfterSettle("settleComplete");
+```
+
+#### `htmxRedirect(url: []const u8) Response`
+
+Perform a client-side redirect. HTMX will navigate to the specified URL.
+
+```zig
+return Response.htmxRedirect("/dashboard");
+```
+
+#### `htmxRefresh() Response`
+
+Trigger a full page refresh.
+
+```zig
+return Response.htmxRefresh();
+```
+
+#### `htmxPushUrl(url: []const u8) Response`
+
+Push a new URL to the browser's history stack.
+
+```zig
+return Response.fragment("<div>Content</div>")
+    .htmxPushUrl("/todos/123");
+```
+
+#### `htmxReplaceUrl(url: []const u8) Response`
+
+Replace the current URL in the browser's history stack.
+
+```zig
+return Response.fragment("<div>Content</div>")
+    .htmxReplaceUrl("/todos");
+```
+
+#### `htmxRetarget(selector: []const u8) Response`
+
+Change the target element for this response.
+
+```zig
+return Response.fragment("<li>New item</li>")
+    .htmxRetarget("#todo-list");
+```
+
+#### `htmxReswap(style: []const u8) Response`
+
+Change the swap method for this response. Valid values: `innerHTML`, `outerHTML`, `beforebegin`, `afterbegin`, `beforeend`, `afterend`, `delete`, `none`.
+
+```zig
+return Response.fragment("<li>New item</li>")
+    .htmxReswap("beforeend");
+```
+
+### Example: Todo List with HTMX
+
+Handler:
+
+```zig
+const Engine12 = @import("Engine12");
+const Request = Engine12.Request;
+const Response = Engine12.Response;
+
+fn handleAddTodo(req: *Request) Response {
+    // Parse form data
+    const form = req.formData() catch return Response.badRequest("Invalid form data");
+    const title = form.get("title") orelse return Response.badRequest("Title required");
+    
+    // Save to database
+    const todo = Todo{ .title = title, .completed = false };
+    orm.create(Todo, &todo) catch return Response.serverError("Failed to save");
+    
+    // Check if HTMX request
+    if (req.isHtmxPartial()) {
+        // Return just the new todo item
+        return Response.fragment(renderTodoItem(todo))
+            .htmxTrigger("todoAdded");
+    }
+    
+    // Non-HTMX: redirect to list
+    return Response.redirect("/todos");
+}
+
+fn handleDeleteTodo(req: *Request) Response {
+    const id = req.paramTyped(u32, "id") catch return Response.badRequest("Invalid ID");
+    
+    orm.delete(Todo, id) catch return Response.serverError("Failed to delete");
+    
+    if (req.isHtmxPartial()) {
+        // Return empty response with delete swap
+        return Response.fragment("")
+            .htmxTrigger("todoDeleted");
+    }
+    
+    return Response.redirect("/todos");
+}
+
+fn handleToggleTodo(req: *Request) Response {
+    const id = req.paramTyped(u32, "id") catch return Response.badRequest("Invalid ID");
+    
+    var todo = orm.findById(Todo, id) catch return Response.notFound();
+    todo.completed = !todo.completed;
+    orm.update(Todo, &todo) catch return Response.serverError("Failed to update");
+    
+    if (req.isHtmxPartial()) {
+        return Response.fragment(renderTodoItem(todo));
+    }
+    
+    return Response.redirect("/todos");
+}
+```
+
+Template (HTML):
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Todo List</title>
+    <!-- HTMX is auto-injected here by Engine12 -->
+</head>
+<body>
+    <h1>Todos</h1>
+    
+    <!-- Add form - submits via HTMX, appends new todo to list -->
+    <form hx-post="/todos" hx-target="#todo-list" hx-swap="beforeend">
+        <input type="text" name="title" placeholder="New todo..." required>
+        <button type="submit">Add</button>
+    </form>
+    
+    <!-- Todo list -->
+    <ul id="todo-list">
+        {% for todo in todos %}
+        <li id="todo-{{ todo.id }}">
+            <input type="checkbox" 
+                   hx-post="/todos/{{ todo.id }}/toggle"
+                   hx-target="#todo-{{ todo.id }}"
+                   hx-swap="outerHTML"
+                   {% if todo.completed %}checked{% endif %}>
+            <span>{{ todo.title }}</span>
+            <button hx-delete="/todos/{{ todo.id }}" 
+                    hx-target="#todo-{{ todo.id }}"
+                    hx-swap="outerHTML">Delete</button>
+        </li>
+        {% endfor %}
+    </ul>
+    
+    <!-- Count updates when todos change -->
+    <div hx-trigger="todoAdded, todoDeleted from:body" hx-get="/todos/count">
+        Total: <span id="count">{{ todos.len }}</span>
+    </div>
+</body>
+</html>
 ```
 
 ## Error Handling

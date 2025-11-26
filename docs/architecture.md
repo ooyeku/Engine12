@@ -783,6 +783,142 @@ HandlerCtx is designed for incremental adoption:
 - **Optional Feature**: HandlerCtx is optional - doesn't replace existing patterns
 - **Learning Curve**: Developers need to learn HandlerCtx API (minimal, well-documented)
 
+## HTMX Integration Architecture
+
+Engine12 provides zero-configuration HTMX support for server-driven interactivity. HTMX enables building dynamic web applications with all logic written in Zig, eliminating the need for client-side JavaScript.
+
+### Key Components
+
+- **HTMX Module** (`src/htmx/module.zig`): Main module that re-exports all HTMX functionality
+- **HTMX Config** (`src/htmx/config.zig`): Configuration for script injection, versioning, and behavior
+- **HTMX Injector** (`src/htmx/injector.zig`): Automatically injects HTMX scripts into HTML responses
+- **HTMX Request** (`src/htmx/request.zig`): Request detection and header parsing utilities
+- **HTMX Response** (`src/htmx/response.zig`): Response helpers for HTMX-specific headers
+
+### Design Decisions
+
+#### 1. **Zero Configuration**
+
+HTMX is automatically enabled in development mode (`initDevelopment()`), requiring no setup:
+
+```zig
+var app = try Engine12.initDevelopment();
+// HTMX is now enabled - scripts are auto-injected
+```
+
+This follows the principle of "sensible defaults" - developers get HTMX functionality without any configuration, but can customize or disable it if needed.
+
+#### 2. **Automatic Script Injection**
+
+HTMX scripts are automatically injected into HTML responses via response middleware:
+
+- **Detection**: Checks if response body is a full HTML page (contains `<!DOCTYPE` or `<html>`)
+- **Injection Point**: Prefers `</head>`, falls back to `</body>`, then end of document
+- **Fragment Detection**: Fragments (partial HTML) skip injection by default (configurable)
+- **Duplicate Prevention**: Checks for existing HTMX scripts to avoid duplicate injection
+
+#### 3. **Response Middleware Integration**
+
+HTMX injection is implemented as response middleware, ensuring it works with all response types:
+
+```zig
+// HTMX injector is registered as response middleware
+self.useResponse(htmx_mod.injectHtmx) catch {
+    // Error handling
+};
+```
+
+This means HTMX injection happens automatically for all HTML responses, regardless of how they're created.
+
+#### 4. **Request Detection**
+
+HTMX requests are detected via HTTP headers:
+
+- **HX-Request**: Present on all HTMX requests
+- **HX-Boosted**: Indicates boosted link/form request (expects full page)
+- **HX-Target**: Target element ID
+- **HX-Trigger**: Triggering element ID
+- **HX-Current-URL**: Current browser URL
+
+The `Request` struct provides convenience methods (`isHtmx()`, `isHtmxPartial()`, etc.) that parse these headers.
+
+#### 5. **Response Helpers**
+
+HTMX-specific response headers are set via fluent API methods:
+
+- **Fragments**: `Response.fragment()` marks responses as fragments (skips script injection)
+- **Events**: `htmxTrigger()` sets `HX-Trigger` header for client-side events
+- **Redirects**: `htmxRedirect()` sets `HX-Redirect` header for client-side navigation
+- **URL Management**: `htmxPushUrl()`, `htmxReplaceUrl()` for history manipulation
+- **Swap Control**: `htmxRetarget()`, `htmxReswap()` for dynamic swap behavior
+
+#### 6. **Configuration Flexibility**
+
+HTMX configuration supports various deployment scenarios:
+
+- **CDN vs Local**: Can use CDN (default) or serve HTMX locally
+- **Version Control**: Specify HTMX version (default: 1.9.10)
+- **Extensions**: Load HTMX extensions (ws, sse, json-enc, etc.)
+- **Debug Mode**: Enable HTMX debug logging (auto-enabled in development)
+- **Fragment Injection**: Optionally inject scripts into fragments
+
+### How It Works
+
+1. **Initialization**: When `initDevelopment()` is called, HTMX is automatically enabled with development config (debug mode on)
+
+2. **Request Processing**: When a request arrives:
+   - Handler processes request normally
+   - Handler returns `Response` (HTML, fragment, etc.)
+
+3. **Response Middleware**: Response middleware chain executes:
+   - HTMX injector checks if response is HTML
+   - If HTML and HTMX enabled, injects script tag
+   - Script tag includes HTMX library and any extensions
+
+4. **Client-Side**: Browser receives HTML with HTMX script:
+   - HTMX initializes and enhances elements with `hx-*` attributes
+   - User interactions trigger HTMX requests
+   - HTMX adds special headers (`HX-Request`, `HX-Target`, etc.)
+
+5. **Fragment Responses**: HTMX requests receive fragments:
+   - Handler detects HTMX request via `req.isHtmx()`
+   - Returns `Response.fragment()` with partial HTML
+   - Fragment is marked with `X-HTMX-Fragment` header (skips script injection)
+   - HTMX swaps fragment into target element
+
+### Thread Safety
+
+HTMX configuration uses thread-safe global state:
+
+- **Global Config**: Thread-safe mutex-protected configuration
+- **Response Injection**: Stateless injection (no shared mutable state)
+- **Request Detection**: Per-request header parsing (thread-safe)
+
+### Integration Points
+
+HTMX integrates with other Engine12 features:
+
+- **Templates**: HTMX attributes work seamlessly in template files
+- **Middleware**: HTMX injection happens in response middleware chain
+- **Request API**: Request detection methods added to `Request` struct
+- **Response API**: HTMX response helpers added to `Response` struct
+- **Hot Reloading**: HTMX scripts reload automatically in development mode
+
+### Benefits
+
+- **Zero Configuration**: Works out of the box in development mode
+- **Progressive Enhancement**: Applications work without JavaScript, enhanced with HTMX
+- **Type Safety**: All handler logic is type-checked at compile time
+- **Server-Driven**: All application logic stays on the server
+- **No Build Step**: No JavaScript bundling or transpilation required
+- **Simple Mental Model**: Server returns HTML, HTMX handles DOM updates
+
+### Limitations
+
+- **Fragment Detection**: Fragment detection is heuristic-based (checks for `<!DOCTYPE` or `<html>`)
+- **CDN Dependency**: Default configuration requires CDN access (can be configured for local serving)
+- **Browser Support**: Requires modern browser with JavaScript enabled (progressive enhancement still works)
+
 ## Future Considerations
 
 - Async/await support when Zig adds it

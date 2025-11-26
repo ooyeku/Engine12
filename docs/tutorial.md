@@ -62,6 +62,16 @@ This tutorial will guide you through building a complete web application with En
   - [10.5 Lifecycle Hooks](#105-lifecycle-hooks)
   - [10.6 Using Builtin Valves](#106-using-builtin-valves)
   - [10.7 Best Practices](#107-best-practices)
+- [Step 12: Using Auto-Discovery Features](#step-12-using-auto-discovery-features)
+  - [12.1 Migration Auto-Discovery](#121-migration-auto-discovery)
+  - [12.2 Static File Auto-Discovery](#122-static-file-auto-discovery)
+  - [12.3 Template Auto-Discovery](#123-template-auto-discovery)
+  - [12.4 Complete Example with Auto-Discovery](#124-complete-example-with-auto-discovery)
+- [Step 13: HTMX Integration](#step-13-htmx-integration)
+  - [13.1 Automatic Enablement](#131-automatic-enablement)
+  - [13.2 Detecting HTMX Requests](#132-detecting-htmx-requests)
+  - [13.3 Creating HTMX Responses](#133-creating-htmx-responses)
+  - [13.4 Complete Example](#134-complete-example)
 - [Next Steps](#next-steps)
 
 ## Prerequisites
@@ -1048,6 +1058,8 @@ pub fn main() !void {
     try app.restApi("/api/todos", Todo, .{
         .orm = &my_orm,
         .validator = validateTodo,
+        .default_limit = 25,   // Default items per page (default: 20)
+        .max_limit = 100,      // Max items per page (default: 100)
     });
 
     try app.listen();  // Blocks until shutdown
@@ -1131,6 +1143,15 @@ fn handleGetTodos(req: *Request) Response {
         .meta = meta,
     }, req.allocator());
 }
+```
+
+For custom pagination defaults, use `fromRequestWithDefaults`:
+
+```zig
+// Default to 50 items per page, max 200
+const pagination = Pagination.fromRequestWithDefaults(req, 50, 200) catch {
+    return Response.errorResponse("Invalid pagination", 400);
+};
 ```
 
 ### 9.3 Error Response Helpers
@@ -1908,6 +1929,241 @@ fn handleIndex(req: *Request) Response {
 }
 ```
 
+## Step 13: HTMX Integration
+
+Engine12 provides built-in HTMX support for server-driven interactivity. With HTMX, you can build dynamic web applications with all logic written in Zig - no JavaScript required. HTMX scripts are automatically injected into HTML responses.
+
+### 13.1 Automatic Enablement
+
+HTMX is automatically enabled when using `initDevelopment()`:
+
+```zig
+var app = try Engine12.initDevelopment();
+// HTMX is now enabled - scripts are auto-injected into HTML responses
+```
+
+For production, enable HTMX explicitly:
+
+```zig
+var app = try Engine12.initProduction();
+app.enableHtmx();
+```
+
+You can also configure HTMX with custom settings:
+
+```zig
+app.enableHtmxWithConfig(.{
+    .version = "1.9.10",
+    .extensions = &[_][]const u8{"ws", "sse"},  // Load HTMX extensions
+    .debug = true,  // Enable debug mode in development
+});
+```
+
+### 13.2 Detecting HTMX Requests
+
+In your handlers, you can detect if a request came from HTMX:
+
+```zig
+fn handleAddTodo(req: *Request) Response {
+    // Check if this is an HTMX request
+    if (req.isHtmx()) {
+        // This is an HTMX request - return fragment
+        const todo = createTodo(req) catch return Response.badRequest("Invalid data");
+        return Response.fragment(renderTodoHtml(todo))
+            .htmxTrigger("todoAdded");
+    }
+    
+    // Regular request - return full page
+    return Response.html(renderFullPage());
+}
+```
+
+**Request Detection Methods:**
+- `req.isHtmx()` - Returns true if request was made by HTMX
+- `req.isHtmxPartial()` - Returns true if request wants an HTML fragment (not full page)
+- `req.isHtmxBoosted()` - Returns true if request is a boosted link/form (expects full page)
+- `req.htmxTarget()` - Get the target element ID
+- `req.htmxTrigger()` - Get the triggering element ID
+
+### 13.3 Creating HTMX Responses
+
+HTMX responses are created using special response methods:
+
+**HTML Fragments:**
+```zig
+// Return just a fragment (partial HTML)
+return Response.fragment("<li>New todo item</li>");
+```
+
+**Triggering Events:**
+```zig
+// Trigger a client-side event after response
+return Response.fragment("<div>Done</div>")
+    .htmxTrigger("todoCreated");
+```
+
+**Redirects:**
+```zig
+// Client-side redirect (no page reload)
+return Response.htmxRedirect("/todos");
+```
+
+**URL Management:**
+```zig
+// Update browser URL without navigation
+return Response.fragment("<div>Content</div>")
+    .htmxPushUrl("/todos/123");  // Add to history
+    
+// Replace current URL in history
+return Response.fragment("<div>Content</div>")
+    .htmxReplaceUrl("/todos");
+```
+
+**Response Modifiers:**
+```zig
+// Change target element
+return Response.fragment("<li>Item</li>")
+    .htmxRetarget("#todo-list");
+
+// Change swap method
+return Response.fragment("<li>Item</li>")
+    .htmxReswap("beforeend");  // Append to target
+```
+
+### 13.4 Complete Example
+
+Here's a complete example of a todo list with HTMX:
+
+**Handler:**
+```zig
+const std = @import("std");
+const E12 = @import("engine12");
+const Request = E12.Request;
+const Response = E12.Response;
+
+fn handleAddTodo(req: *Request) Response {
+    // Parse form data
+    const body = req.body();
+    const title = extractFormValue(body, "title") orelse {
+        return Response.badRequest("Title required");
+    };
+    
+    // Save to database
+    const orm = getORM() catch return Response.serverError("Database error");
+    const todo = Todo{
+        .id = 0,
+        .title = title,
+        .completed = false,
+        .created_at = std.time.timestamp(),
+    };
+    orm.create(Todo, todo) catch return Response.serverError("Failed to save");
+    
+    // Check if HTMX request
+    if (req.isHtmxPartial()) {
+        // Return just the new todo item HTML
+        return Response.fragment(renderTodoItem(todo))
+            .htmxTrigger("todoAdded");
+    }
+    
+    // Non-HTMX: redirect to list
+    return Response.redirect("/todos");
+}
+
+fn handleToggleTodo(req: *Request) Response {
+    const id = req.paramTyped(i64, "id") catch {
+        return Response.badRequest("Invalid ID");
+    };
+    
+    const orm = getORM() catch return Response.serverError("Database error");
+    var todo = orm.find(Todo, id) catch return Response.notFound();
+    todo.completed = !todo.completed;
+    orm.update(Todo, todo) catch return Response.serverError("Failed to update");
+    
+    if (req.isHtmxPartial()) {
+        return Response.fragment(renderTodoItem(todo))
+            .htmxTrigger("todoUpdated");
+    }
+    
+    return Response.redirect("/todos");
+}
+
+fn handleDeleteTodo(req: *Request) Response {
+    const id = req.paramTyped(i64, "id") catch {
+        return Response.badRequest("Invalid ID");
+    };
+    
+    const orm = getORM() catch return Response.serverError("Database error");
+    orm.delete(Todo, id) catch return Response.serverError("Failed to delete");
+    
+    if (req.isHtmxPartial()) {
+        // Return empty response - HTMX will delete the element
+        return Response.fragment("")
+            .htmxTrigger("todoDeleted");
+    }
+    
+    return Response.redirect("/todos");
+}
+```
+
+**Template (HTML):**
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Todo List</title>
+    <!-- HTMX script is automatically injected here by Engine12 -->
+</head>
+<body>
+    <h1>Todos</h1>
+    
+    <!-- Add form - submits via HTMX, appends new todo to list -->
+    <form hx-post="/todos" hx-target="#todo-list" hx-swap="beforeend">
+        <input type="text" name="title" placeholder="New todo..." required>
+        <button type="submit">Add</button>
+    </form>
+    
+    <!-- Todo list -->
+    <ul id="todo-list">
+        {% for todo in todos %}
+        <li id="todo-{{ todo.id }}">
+            <input type="checkbox" 
+                   hx-post="/todos/{{ todo.id }}/toggle"
+                   hx-target="#todo-{{ todo.id }}"
+                   hx-swap="outerHTML"
+                   {% if todo.completed %}checked{% endif %}>
+            <span>{{ todo.title }}</span>
+            <button hx-delete="/todos/{{ todo.id }}" 
+                    hx-target="#todo-{{ todo.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete this todo?">Delete</button>
+        </li>
+        {% endfor %}
+    </ul>
+    
+    <!-- Count updates when todos change -->
+    <div hx-trigger="todoAdded, todoDeleted from:body" hx-get="/todos/count">
+        Total: <span id="count">{{ todos.len }}</span>
+    </div>
+</body>
+</html>
+```
+
+**Key HTMX Attributes:**
+- `hx-post`, `hx-get`, `hx-put`, `hx-delete` - HTTP method
+- `hx-target` - Element to update with response
+- `hx-swap` - How to swap content (`innerHTML`, `outerHTML`, `beforeend`, `afterbegin`, etc.)
+- `hx-trigger` - When to trigger the request
+- `hx-confirm` - Show confirmation dialog before request
+
+**Benefits:**
+- No JavaScript required - all logic in Zig
+- Progressive enhancement - works without JavaScript
+- Automatic script injection - no manual setup
+- Type-safe handlers - compile-time guarantees
+- Server-driven - all logic on the server
+
+See the [API Reference](api-reference.md#htmx-integration) for complete HTMX API documentation.
+
 ## Next Steps
 
 - Add validation for request data
@@ -1915,6 +2171,7 @@ fn handleIndex(req: *Request) Response {
 - Add rate limiting
 - Set up error handling
 - Use auto-discovery features to reduce boilerplate
+- Add HTMX interactivity to your templates
 - Add more routes and features
 - Deploy to production
 

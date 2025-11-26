@@ -28,6 +28,7 @@ pub const logging_middleware = @import("logging_middleware.zig");
 pub const valve = @import("valve/valve.zig");
 pub const websocket = @import("websocket/module.zig");
 pub const hot_reload = @import("hot_reload/module.zig");
+pub const htmx = @import("htmx/module.zig");
 
 // Re-export main types for convenience
 pub const Engine12 = engine12.Engine12;
@@ -86,6 +87,10 @@ pub const WebSocketRoom = websocket.WebSocketRoom;
 pub const RuntimeTemplate = hot_reload.RuntimeTemplate;
 pub const HotReloadManager = hot_reload.HotReloadManager;
 pub const FileWatcher = hot_reload.FileWatcher;
+
+// Re-export HTMX types
+pub const HtmxConfig = htmx.HtmxConfig;
+pub const HtmxRequestInfo = htmx.HtmxRequestInfo;
 
 // Re-export logging middleware types
 pub const LoggingMiddleware = logging_middleware.LoggingMiddleware;

@@ -25,17 +25,36 @@ pub const Pagination = struct {
     /// const todos = try orm.findAllWithLimit(Todo, pagination.limit, pagination.offset);
     /// ```
     pub fn fromRequest(req: *Request) !Pagination {
+        return fromRequestWithDefaults(req, 20, 100);
+    }
+
+    /// Create pagination from request query parameters with configurable defaults
+    /// Allows customizing the default limit and maximum allowed limit per resource
+    /// Validates: page >= 1, limit between 1 and max_limit
+    /// 
+    /// Example:
+    /// ```zig
+    /// // Default to 50 items, max 200
+    /// const pagination = Pagination.fromRequestWithDefaults(request, 50, 200);
+    /// const todos = try orm.findAllWithLimit(Todo, pagination.limit, pagination.offset);
+    /// ```
+    pub fn fromRequestWithDefaults(req: *Request, default_limit: u32, max_limit: u32) !Pagination {
         const page = (req.queryParamTyped(u32, "page") catch null) orelse 1;
-        const limit = (req.queryParamTyped(u32, "limit") catch null) orelse 20;
+        var limit = (req.queryParamTyped(u32, "limit") catch null) orelse default_limit;
         
         // Validate page
         if (page < 1) {
             return error.InvalidArgument;
         }
         
-        // Validate limit (between 1 and 100)
-        if (limit < 1 or limit > 100) {
+        // Validate limit (between 1 and max_limit)
+        if (limit < 1) {
             return error.InvalidArgument;
+        }
+        
+        // Clamp limit to max_limit to prevent excessive data transfer
+        if (limit > max_limit) {
+            limit = max_limit;
         }
         
         const offset = (page - 1) * limit;

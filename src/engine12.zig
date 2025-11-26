@@ -23,6 +23,7 @@ const orm = @import("orm/orm.zig");
 const websocket_mod = @import("websocket/module.zig");
 const hot_reload_mod = @import("hot_reload/module.zig");
 const script_injector_mod = @import("hot_reload/script_injector.zig");
+const htmx_mod = @import("htmx/module.zig");
 const rest_api_mod = @import("rest_api.zig");
 const openapi = @import("openapi.zig");
 const validation = @import("validation.zig");
@@ -646,6 +647,9 @@ pub const Engine12 = struct {
     // Hot Reload Manager (development only)
     hot_reload_manager: ?*hot_reload_mod.HotReloadManager = null,
 
+    // HTMX Configuration (auto-enabled in development mode)
+    htmx_config: ?htmx_mod.HtmxConfig = null,
+
     // OpenAPI Generator
     openapi_generator: ?openapi.OpenAPIGenerator = null,
 
@@ -676,7 +680,7 @@ pub const Engine12 = struct {
     }
 
     /// Initialize engine12 for development
-    /// Hot reloading is automatically enabled in development mode
+    /// Hot reloading and HTMX are automatically enabled in development mode
     pub fn initDevelopment() !Engine12 {
         var app = try Engine12.initWithProfile(types.ServerProfile_Development);
 
@@ -692,6 +696,9 @@ pub const Engine12 = struct {
         // This ensures it's in the middleware chain when requests are handled
         try app.useResponse(script_injector_mod.injectHotReloadScript);
 
+        // Auto-enable HTMX in development mode with debug enabled
+        app.enableHtmx();
+
         return app;
     }
 
@@ -704,6 +711,66 @@ pub const Engine12 = struct {
     pub fn initTesting() !Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
     }
+
+    // =========================================================================
+    // HTMX Configuration
+    // =========================================================================
+
+    /// Enable HTMX with automatic configuration based on environment
+    /// In development: enables debug mode
+    /// In production: disables debug mode
+    ///
+    /// HTMX script is automatically injected into full HTML page responses.
+    /// Fragment responses (created with Response.fragment()) are not modified.
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initProduction();
+    /// app.enableHtmx();  // Enable HTMX in production
+    /// ```
+    pub fn enableHtmx(self: *Engine12) void {
+        const config = if (self.profile.environment == .production)
+            htmx_mod.production_config
+        else
+            htmx_mod.development_config;
+        self.enableHtmxWithConfig(config);
+    }
+
+    /// Enable HTMX with custom configuration
+    ///
+    /// Example:
+    /// ```zig
+    /// var app = try Engine12.initProduction();
+    /// app.enableHtmxWithConfig(.{
+    ///     .version = "2.0.0",
+    ///     .debug = false,
+    ///     .include_ws_extension = true,
+    /// });
+    /// ```
+    pub fn enableHtmxWithConfig(self: *Engine12, config: htmx_mod.HtmxConfig) void {
+        self.htmx_config = config;
+        htmx_mod.setConfig(config);
+
+        // Register HTMX injector as response middleware
+        self.useResponse(htmx_mod.injectHtmx) catch {
+            std.debug.print("[Engine12] Warning: Failed to register HTMX injector middleware\n", .{});
+        };
+    }
+
+    /// Disable HTMX injection
+    pub fn disableHtmx(self: *Engine12) void {
+        self.htmx_config = null;
+        htmx_mod.setConfig(null);
+    }
+
+    /// Check if HTMX is enabled
+    pub fn isHtmxEnabled(self: *const Engine12) bool {
+        return self.htmx_config != null and self.htmx_config.?.enabled;
+    }
+
+    // =========================================================================
+    // End HTMX Configuration
+    // =========================================================================
 
     /// Configure server settings (host, port, timeouts)
     /// Must be called before start()

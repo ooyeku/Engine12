@@ -29,6 +29,7 @@ const handlers = struct {
     const stats = @import("handlers/stats.zig");
     const views = @import("handlers/views.zig");
     const metrics = @import("handlers/metrics.zig");
+    const htmx = @import("handlers/htmx.zig");
 };
 
 const allocator = std.heap.page_allocator;
@@ -285,6 +286,11 @@ pub fn createApp() !E12.Engine12 {
     // Use initDevelopment() to enable hot reloading for templates and static files
     var app = try E12.Engine12.initDevelopment();
 
+    // Register root route FIRST before anything else that might build the server
+    std.debug.print("[Todo] Registering root route / FIRST\n", .{});
+    try app.get("/", handlers.views.handleIndex);
+    std.debug.print("[Todo] Root route registered, custom_root_handler should be true\n", .{});
+
     // Initialize and register authentication valve
     const orm = database.getORM() catch {
         return error.DatabaseNotInitialized;
@@ -375,9 +381,11 @@ pub fn createApp() !E12.Engine12 {
         }
     }
 
-    // Register root route FIRST to prevent default handler from being registered
-    // This must be done before any other routes that might build the server
-    try app.get("/", handlers.views.handleIndex);
+    // Note: Root route "/" is registered first in createApp() before any other initialization
+
+    // HTMX-powered todo app - using minimal routes
+    // Main page
+    try app.get("/htmx", handlers.views.handleHtmxIndex);
 
     // Enable OpenAPI documentation
     try app.enableOpenApiDocs("/docs", .{
@@ -488,6 +496,8 @@ pub fn createApp() !E12.Engine12 {
         .authenticator = auth.requireAuthForRestApi,
         .authorization = auth.canAccessTodo,
         .enable_pagination = true,
+        .default_limit = 20, // Default items per page
+        .max_limit = 100, // Maximum items per page (prevents excessive data transfer)
         .enable_filtering = true,
         .enable_sorting = true,
         .cache_ttl_ms = 30000, // 30 seconds

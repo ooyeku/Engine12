@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --bg-card: #161616;
+            --bg-input: #1e1e1e;
+            --text: #f0f0f0;
+            --text-secondary: #b0b0b0;
+            --text-muted: #707070;
+            --border: #303030;
+            --accent: #f0f0f0;
+            --accent-text: #0d0d0d;
+            --accent-hover: #d0d0d0;
+            --success: #3fb950;
+            --danger: #f85149;
+            --shadow: 0 1px 3px rgba(0,0,0,0.4);
+            --radius: 6px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+            font-size: 15px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 3rem 1.5rem;
+        }
+
+        /* Header */
+        header {
+            margin-bottom: 2.5rem;
+        }
+
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text);
+            letter-spacing: -0.02em;
+        }
+
+        .badge {
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: var(--bg-input);
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Stats */
+        .stats {
+            display: flex;
+            gap: 2rem;
+            padding: 1.25rem 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        .stat {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 600;
+            color: var(--text);
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Messages */
+        #messages:not(:empty) {
+            margin-bottom: 1.5rem;
+        }
+
+        .error, .success {
+            padding: 0.75rem 1rem;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+        }
+
+        .error {
+            background: rgba(248, 81, 73, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(248, 81, 73, 0.2);
+        }
+
+        .success {
+            background: rgba(63, 185, 80, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(63, 185, 80, 0.2);
+        }
+
+        /* Form */
+        .add-form {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .form-row + .form-row {
+            margin-top: 0.5rem;
+        }
+
+        input[type="text"],
+        select {
+            padding: 0.625rem 0.75rem;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 0.9rem;
+            font-family: inherit;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+
+        input[type="text"] {
+            flex: 1;
+        }
+
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0,0,0,0.05);
+        }
+
+        input[type="text"]::placeholder {
+            color: var(--text-muted);
+        }
+
+        select {
+            cursor: pointer;
+            min-width: 100px;
+        }
+
+        .btn {
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: 1px solid transparent;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--accent-text);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            color: var(--accent-text);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            border-color: var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-input);
+            color: var(--text);
+        }
+
+        /* Actions */
+        .actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .actions-left {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .task-count {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Todo List */
+        .todo-list {
+            list-style: none;
+        }
+
+        .todo-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .todo-item:last-child {
+            border-bottom: none;
+        }
+
+        .todo-item.completed .todo-title {
+            color: var(--text-muted);
+            text-decoration: line-through;
+        }
+
+        .todo-item.completed .todo-description {
+            color: var(--text-muted);
+        }
+
+        /* Checkbox */
+        .checkbox {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border: 1.5px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.15s;
+            flex-shrink: 0;
+            margin-top: 2px;
+            position: relative;
+        }
+
+        .checkbox:hover {
+            border-color: var(--text-muted);
+        }
+
+        .checkbox:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .checkbox:checked::after {
+            content: '';
+            position: absolute;
+            left: 5px;
+            top: 2px;
+            width: 5px;
+            height: 9px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
+        .todo-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .todo-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .todo-title {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        .priority-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .priority-dot.high { background: var(--danger); }
+        .priority-dot.medium { background: #f0a500; }
+        .priority-dot.low { background: var(--success); }
+
+        .todo-description {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .todo-actions {
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .todo-item:hover .todo-actions {
+            opacity: 1;
+        }
+
+        .btn-delete {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+        }
+
+        .btn-delete:hover {
+            background: rgba(248, 81, 73, 0.1);
+            color: var(--danger);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-muted);
+        }
+
+        .empty-state p {
+            font-size: 0.95rem;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--text-muted);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 500px) {
+            .container { padding: 2rem 1rem; }
+            .stats { gap: 1.5rem; flex-wrap: wrap; }
+            .form-row { flex-direction: column; }
+            select { width: 100%; }
+            .todo-actions { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-row">
+                <h1>{{ .title }}</h1>
+                <span class="badge">HTMX</span>
+            </div>
+            <p class="subtitle">{{ .subtitle }}</p>
+        </header>
+
+        <div class="stats" id="stats">
+            <div class="stat">
+                <span class="stat-value" id="stat-total">—</span>
+                <span class="stat-label">total</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="stat-pending">—</span>
+                <span class="stat-label">pending</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="stat-completed">—</span>
+                <span class="stat-label">done</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="stat-progress">—</span>
+                <span class="stat-label">progress</span>
+            </div>
+        </div>
+
+        <div id="messages"></div>
+
+        <form id="add-form" class="add-form" onsubmit="return addTodo(event)">
+            <div class="form-row">
+                <input type="text" id="todo-title" placeholder="What needs to be done?" required autocomplete="off">
+            </div>
+            <div class="form-row">
+                <input type="text" id="todo-description" placeholder="Description (optional)">
+                <select id="todo-priority">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+
+        <div class="actions">
+            <div class="actions-left">
+                <button class="btn btn-secondary" onclick="refreshTodos()">Refresh</button>
+            </div>
+            <span class="task-count" id="task-count"></span>
+        </div>
+
+        <ul id="todo-list" class="todo-list">
+            <li class="loading"><div class="spinner"></div></li>
+        </ul>
+    </div>
+
+    <script>
+        document.body.addEventListener('htmx:configRequest', (e) => {
+            const token = localStorage.getItem('auth_token');
+            if (token) e.detail.headers['Authorization'] = 'Bearer ' + token;
+        });
+
+        function renderTodos(todos) {
+            const list = document.getElementById('todo-list');
+            const countEl = document.getElementById('task-count');
+            
+            if (!todos || todos.length === 0) {
+                list.innerHTML = '<li class="empty-state"><p>No tasks yet</p></li>';
+                countEl.textContent = '';
+                updateStats(0, 0);
+                return;
+            }
+
+            let completed = 0;
+            list.innerHTML = todos.map(todo => {
+                if (todo.completed) completed++;
+                const completedClass = todo.completed ? ' completed' : '';
+                const checked = todo.completed ? ' checked' : '';
+                const priority = todo.priority || 'medium';
+                
+                return `
+                    <li id="todo-${todo.id}" class="todo-item${completedClass}">
+                        <input type="checkbox" class="checkbox"${checked} onchange="toggleTodo(${todo.id}, this.checked)">
+                        <div class="todo-content">
+                            <div class="todo-header">
+                                <span class="todo-title">${escapeHtml(todo.title)}</span>
+                                <span class="priority-dot ${priority}" title="${priority} priority"></span>
+                            </div>
+                            ${todo.description ? `<div class="todo-description">${escapeHtml(todo.description)}</div>` : ''}
+                        </div>
+                        <div class="todo-actions">
+                            <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+                        </div>
+                    </li>
+                `;
+            }).join('');
+
+            countEl.textContent = `${todos.length} task${todos.length !== 1 ? 's' : ''}`;
+            updateStats(todos.length, completed);
+        }
+
+        function updateStats(total, completed) {
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-pending').textContent = total - completed;
+            document.getElementById('stat-completed').textContent = completed;
+            document.getElementById('stat-progress').textContent = total > 0 ? Math.round(completed * 100 / total) + '%' : '0%';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        async function addTodo(event) {
+            event.preventDefault();
+            const btn = event.target.querySelector('button[type="submit"]');
+            btn.textContent = '...';
+            btn.disabled = true;
+            
+            const title = document.getElementById('todo-title').value.trim();
+            const description = document.getElementById('todo-description').value.trim();
+            const priority = document.getElementById('todo-priority').value;
+            
+            if (!title) {
+                document.getElementById('messages').innerHTML = '<div class="error">Title is required</div>';
+                btn.textContent = 'Add';
+                btn.disabled = false;
+                return false;
+            }
+            
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                const token = localStorage.getItem('auth_token');
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                
+                const resp = await fetch('/api/todos', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ title, description, priority })
+                });
+                
+                if (resp.ok) {
+                    document.getElementById('add-form').reset();
+                    document.getElementById('messages').innerHTML = '<div class="success">Task added</div>';
+                    setTimeout(() => document.getElementById('messages').innerHTML = '', 2000);
+                    refreshTodos();
+                } else {
+                    const data = await resp.json().catch(() => ({}));
+                    document.getElementById('messages').innerHTML = '<div class="error">' + (data.error || 'Failed to add task') + '</div>';
+                }
+            } catch (e) {
+                document.getElementById('messages').innerHTML = '<div class="error">Failed to add task</div>';
+            }
+            
+            btn.textContent = 'Add';
+            btn.disabled = false;
+            return false;
+        }
+
+        async function refreshTodos() {
+            const list = document.getElementById('todo-list');
+            list.innerHTML = '<li class="loading"><div class="spinner"></div></li>';
+            
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                const token = localStorage.getItem('auth_token');
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                
+                const resp = await fetch('/api/todos', { headers });
+                const data = await resp.json();
+                renderTodos(data.data || data);
+            } catch (e) {
+                list.innerHTML = '<li class="empty-state"><p>Failed to load tasks</p></li>';
+            }
+        }
+
+        async function toggleTodo(id, completed) {
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                const token = localStorage.getItem('auth_token');
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                
+                await fetch('/api/todos/' + id, {
+                    method: 'PUT',
+                    headers,
+                    body: JSON.stringify({ completed })
+                });
+                refreshTodos();
+            } catch (e) {
+                document.getElementById('messages').innerHTML = '<div class="error">Failed to update</div>';
+            }
+        }
+
+        async function deleteTodo(id) {
+            if (!confirm('Delete this task?')) return;
+            
+            const item = document.getElementById('todo-' + id);
+            if (item) item.style.opacity = '0.4';
+            
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+                const token = localStorage.getItem('auth_token');
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                
+                await fetch('/api/todos/' + id, { method: 'DELETE', headers });
+                refreshTodos();
+            } catch (e) {
+                document.getElementById('messages').innerHTML = '<div class="error">Failed to delete</div>';
+                if (item) item.style.opacity = '1';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', refreshTodos);
+    </script>
+</body>
+</html>

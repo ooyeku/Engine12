@@ -88,6 +88,52 @@ pub const Request = struct {
         return self.inner.headers.get(name);
     }
 
+    // =========================================================================
+    // HTMX Convenience Methods
+    // =========================================================================
+
+    /// Check if this request was made by HTMX (HX-Request header present)
+    pub fn isHtmx(self: *const Request) bool {
+        return self.header("HX-Request") != null;
+    }
+
+    /// Check if this is a boosted HTMX request (hx-boost)
+    /// Boosted requests expect full page responses with HTMX enhancements
+    pub fn isHtmxBoosted(self: *const Request) bool {
+        const value = self.header("HX-Boosted") orelse return false;
+        return std.mem.eql(u8, value, "true");
+    }
+
+    /// Check if this is a partial HTMX request (wants fragment response)
+    /// Partial requests are HTMX requests that are NOT boosted
+    pub fn isHtmxPartial(self: *const Request) bool {
+        return self.isHtmx() and !self.isHtmxBoosted();
+    }
+
+    /// Get the HTMX target element ID
+    pub fn htmxTarget(self: *const Request) ?[]const u8 {
+        return self.header("HX-Target");
+    }
+
+    /// Get the HTMX trigger element ID
+    pub fn htmxTrigger(self: *const Request) ?[]const u8 {
+        return self.header("HX-Trigger");
+    }
+
+    /// Get the current browser URL from HTMX
+    pub fn htmxCurrentUrl(self: *const Request) ?[]const u8 {
+        return self.header("HX-Current-URL");
+    }
+
+    /// Get the user's prompt response (from hx-prompt)
+    pub fn htmxPrompt(self: *const Request) ?[]const u8 {
+        return self.header("HX-Prompt");
+    }
+
+    // =========================================================================
+    // End HTMX Methods
+    // =========================================================================
+
     /// Parse and get query parameters
     /// Returns a hashmap of key-value pairs
     /// Results are cached after first parse

@@ -766,6 +766,75 @@ pub const Response = struct {
         }
     }
 
+    // =========================================================================
+    // HTMX Response Methods
+    // =========================================================================
+
+    /// Create an HTML fragment response (marked to skip HTMX injection)
+    /// Use this for partial updates that shouldn't include the full HTMX script
+    pub fn fragment(body: []const u8) Response {
+        return Response.html(body).withHeader("X-HTMX-Fragment", "true");
+    }
+
+    /// Add HX-Trigger header to trigger a client-side event
+    /// The event can be caught by hx-trigger on the client
+    ///
+    /// Example:
+    /// ```zig
+    /// return Response.html("<div>Done</div>").htmxTrigger("todoCreated");
+    /// ```
+    pub fn htmxTrigger(self: Response, event: []const u8) Response {
+        return self.withHeader("HX-Trigger", event);
+    }
+
+    /// Add HX-Trigger-After-Swap header
+    /// Event triggers after the swap is complete
+    pub fn htmxTriggerAfterSwap(self: Response, event: []const u8) Response {
+        return self.withHeader("HX-Trigger-After-Swap", event);
+    }
+
+    /// Add HX-Trigger-After-Settle header
+    /// Event triggers after the settle step (CSS transitions complete)
+    pub fn htmxTriggerAfterSettle(self: Response, event: []const u8) Response {
+        return self.withHeader("HX-Trigger-After-Settle", event);
+    }
+
+    /// Create an HTMX redirect response
+    /// The client will navigate to the specified URL
+    pub fn htmxRedirect(url: []const u8) Response {
+        return Response.noContent().withHeader("HX-Redirect", url);
+    }
+
+    /// Create an HTMX refresh response
+    /// The client will refresh the current page
+    pub fn htmxRefresh() Response {
+        return Response.noContent().withHeader("HX-Refresh", "true");
+    }
+
+    /// Add HX-Push-Url header to push URL to browser history
+    pub fn htmxPushUrl(self: Response, url: []const u8) Response {
+        return self.withHeader("HX-Push-Url", url);
+    }
+
+    /// Add HX-Replace-Url header to replace URL in browser history (no new entry)
+    pub fn htmxReplaceUrl(self: Response, url: []const u8) Response {
+        return self.withHeader("HX-Replace-Url", url);
+    }
+
+    /// Add HX-Retarget header to change the target element for this response
+    pub fn htmxRetarget(self: Response, selector: []const u8) Response {
+        return self.withHeader("HX-Retarget", selector);
+    }
+
+    /// Add HX-Reswap header to change the swap style for this response
+    pub fn htmxReswap(self: Response, style: []const u8) Response {
+        return self.withHeader("HX-Reswap", style);
+    }
+
+    // =========================================================================
+    // End HTMX Methods
+    // =========================================================================
+
     /// Set a cookie
     /// The cookie value will be copied to persistent memory
     ///

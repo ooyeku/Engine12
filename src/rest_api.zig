@@ -44,6 +44,10 @@ pub fn RestApiConfig(comptime Model: type) type {
         cache_ttl_ms: ?u32 = null,
         /// Enable pagination (default: true)
         enable_pagination: bool = true,
+        /// Default pagination limit when no ?limit= parameter is provided (default: 20)
+        default_limit: u32 = 20,
+        /// Maximum allowed pagination limit to prevent excessive data transfer (default: 100)
+        max_limit: u32 = 100,
         /// Enable filtering via ?filter=field:value (default: true)
         enable_filtering: bool = true,
         /// Enable sorting via ?sort=field:asc|desc (default: true)
@@ -152,6 +156,7 @@ fn buildListCacheKey(
     prefix: []const u8,
     request: *Request,
     user_id: ?i64,
+    default_limit: u32,
 ) ![]const u8 {
     const arena = request.arena.allocator();
 
@@ -186,9 +191,9 @@ fn buildListCacheKey(
         try writer.print(":sort:{s}", .{sort});
     }
 
-    // Add pagination
+    // Add pagination (use config default_limit if not provided in query)
     const page = (request.queryParamTyped(u32, "page") catch null) orelse 1;
-    const limit = (request.queryParamTyped(u32, "limit") catch null) orelse 20;
+    const limit = (request.queryParamTyped(u32, "limit") catch null) orelse default_limit;
     try writer.print(":page:{d}:limit:{d}", .{ page, limit });
 
     return try key_buf.toOwnedSlice(arena);
@@ -228,7 +233,7 @@ fn handleList(
 
     // Check cache
     if (config.cache_ttl_ms) |_| {
-        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null) catch null;
+        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
             // Note: key is allocated with request.arena.allocator(), so no manual free needed
             if (request.cacheGet(key) catch null) |entry| {
@@ -239,13 +244,13 @@ fn handleList(
         }
     }
 
-    // Parse pagination
+    // Parse pagination using config-specified defaults and limits
     const pagination = if (config.enable_pagination)
-        Pagination.fromRequest(request) catch {
+        Pagination.fromRequestWithDefaults(request, config.default_limit, config.max_limit) catch {
             return Response.errorResponse("Invalid pagination parameters", 400);
         }
     else
-        Pagination{ .page = 1, .limit = 1000, .offset = 0 };
+        Pagination{ .page = 1, .limit = config.default_limit, .offset = 0 };
 
     // Build query - get table name using model utilities
     const raw_table_name = model_utils.inferTableName(T);
@@ -448,7 +453,7 @@ fn handleList(
 
     // Cache the response
     if (config.cache_ttl_ms) |ttl| {
-        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null) catch null;
+        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
             // Note: key is allocated with request.arena.allocator(), so no manual free needed
             const json = json_mod.Json.serialize(PaginatedResponse(T), paginated, config.orm.allocator) catch null;
@@ -633,10 +638,27 @@ fn handleCreate(
         return Response.serverError("Failed to create record");
     };
 
+    // Fetch the created ID from the database and set it on the model
+    // This ensures the response includes the actual database-generated ID
+    const created_id = config.orm.db.lastInsertRowId() catch |err| {
+        std.debug.print("[REST API] Warning: Failed to get lastInsertRowId: {}\n", .{err});
+        // Fallback: return with id=0 (matches previous behavior)
+        const response = Response.jsonFrom(T, model_to_create, config.orm.allocator);
+        return response.withStatus(201);
+    };
+
+    // Set the created ID on the model before returning
+    inline for (std.meta.fields(T)) |field| {
+        if (std.mem.eql(u8, field.name, "id")) {
+            @field(model_to_create, "id") = created_id;
+            break;
+        }
+    }
+
     // Invalidate cache
     if (config.cache_ttl_ms) |_| {
         // Invalidate list cache
-        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null) catch null;
+        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
             // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
@@ -789,7 +811,7 @@ fn handleUpdate(
     // Invalidate cache
     if (config.cache_ttl_ms) |_| {
         // Invalidate list cache
-        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null) catch null;
+        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
             // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
@@ -875,7 +897,7 @@ fn handleDelete(
     // Invalidate cache
     if (config.cache_ttl_ms) |_| {
         // Invalidate list cache
-        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null) catch null;
+        const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
             // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
