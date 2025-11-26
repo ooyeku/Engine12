@@ -2,6 +2,7 @@ const std = @import("std");
 const E12 = @import("engine12");
 const Request = E12.Request;
 const Response = E12.Response;
+const htmx = E12.htmx;
 const database = @import("../database.zig");
 const models = @import("../models.zig");
 const Todo = models.Todo;
@@ -296,11 +297,11 @@ pub fn handleSearchTodos(req: *Request) Response {
     }
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>");
+        return htmx.errors.errorFragment("Database not initialized");
     };
 
     var todos = orm.findAll(Todo) catch {
-        return Response.fragment("<li class=\"error\">Failed to load todos</li>");
+        return htmx.errors.errorFragment("Failed to load todos");
     };
     defer todos.deinit(orm.allocator);
 
@@ -341,72 +342,65 @@ pub fn handleSearchTodos(req: *Request) Response {
 
 /// Handle creating a new todo (returns HTML fragment for the new item)
 pub fn handleCreateTodo(req: *Request) Response {
-    const body_str = req.body();
+    var form_parser = req.getFormParser();
 
-    const title_encoded = getFormValue(body_str, "title") orelse {
-        return Response.fragment("<li class=\"error\">Title is required</li>").withStatus(400);
+    // Parse title (required)
+    const title = form_parser.getRequired("title") catch {
+        return htmx.errors.validationErrorFragment("title", "Title is required");
     };
-
-    // Decode title
-    var title_buf: [256]u8 = undefined;
-    const title = urlDecode(title_encoded, &title_buf);
+    defer req.allocator().free(title);
 
     if (title.len == 0) {
-        return Response.fragment("<li class=\"error\">Title cannot be empty</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("title", "Title cannot be empty");
     }
 
-    // Get and decode other fields
-    var desc_buf: [1024]u8 = undefined;
-    const description = if (getFormValue(body_str, "description")) |d|
-        urlDecode(d, &desc_buf)
-    else
-        "";
+    // Parse optional fields
+    const description = form_parser.get("description") catch null;
+    defer if (description) |d| req.allocator().free(d);
 
-    const priority = getFormValue(body_str, "priority") orelse "medium";
+    const priority_raw = form_parser.get("priority") catch null;
+    defer if (priority_raw) |p| req.allocator().free(p);
+    const priority = if (priority_raw) |p| p else "medium";
 
-    var tags_buf: [256]u8 = undefined;
-    const tags = if (getFormValue(body_str, "tags")) |t|
-        urlDecode(t, &tags_buf)
-    else
-        "";
+    const tags_raw = form_parser.get("tags") catch null;
+    defer if (tags_raw) |t| req.allocator().free(t);
+    const tags = if (tags_raw) |t| t else "";
 
     // Parse due date
-    var due_date: ?i64 = null;
-    if (getFormValue(body_str, "due_date")) |dd| {
-        if (dd.len > 0) {
-            due_date = parseDateToTimestamp(dd);
-        }
-    }
+    const due_date = form_parser.getDate("due_date") catch null;
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
-    // Allocate strings
+    // Allocate strings for Todo struct (using page allocator since they persist)
     const title_copy = allocator.dupe(u8, title) catch {
-        return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Memory error", 500);
     };
-    const desc_copy = allocator.dupe(u8, description) catch {
-        allocator.free(title_copy);
-        return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
-    };
+    const desc_copy = if (description) |d|
+        allocator.dupe(u8, d) catch {
+            allocator.free(title_copy);
+            return htmx.errors.errorFragmentWithStatus("Memory error", 500);
+        }
+    else
+        "";
     const priority_copy = allocator.dupe(u8, priority) catch {
         allocator.free(title_copy);
-        allocator.free(desc_copy);
-        return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+        if (desc_copy.len > 0) allocator.free(desc_copy);
+        return htmx.errors.errorFragmentWithStatus("Memory error", 500);
     };
     const tags_copy = allocator.dupe(u8, tags) catch {
         allocator.free(title_copy);
-        allocator.free(desc_copy);
+        if (desc_copy.len > 0) allocator.free(desc_copy);
         allocator.free(priority_copy);
-        return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Memory error", 500);
     };
 
     var todo = Todo{
         .id = 0,
         .user_id = 0,
         .title = title_copy,
-        .description = desc_copy,
+        .description = @constCast(desc_copy),
         .completed = false,
         .priority = priority_copy,
         .due_date = due_date,
@@ -416,7 +410,7 @@ pub fn handleCreateTodo(req: *Request) Response {
     };
 
     orm.create(Todo, todo) catch {
-        return Response.fragment("<li class=\"error\">Failed to create todo</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Failed to create todo", 500);
     };
 
     todo.id = orm.db.lastInsertRowId() catch 0;
@@ -425,7 +419,7 @@ pub fn handleCreateTodo(req: *Request) Response {
     defer buf.deinit(allocator);
 
     renderTodoItem(todo, &buf) catch {
-        return Response.fragment("<li class=\"error\">Failed to render todo</li>");
+        return htmx.errors.errorFragment("Failed to render todo");
     };
 
     return Response.fragment(buf.toOwnedSlice(allocator) catch "")
@@ -466,35 +460,35 @@ fn parseDateToTimestamp(date_str: []const u8) ?i64 {
 pub fn handleToggleTodo(req: *Request) Response {
     const id_str = req.param("id").asString();
     if (id_str.len == 0) {
-        return Response.fragment("<li class=\"error\">Invalid ID</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     }
 
     const id: i64 = std.fmt.parseInt(i64, id_str, 10) catch {
-        return Response.fragment("<li class=\"error\">Invalid ID format</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID format");
     };
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
     var todo = orm.find(Todo, id) catch {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     } orelse {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     };
 
     todo.completed = !todo.completed;
     todo.updated_at = std.time.timestamp();
 
     orm.update(Todo, todo) catch {
-        return Response.fragment("<li class=\"error\">Failed to update todo</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Failed to update todo", 500);
     };
 
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);
 
     renderTodoItem(todo, &buf) catch {
-        return Response.fragment("<li class=\"error\">Failed to render todo</li>");
+        return htmx.errors.errorFragment("Failed to render todo");
     };
 
     return Response.fragment(buf.toOwnedSlice(allocator) catch "")
@@ -505,21 +499,21 @@ pub fn handleToggleTodo(req: *Request) Response {
 pub fn handleEditTodo(req: *Request) Response {
     const id_str = req.param("id").asString();
     if (id_str.len == 0) {
-        return Response.fragment("<li class=\"error\">Invalid ID</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     }
 
     const id: i64 = std.fmt.parseInt(i64, id_str, 10) catch {
-        return Response.fragment("<li class=\"error\">Invalid ID format</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID format");
     };
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
     const todo = orm.find(Todo, id) catch {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     } orelse {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     };
 
     var buf = std.ArrayListUnmanaged(u8){};
@@ -632,82 +626,75 @@ pub fn handleEditTodo(req: *Request) Response {
 pub fn handleUpdateTodo(req: *Request) Response {
     const id_str = req.param("id").asString();
     if (id_str.len == 0) {
-        return Response.fragment("<li class=\"error\">Invalid ID</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     }
 
     const id: i64 = std.fmt.parseInt(i64, id_str, 10) catch {
-        return Response.fragment("<li class=\"error\">Invalid ID format</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID format");
     };
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
     var todo = orm.find(Todo, id) catch {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     } orelse {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     };
 
-    const body_str = req.body();
+    var form_parser = req.getFormParser();
 
     // Update fields from form
-    if (getFormValue(body_str, "title")) |title_encoded| {
-        var title_buf: [256]u8 = undefined;
-        const title = urlDecode(title_encoded, &title_buf);
+    if (form_parser.get("title") catch null) |title| {
+        defer req.allocator().free(title);
         if (title.len > 0) {
             const title_copy = allocator.dupe(u8, title) catch {
-                return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+                return htmx.errors.errorFragmentWithStatus("Memory error", 500);
             };
             todo.title = title_copy;
         }
     }
 
-    if (getFormValue(body_str, "description")) |desc_encoded| {
-        var desc_buf: [1024]u8 = undefined;
-        const desc = urlDecode(desc_encoded, &desc_buf);
+    if (form_parser.get("description") catch null) |desc| {
+        defer req.allocator().free(desc);
         const desc_copy = allocator.dupe(u8, desc) catch {
-            return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+            return htmx.errors.errorFragmentWithStatus("Memory error", 500);
         };
         todo.description = desc_copy;
     }
 
-    if (getFormValue(body_str, "priority")) |priority| {
+    if (form_parser.get("priority") catch null) |priority| {
+        defer req.allocator().free(priority);
         const priority_copy = allocator.dupe(u8, priority) catch {
-            return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+            return htmx.errors.errorFragmentWithStatus("Memory error", 500);
         };
         todo.priority = priority_copy;
     }
 
-    if (getFormValue(body_str, "tags")) |tags_encoded| {
-        var tags_buf: [256]u8 = undefined;
-        const tags = urlDecode(tags_encoded, &tags_buf);
+    if (form_parser.get("tags") catch null) |tags| {
+        defer req.allocator().free(tags);
         const tags_copy = allocator.dupe(u8, tags) catch {
-            return Response.fragment("<li class=\"error\">Memory error</li>").withStatus(500);
+            return htmx.errors.errorFragmentWithStatus("Memory error", 500);
         };
         todo.tags = tags_copy;
     }
 
     // Parse due date
-    if (getFormValue(body_str, "due_date")) |dd| {
-        if (dd.len > 0) {
-            todo.due_date = parseDateToTimestamp(dd);
-        } else {
-            todo.due_date = null;
-        }
-    }
+    const due_date = form_parser.getDate("due_date") catch null;
+    todo.due_date = due_date;
 
     todo.updated_at = std.time.timestamp();
 
     orm.update(Todo, todo) catch {
-        return Response.fragment("<li class=\"error\">Failed to update todo</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Failed to update todo", 500);
     };
 
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);
 
     renderTodoItem(todo, &buf) catch {
-        return Response.fragment("<li class=\"error\">Failed to render todo</li>");
+        return htmx.errors.errorFragment("Failed to render todo");
     };
 
     return Response.fragment(buf.toOwnedSlice(allocator) catch "")
@@ -718,28 +705,28 @@ pub fn handleUpdateTodo(req: *Request) Response {
 pub fn handleViewTodo(req: *Request) Response {
     const id_str = req.param("id").asString();
     if (id_str.len == 0) {
-        return Response.fragment("<li class=\"error\">Invalid ID</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     }
 
     const id: i64 = std.fmt.parseInt(i64, id_str, 10) catch {
-        return Response.fragment("<li class=\"error\">Invalid ID format</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID format");
     };
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
     const todo = orm.find(Todo, id) catch {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     } orelse {
-        return Response.fragment("<li class=\"error\">Todo not found</li>").withStatus(404);
+        return htmx.errors.notFoundFragment("Todo");
     };
 
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);
 
     renderTodoItem(todo, &buf) catch {
-        return Response.fragment("<li class=\"error\">Failed to render todo</li>");
+        return htmx.errors.errorFragment("Failed to render todo");
     };
 
     return Response.fragment(buf.toOwnedSlice(allocator) catch "");
@@ -749,19 +736,19 @@ pub fn handleViewTodo(req: *Request) Response {
 pub fn handleDeleteTodo(req: *Request) Response {
     const id_str = req.param("id").asString();
     if (id_str.len == 0) {
-        return Response.fragment("<li class=\"error\">Invalid ID</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     }
 
     const id: i64 = std.fmt.parseInt(i64, id_str, 10) catch {
-        return Response.fragment("<li class=\"error\">Invalid ID format</li>").withStatus(400);
+        return htmx.errors.validationErrorFragment("id", "Invalid ID format");
     };
 
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
     orm.delete(Todo, id) catch {
-        return Response.fragment("<li class=\"error\">Failed to delete todo</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Failed to delete todo", 500);
     };
 
     return Response.fragment("")
@@ -840,11 +827,11 @@ pub fn handleGetStats(req: *Request) Response {
 /// Handle clearing all completed todos
 pub fn handleClearCompleted(req: *Request) Response {
     const orm = database.getORM() catch {
-        return Response.fragment("<li class=\"error\">Database not initialized</li>");
+        return htmx.errors.errorFragment("Database not initialized");
     };
 
     orm.db.execute("DELETE FROM todos WHERE completed = 1") catch {
-        return Response.fragment("<li class=\"error\">Failed to clear completed</li>").withStatus(500);
+        return htmx.errors.errorFragmentWithStatus("Failed to clear completed", 500);
     };
 
     // Return the updated todo list

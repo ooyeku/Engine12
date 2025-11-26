@@ -2021,18 +2021,71 @@ return Response.fragment("<div>Content</div>")
 
 **Response Modifiers:**
 ```zig
-// Change target element
+// Change target element (using convenience alias)
 return Response.fragment("<li>Item</li>")
-    .htmxRetarget("#todo-list");
+    .withTarget("#todo-list");
 
-// Change swap method
+// Change swap method (using convenience alias)
 return Response.fragment("<li>Item</li>")
-    .htmxReswap("beforeend");  // Append to target
+    .withSwap("beforeend");  // Append to target
 ```
 
-### 13.4 Complete Example
+### 13.4 Form Parsing
 
-Here's a complete example of a todo list with HTMX:
+Engine12 provides a built-in form parser that makes handling form data easy:
+
+```zig
+fn handleCreateTodo(req: *Request) Response {
+    var form = req.getFormParser();
+    
+    // Parse required field
+    const title = form.getRequired("title") catch {
+        return htmx.errors.validationErrorFragment("title", "Title is required");
+    };
+    defer req.allocator().free(title);
+    
+    // Parse optional fields
+    const description = form.get("description") catch null;
+    defer if (description) |d| req.allocator().free(d);
+    
+    const priority = (form.get("priority") catch null) orelse "medium";
+    defer if (priority) |p| req.allocator().free(p);
+    
+    // Parse date
+    const due_date = form.getDate("due_date") catch null;
+    
+    // Use parsed values...
+}
+```
+
+**Form Parser Methods:**
+- `get(key)` - Get optional form value (returns null if not found)
+- `getRequired(key)` - Get required form value (returns error if missing)
+- `getInt(key)` - Parse integer value
+- `getBool(key)` - Parse boolean value (true for "true", "1", "yes")
+- `getDate(key)` - Parse date (YYYY-MM-DD) and convert to timestamp
+
+### 13.5 Error Handling
+
+Standardized error responses make error handling consistent:
+
+```zig
+// Generic error
+return htmx.errors.errorFragment("Something went wrong");
+
+// Validation error
+return htmx.errors.validationErrorFragment("title", "Title is required");
+
+// Not found
+return htmx.errors.notFoundFragment("Todo");
+
+// Error with custom status
+return htmx.errors.errorFragmentWithStatus("Database error", 500);
+```
+
+### 13.6 Complete Example
+
+Here's a complete example of a todo list with HTMX using the new form parser and error helpers:
 
 **Handler:**
 ```zig
@@ -2040,23 +2093,46 @@ const std = @import("std");
 const E12 = @import("engine12");
 const Request = E12.Request;
 const Response = E12.Response;
+const htmx = E12.htmx;
 
 fn handleAddTodo(req: *Request) Response {
-    // Parse form data
-    const body = req.body();
-    const title = extractFormValue(body, "title") orelse {
-        return Response.badRequest("Title required");
+    // Use form parser for easy form data access
+    var form = req.getFormParser();
+    
+    // Parse required field
+    const title = form.getRequired("title") catch {
+        return htmx.errors.validationErrorFragment("title", "Title is required");
     };
+    defer req.allocator().free(title);
+    
+    if (title.len == 0) {
+        return htmx.errors.validationErrorFragment("title", "Title cannot be empty");
+    }
+    
+    // Parse optional fields
+    const priority_raw = form.get("priority") catch null;
+    defer if (priority_raw) |p| req.allocator().free(p);
+    const priority = if (priority_raw) |p| p else "medium";
+    
+    const due_date = form.getDate("due_date") catch null;
     
     // Save to database
-    const orm = getORM() catch return Response.serverError("Database error");
+    const orm = getORM() catch {
+        return htmx.errors.errorFragmentWithStatus("Database error", 500);
+    };
+    
     const todo = Todo{
         .id = 0,
         .title = title,
+        .priority = priority,
         .completed = false,
+        .due_date = due_date,
         .created_at = std.time.timestamp(),
     };
-    orm.create(Todo, todo) catch return Response.serverError("Failed to save");
+    
+    orm.create(Todo, todo) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to save", 500);
+    };
     
     // Check if HTMX request
     if (req.isHtmxPartial()) {
@@ -2071,13 +2147,23 @@ fn handleAddTodo(req: *Request) Response {
 
 fn handleToggleTodo(req: *Request) Response {
     const id = req.paramTyped(i64, "id") catch {
-        return Response.badRequest("Invalid ID");
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     };
     
-    const orm = getORM() catch return Response.serverError("Database error");
-    var todo = orm.find(Todo, id) catch return Response.notFound();
+    const orm = getORM() catch {
+        return htmx.errors.errorFragmentWithStatus("Database error", 500);
+    };
+    
+    var todo = orm.find(Todo, id) catch {
+        return htmx.errors.notFoundFragment("Todo");
+    } orelse {
+        return htmx.errors.notFoundFragment("Todo");
+    };
+    
     todo.completed = !todo.completed;
-    orm.update(Todo, todo) catch return Response.serverError("Failed to update");
+    orm.update(Todo, todo) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to update", 500);
+    };
     
     if (req.isHtmxPartial()) {
         return Response.fragment(renderTodoItem(todo))
@@ -2089,11 +2175,16 @@ fn handleToggleTodo(req: *Request) Response {
 
 fn handleDeleteTodo(req: *Request) Response {
     const id = req.paramTyped(i64, "id") catch {
-        return Response.badRequest("Invalid ID");
+        return htmx.errors.validationErrorFragment("id", "Invalid ID");
     };
     
-    const orm = getORM() catch return Response.serverError("Database error");
-    orm.delete(Todo, id) catch return Response.serverError("Failed to delete");
+    const orm = getORM() catch {
+        return htmx.errors.errorFragmentWithStatus("Database error", 500);
+    };
+    
+    orm.delete(Todo, id) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to delete", 500);
+    };
     
     if (req.isHtmxPartial()) {
         // Return empty response - HTMX will delete the element

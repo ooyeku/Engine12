@@ -88,11 +88,21 @@ pub fn withRetarget(resp: Response, css_selector: []const u8) Response {
     return resp.withHeader("HX-Retarget", css_selector);
 }
 
+/// Alias for withRetarget - convenience method for better readability
+pub fn withTarget(resp: Response, css_selector: []const u8) Response {
+    return withRetarget(resp, css_selector);
+}
+
 /// Change the swap method for the response
 /// Overrides the hx-swap of the triggering element
 /// Valid values: innerHTML, outerHTML, beforebegin, afterbegin, beforeend, afterend, delete, none
 pub fn withReswap(resp: Response, swap_style: []const u8) Response {
     return resp.withHeader("HX-Reswap", swap_style);
+}
+
+/// Alias for withReswap - convenience method for better readability
+pub fn withSwap(resp: Response, swap_style: []const u8) Response {
+    return withReswap(resp, swap_style);
 }
 
 /// Change the select filter for the response

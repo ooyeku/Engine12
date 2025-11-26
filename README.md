@@ -82,7 +82,7 @@ exe.linkLibC();
 - **HTTP Routing** - GET, POST, PUT, DELETE, PATCH with route parameters
 - **Server Configuration** - Configurable host, port, timeouts, and worker threads via `configure()`
 - **WebSocket Support** - Real-time bidirectional communication with room management
-- **HTMX Integration** - Zero-configuration HTMX support for server-driven interactivity (auto-enabled in development)
+- **HTMX Integration** - Zero-configuration HTMX support with form parsing, error helpers, and response builders (auto-enabled in development)
 - **Hot Reloading** - Automatic template and static file reloading in development mode
 - **Auto-Discovery** - Automatic migration, static file, and template discovery to reduce boilerplate
 - **Project Scaffolding** - CLI tool (`e12 new`) to generate projects with recommended structure

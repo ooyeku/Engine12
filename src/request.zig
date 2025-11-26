@@ -130,6 +130,13 @@ pub const Request = struct {
         return self.header("HX-Prompt");
     }
 
+    /// Get a form parser for the request body
+    /// Returns a FormParser that uses the request's arena allocator
+    pub fn getFormParser(self: *Request) @import("htmx/form.zig").FormParser {
+        const htmx_form = @import("htmx/form.zig");
+        return htmx_form.FormParser.init(self.body(), self.allocator());
+    }
+
     // =========================================================================
     // End HTMX Methods
     // =========================================================================

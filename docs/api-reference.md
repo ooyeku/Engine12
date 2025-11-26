@@ -4510,6 +4510,115 @@ return Response.fragment("<li>New item</li>")
     .htmxReswap("beforeend");
 ```
 
+#### `withTarget(selector: []const u8) Response`
+
+Convenience alias for `htmxRetarget()` - change the target element for this response.
+
+```zig
+return Response.fragment("<li>New item</li>")
+    .withTarget("#todo-list");
+```
+
+#### `withSwap(style: []const u8) Response`
+
+Convenience alias for `htmxReswap()` - change the swap method for this response.
+
+```zig
+return Response.fragment("<li>New item</li>")
+    .withSwap("beforeend");
+```
+
+### Form Parsing
+
+#### `getFormParser() FormParser`
+
+Get a form parser for the request body. The parser handles URL decoding automatically and uses the request's arena allocator.
+
+```zig
+var form = req.getFormParser();
+const title = try form.getRequired("title");
+defer req.allocator().free(title);
+```
+
+#### `FormParser.get(key: []const u8) !?[]const u8`
+
+Get a form value by key (returns null if not found). The value is URL-decoded and allocated in the arena allocator.
+
+```zig
+const description = try form.get("description");
+defer if (description) |d| req.allocator().free(d);
+```
+
+#### `FormParser.getRequired(key: []const u8) ![]const u8`
+
+Get a required form value (returns error if not found).
+
+```zig
+const title = try form.getRequired("title");
+defer req.allocator().free(title);
+```
+
+#### `FormParser.getInt(key: []const u8) !?i64`
+
+Get a form value as an integer.
+
+```zig
+const count = try form.getInt("count");
+if (count) |c| {
+    std.debug.print("Count: {d}\n", .{c});
+}
+```
+
+#### `FormParser.getBool(key: []const u8) !bool`
+
+Get a form value as a boolean (true if value is "true", "1", or "yes").
+
+```zig
+const enabled = try form.getBool("enabled");
+```
+
+#### `FormParser.getDate(key: []const u8) !?i64`
+
+Get a form value as a date (YYYY-MM-DD format) and convert to timestamp.
+
+```zig
+const due_date = try form.getDate("due_date");
+```
+
+### Error Response Helpers
+
+#### `errorFragment(message: []const u8) Response`
+
+Create a standardized error fragment response.
+
+```zig
+return htmx.errors.errorFragment("Something went wrong");
+```
+
+#### `validationErrorFragment(field: []const u8, message: []const u8) Response`
+
+Create a validation error fragment for form fields.
+
+```zig
+return htmx.errors.validationErrorFragment("title", "Title is required");
+```
+
+#### `notFoundFragment(resource: []const u8) Response`
+
+Create a not found fragment response.
+
+```zig
+return htmx.errors.notFoundFragment("Todo");
+```
+
+#### `errorFragmentWithStatus(message: []const u8, status: u16) Response`
+
+Create an error fragment with a specific status code.
+
+```zig
+return htmx.errors.errorFragmentWithStatus("Database error", 500);
+```
+
 ### Example: Todo List with HTMX
 
 Handler:
@@ -4520,13 +4629,25 @@ const Request = Engine12.Request;
 const Response = Engine12.Response;
 
 fn handleAddTodo(req: *Request) Response {
-    // Parse form data
-    const form = req.formData() catch return Response.badRequest("Invalid form data");
-    const title = form.get("title") orelse return Response.badRequest("Title required");
+    // Use form parser for easy form data access
+    var form = req.getFormParser();
+    
+    // Parse required field
+    const title = form.getRequired("title") catch {
+        return htmx.errors.validationErrorFragment("title", "Title is required");
+    };
+    defer req.allocator().free(title);
+    
+    // Parse optional fields
+    const priority_raw = form.get("priority") catch null;
+    defer if (priority_raw) |p| req.allocator().free(p);
+    const priority = if (priority_raw) |p| p else "medium";
     
     // Save to database
-    const todo = Todo{ .title = title, .completed = false };
-    orm.create(Todo, &todo) catch return Response.serverError("Failed to save");
+    const todo = Todo{ .title = title, .priority = priority, .completed = false };
+    orm.create(Todo, &todo) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to save", 500);
+    };
     
     // Check if HTMX request
     if (req.isHtmxPartial()) {

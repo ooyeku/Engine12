@@ -794,6 +794,8 @@ Engine12 provides zero-configuration HTMX support for server-driven interactivit
 - **HTMX Injector** (`src/htmx/injector.zig`): Automatically injects HTMX scripts into HTML responses
 - **HTMX Request** (`src/htmx/request.zig`): Request detection and header parsing utilities
 - **HTMX Response** (`src/htmx/response.zig`): Response helpers for HTMX-specific headers
+- **HTMX Form** (`src/htmx/form.zig`): Form parser for `application/x-www-form-urlencoded` data
+- **HTMX Errors** (`src/htmx/errors.zig`): Standardized error fragment response helpers
 
 ### Design Decisions
 
@@ -850,7 +852,34 @@ HTMX-specific response headers are set via fluent API methods:
 - **Events**: `htmxTrigger()` sets `HX-Trigger` header for client-side events
 - **Redirects**: `htmxRedirect()` sets `HX-Redirect` header for client-side navigation
 - **URL Management**: `htmxPushUrl()`, `htmxReplaceUrl()` for history manipulation
-- **Swap Control**: `htmxRetarget()`, `htmxReswap()` for dynamic swap behavior
+- **Swap Control**: `htmxRetarget()`, `htmxReswap()`, `withTarget()`, `withSwap()` for dynamic swap behavior
+- **Error Responses**: `errorFragment()`, `validationErrorFragment()`, `notFoundFragment()` for standardized error handling
+
+#### 7. **Form Parsing**
+
+Engine12 provides a built-in form parser that simplifies handling `application/x-www-form-urlencoded` data:
+
+- **Automatic URL Decoding**: Form values are automatically URL-decoded
+- **Type-Safe Parsing**: Methods for parsing integers, booleans, and dates
+- **Memory Safety**: Uses request arena allocator for automatic cleanup
+- **Required Fields**: `getRequired()` method for fields that must be present
+
+```zig
+var form = req.getFormParser();
+const title = try form.getRequired("title");
+defer req.allocator().free(title);
+const priority = (try form.get("priority")) orelse "medium";
+defer if (priority) |p| req.allocator().free(p);
+```
+
+#### 8. **Error Handling**
+
+Standardized error fragment responses reduce boilerplate and ensure consistent error formatting:
+
+- **Generic Errors**: `errorFragment()` for general error messages
+- **Validation Errors**: `validationErrorFragment()` for form validation errors
+- **Not Found**: `notFoundFragment()` for 404 responses
+- **Custom Status**: `errorFragmentWithStatus()` for errors with specific HTTP status codes
 
 #### 6. **Configuration Flexibility**
 

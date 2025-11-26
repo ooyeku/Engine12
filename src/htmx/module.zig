@@ -10,6 +10,9 @@
 //! - **Request Detection**: Easily detect HTMX requests and their context
 //! - **Response Helpers**: Fluent API for HTMX-specific response headers
 //! - **Fragment Support**: Create partial HTML responses for DOM updates
+//! - **Form Parsing**: Built-in form parser for `application/x-www-form-urlencoded` data
+//! - **Error Helpers**: Standardized error fragment responses
+//! - **Builder Methods**: Convenient aliases for common HTMX patterns
 //!
 //! ## Quick Start
 //!
@@ -31,18 +34,26 @@
 //!
 //! ```zig
 //! fn handleAddTodo(req: *Request) Response {
-//!     // Check if this is an HTMX request
-//!     if (req.isHtmx()) {
-//!         // Parse the todo from request body
-//!         const todo = parseTodo(req) catch return Response.badRequest("Invalid data");
+//!     // Use form parser for easy form data access
+//!     var form = req.getFormParser();
+//!     
+//!     // Parse required field
+//!     const title = form.getRequired("title") catch {
+//!         return htmx.errors.validationErrorFragment("title", "Title is required");
+//!     };
+//!     defer req.allocator().free(title);
 //!
-//!         // Return just the new todo HTML fragment
-//!         return htmx.response.fragment(renderTodoHtml(todo))
-//!             .htmxTrigger("todoAdded");
-//!     }
+//!     // Parse optional fields
+//!     const priority = (form.get("priority") catch null) orelse "medium";
+//!     defer if (priority) |p| req.allocator().free(p);
 //!
-//!     // Regular request - return full page
-//!     return Response.html(renderFullPage());
+//!     // Save todo and return fragment
+//!     const todo = createTodo(title, priority) catch {
+//!         return htmx.errors.errorFragment("Failed to create todo");
+//!     };
+//!
+//!     return Response.fragment(renderTodoHtml(todo))
+//!         .htmxTrigger("todoAdded");
 //! }
 //! ```
 //!
@@ -72,6 +83,8 @@ pub const config = @import("config.zig");
 pub const injector = @import("injector.zig");
 pub const request = @import("request.zig");
 pub const response = @import("response.zig");
+pub const form = @import("form.zig");
+pub const errors = @import("errors.zig");
 
 // Type aliases for convenience
 pub const HtmxConfig = config.HtmxConfig;
@@ -114,7 +127,9 @@ pub const withNoPushUrl = response.withNoPushUrl;
 pub const withReplaceUrl = response.withReplaceUrl;
 pub const withNoReplaceUrl = response.withNoReplaceUrl;
 pub const withRetarget = response.withRetarget;
+pub const withTarget = response.withTarget;
 pub const withReswap = response.withReswap;
+pub const withSwap = response.withSwap;
 pub const withReselect = response.withReselect;
 pub const withLocation = response.withLocation;
 pub const stopPolling = response.stopPolling;
@@ -123,6 +138,15 @@ pub const prependTo = response.prependTo;
 pub const appendTo = response.appendTo;
 pub const deleteElement = response.deleteElement;
 pub const withMultipleTriggers = response.withMultipleTriggers;
+
+// Form parsing helpers
+pub const FormParser = form.FormParser;
+
+// Error response helpers
+pub const errorFragment = errors.errorFragment;
+pub const validationErrorFragment = errors.validationErrorFragment;
+pub const notFoundFragment = errors.notFoundFragment;
+pub const errorFragmentWithStatus = errors.errorFragmentWithStatus;
 
 // Tests
 test "module exports" {
