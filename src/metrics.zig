@@ -104,14 +104,16 @@ pub const MetricsCollector = struct {
             if (duration_ms < timing.min_ms) timing.min_ms = duration_ms;
             if (duration_ms > timing.max_ms) timing.max_ms = duration_ms;
         } else {
+            // Duplicate the route string to prevent use-after-free when request arena is freed
+            const owned_route = try self.allocator.dupe(u8, route);
             const new_timing = RouteTiming{
-                .route = route,
+                .route = owned_route,
                 .count = 1,
                 .total_ms = duration_ms,
                 .min_ms = duration_ms,
                 .max_ms = duration_ms,
             };
-            try self.route_timings.put(route, new_timing);
+            try self.route_timings.put(owned_route, new_timing);
         }
     }
 
@@ -150,9 +152,10 @@ pub const MetricsCollector = struct {
         }
         self.metrics.deinit(self.allocator);
 
+        // Free all duplicated route strings
         var iterator = self.route_timings.iterator();
         while (iterator.next()) |entry| {
-            _ = entry;
+            self.allocator.free(entry.key_ptr.*);
         }
         self.route_timings.deinit();
     }

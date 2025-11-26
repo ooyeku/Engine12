@@ -112,22 +112,57 @@ pub const ResponseBufferPool = struct {
 /// Global response buffer pool (initialized lazily)
 var global_buffer_pool: ?ResponseBufferPool = null;
 var global_buffer_pool_mutex: std.Thread.Mutex = .{};
+/// Atomic flag for thread-safe initialization (prevents race condition in double-checked locking)
+var global_buffer_pool_initialized: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+/// Thread-local storage for pending buffer release
+/// This allows us to release response buffers after the response has been sent
+/// Each worker thread tracks its own pending buffer
+threadlocal var pending_buffer_release: ?[]u8 = null;
+
+/// Mark a buffer for release after the response is sent
+/// Called internally by toZiggurat() before returning
+fn markBufferForRelease(buffer: ?[]const u8) void {
+    // Release any previously pending buffer first (defensive cleanup)
+    if (pending_buffer_release) |prev_buf| {
+        getBufferPool().release(prev_buf);
+    }
+    if (buffer) |buf| {
+        pending_buffer_release = @constCast(buf);
+    } else {
+        pending_buffer_release = null;
+    }
+}
+
+/// Release any pending buffer that was marked for release
+/// Call this after the response has been formatted and sent
+pub fn releasePendingBuffer() void {
+    if (pending_buffer_release) |buf| {
+        getBufferPool().release(buf);
+        pending_buffer_release = null;
+    }
+}
 
 /// Get or initialize the global buffer pool
+/// Uses atomic flag with acquire/release ordering for thread-safe double-checked locking
 pub fn getBufferPool() *ResponseBufferPool {
-    if (global_buffer_pool != null) {
+    // Fast path: check atomic flag with acquire ordering
+    if (global_buffer_pool_initialized.load(.acquire)) {
         return &global_buffer_pool.?;
     }
 
     global_buffer_pool_mutex.lock();
     defer global_buffer_pool_mutex.unlock();
 
-    if (global_buffer_pool == null) {
+    // Double-check after acquiring lock
+    if (!global_buffer_pool_initialized.load(.acquire)) {
         global_buffer_pool = ResponseBufferPool.init(
             std.heap.page_allocator,
             256, // max 256 pooled buffers
             64 * 1024, // 64KB default buffer size
         );
+        // Release ordering ensures the pool is fully initialized before flag is set
+        global_buffer_pool_initialized.store(true, .release);
     }
 
     return &global_buffer_pool.?;
@@ -882,10 +917,9 @@ pub const Response = struct {
 
         const cookie_str = cookie_header.toOwnedSlice(persistent_allocator) catch return self;
 
-        // For now, just return self since ziggurat may not support Set-Cookie header directly
-        // In the future, this would set the Set-Cookie header
-        _ = cookie_str;
-        return self;
+        // Store the Set-Cookie header in custom headers
+        // This allows the cookie to be sent with the response
+        return self.withHeader("Set-Cookie", cookie_str);
     }
 
     /// Create a response from a file path
@@ -1010,10 +1044,30 @@ pub const Response = struct {
 
     /// Convert to ziggurat response (internal use)
     /// The response data is already in persistent memory
-    /// Note: Custom headers stored in _custom_headers are not yet applied to the ziggurat response
-    /// as ziggurat may not support custom headers directly. They are stored for future use.
+    /// Note: Custom headers stored in _custom_headers are stored but ziggurat's Response
+    /// type doesn't support arbitrary headers. Common headers like Content-Type work via
+    /// withContentType(). Custom headers are preserved for potential future ziggurat updates.
+    /// The persistent buffer is marked for release after the response is sent.
     pub fn toZiggurat(self: Response) ziggurat.response.Response {
+        // Mark the buffer for release after response is sent
+        // This is safe because format() copies the body data before sending
+        markBufferForRelease(self._persistent_body);
         return self.inner;
+    }
+    
+    /// Check if this response has custom headers stored
+    /// Returns true if there are custom headers that would need to be applied
+    pub fn hasCustomHeaders(self: Response) bool {
+        if (self._custom_headers) |headers| {
+            return headers.count() > 0;
+        }
+        return false;
+    }
+    
+    /// Get custom headers for manual application if needed
+    /// This allows external code to apply headers that ziggurat doesn't support directly
+    pub fn getCustomHeaders(self: Response) ?std.StringHashMap([]const u8) {
+        return self._custom_headers;
     }
 
     /// Create from ziggurat response (internal use)

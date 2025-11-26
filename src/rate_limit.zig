@@ -119,8 +119,10 @@ pub const RateLimiter = struct {
             }
         } else {
             const new_entry = RateLimitEntry.init(config.window_ms);
-            try self.ip_limits.put(client_ip, new_entry);
-            const ip_entry_ptr = self.ip_limits.getPtr(client_ip).?;
+            // Duplicate the IP string to prevent use-after-free when request arena is freed
+            const owned_ip = try self.allocator.dupe(u8, client_ip);
+            try self.ip_limits.put(owned_ip, new_entry);
+            const ip_entry_ptr = self.ip_limits.getPtr(owned_ip).?;
             ip_entry_ptr.count = 1;
         }
 
@@ -138,8 +140,10 @@ pub const RateLimiter = struct {
             }
         } else {
             const new_entry = RateLimitEntry.init(config.window_ms);
-            try self.route_limits.put(route, new_entry);
-            const route_entry_ptr = self.route_limits.getPtr(route).?;
+            // Duplicate the route string to prevent use-after-free
+            const owned_route = try self.allocator.dupe(u8, route);
+            try self.route_limits.put(owned_route, new_entry);
+            const route_entry_ptr = self.route_limits.getPtr(owned_route).?;
             route_entry_ptr.count = 1;
         }
 
@@ -162,6 +166,8 @@ pub const RateLimiter = struct {
         }
         for (keys_to_remove.items) |key| {
             _ = self.ip_limits.remove(key);
+            // Free the duplicated key string
+            self.allocator.free(key);
         }
         keys_to_remove.deinit(self.allocator);
 
@@ -175,13 +181,27 @@ pub const RateLimiter = struct {
         }
         for (keys_to_remove.items) |key| {
             _ = self.route_limits.remove(key);
+            // Free the duplicated key string
+            self.allocator.free(key);
         }
         keys_to_remove.deinit(self.allocator);
     }
 
     pub fn deinit(self: *RateLimiter) void {
+        // Free all duplicated IP keys
+        var ip_iterator = self.ip_limits.iterator();
+        while (ip_iterator.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
         self.ip_limits.deinit();
+        
+        // Free all duplicated route keys
+        var route_iterator = self.route_limits.iterator();
+        while (route_iterator.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
         self.route_limits.deinit();
+        
         self.route_configs.deinit();
     }
 };

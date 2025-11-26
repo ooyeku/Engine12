@@ -7,7 +7,8 @@ const types = @import("types.zig");
 const handlers = @import("handlers.zig");
 const fileserver = @import("fileserver.zig");
 const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
+const response_mod = @import("response.zig");
+const Response = response_mod.Response;
 const router = @import("router.zig");
 const middleware_chain = @import("middleware.zig");
 const route_group = @import("route_group.zig");
@@ -217,6 +218,7 @@ var global_server_config: ?ServerConfig = null;
 
 /// Handle a connection in a worker thread
 /// This reimplements ziggurat's handleConnection but allows multi-threaded execution
+/// Supports HTTP keep-alive for connection reuse
 fn handleConnectionThreaded(socket: posix.socket_t) void {
     const server = global_server_for_workers orelse return;
     const config = global_server_config orelse return;
@@ -226,103 +228,136 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
     // Set socket timeouts
     setSocketTimeouts(socket, config) catch return;
 
-    // Allocate buffer for request
-    var buf: [65536]u8 = undefined; // 64KB buffer
-    var total_read: usize = 0;
+    // Maximum requests per connection for keep-alive (prevents resource exhaustion)
+    const max_requests_per_connection: usize = 100;
+    var requests_handled: usize = 0;
 
-    // Read request data
-    const read_result = posix.read(socket, &buf);
-    if (read_result) |bytes_read| {
-        if (bytes_read == 0) return; // Empty request
-        total_read = bytes_read;
-    } else |_| {
-        return; // Read error
-    }
-
-    // Find header end
-    const header_end_marker = "\r\n\r\n";
-    var header_end_pos: ?usize = null;
-
-    if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
-        header_end_pos = pos;
-    }
-
-    // If headers not complete, try to read more
-    while (header_end_pos == null and total_read < buf.len) {
-        const additional_result = posix.read(socket, buf[total_read..]);
-        if (additional_result) |bytes| {
-            if (bytes == 0) break;
-            total_read += bytes;
-
-            if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
-                header_end_pos = pos;
+    // Keep-alive loop - handle multiple requests on the same connection
+    while (requests_handled < max_requests_per_connection) : (requests_handled += 1) {
+        // Track active request for graceful shutdown
+        if (global_active_request_tracker) |tracker| {
+            tracker.increment();
+        }
+        defer {
+            if (global_active_request_tracker) |tracker| {
+                tracker.decrement();
             }
+        }
+
+        // Allocate buffer for request
+        var buf: [65536]u8 = undefined; // 64KB buffer
+        var total_read: usize = 0;
+
+        // Read request data
+        const read_result = posix.read(socket, &buf);
+        if (read_result) |bytes_read| {
+            if (bytes_read == 0) return; // Connection closed by client
+            total_read = bytes_read;
         } else |_| {
-            break;
+            return; // Read error or timeout - close connection
         }
-    }
 
-    // Parse request
-    var request = ziggurat.request.Request.init(allocator);
-    defer request.deinit();
+        // Find header end
+        const header_end_marker = "\r\n\r\n";
+        var header_end_pos: ?usize = null;
 
-    request.parse(buf[0..total_read]) catch {
-        const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
-        _ = posix.write(socket, bad_request) catch {};
-        return;
-    };
+        if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
+            header_end_pos = pos;
+        }
 
-    // Check Content-Length and read body if needed
-    if (request.headers.get("Content-Length")) |cl_str| {
-        const expected_body_len = std.fmt.parseInt(usize, cl_str, 10) catch 0;
-        const header_len = if (header_end_pos) |pos| pos + header_end_marker.len else total_read;
-        const current_body_len = if (total_read > header_len) total_read - header_len else 0;
+        // If headers not complete, try to read more
+        while (header_end_pos == null and total_read < buf.len) {
+            const additional_result = posix.read(socket, buf[total_read..]);
+            if (additional_result) |bytes| {
+                if (bytes == 0) break;
+                total_read += bytes;
 
-        if (expected_body_len > current_body_len) {
-            const remaining = expected_body_len - current_body_len;
-
-            // Read remaining body
-            var body_read: usize = 0;
-            while (body_read < remaining and (total_read + body_read) < buf.len) {
-                const chunk_result = posix.read(socket, buf[total_read + body_read ..]);
-                if (chunk_result) |bytes| {
-                    if (bytes == 0) break;
-                    body_read += bytes;
-                } else |_| {
-                    break;
+                if (std.mem.indexOf(u8, buf[0..total_read], header_end_marker)) |pos| {
+                    header_end_pos = pos;
                 }
+            } else |_| {
+                break;
             }
-            total_read += body_read;
-
-            // Re-parse with full body
-            request.deinit();
-            request = ziggurat.request.Request.init(allocator);
-            request.parse(buf[0..total_read]) catch {
-                const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
-                _ = posix.write(socket, bad_request) catch {};
-                return;
-            };
         }
+
+        // Parse request
+        var request = ziggurat.request.Request.init(allocator);
+        defer request.deinit();
+
+        request.parse(buf[0..total_read]) catch {
+            const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
+            _ = posix.write(socket, bad_request) catch {};
+            return;
+        };
+
+        // Check Content-Length and read body if needed
+        if (request.headers.get("Content-Length")) |cl_str| {
+            const expected_body_len = std.fmt.parseInt(usize, cl_str, 10) catch 0;
+            const header_len = if (header_end_pos) |pos| pos + header_end_marker.len else total_read;
+            const current_body_len = if (total_read > header_len) total_read - header_len else 0;
+
+            if (expected_body_len > current_body_len) {
+                const remaining = expected_body_len - current_body_len;
+
+                // Read remaining body
+                var body_read: usize = 0;
+                while (body_read < remaining and (total_read + body_read) < buf.len) {
+                    const chunk_result = posix.read(socket, buf[total_read + body_read ..]);
+                    if (chunk_result) |bytes| {
+                        if (bytes == 0) break;
+                        body_read += bytes;
+                    } else |_| {
+                        break;
+                    }
+                }
+                total_read += body_read;
+
+                // Re-parse with full body
+                request.deinit();
+                request = ziggurat.request.Request.init(allocator);
+                request.parse(buf[0..total_read]) catch {
+                    const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
+                    _ = posix.write(socket, bad_request) catch {};
+                    return;
+                };
+            }
+        }
+
+        // Check for keep-alive preference
+        // HTTP/1.1 defaults to keep-alive unless Connection: close is specified
+        const keep_alive = if (request.headers.get("Connection")) |conn_header|
+            !std.ascii.eqlIgnoreCase(conn_header, "close")
+        else
+            true; // Default to keep-alive for HTTP/1.1
+
+        // Process middleware
+        if (server.inner.middleware.process(&request)) |mw_response| {
+            const formatted = mw_response.format() catch return;
+            defer std.heap.page_allocator.free(formatted);
+            // Release any pending response buffers back to the pool after formatting
+            response_mod.releasePendingBuffer();
+            _ = posix.write(socket, formatted) catch {};
+            if (!keep_alive) return;
+            continue;
+        }
+
+        // Match route and call handler
+        const response = if (server.inner.router.matchRoute(&request)) |route_response|
+            route_response
+        else
+            ziggurat.response.Response.init(.not_found, "text/plain", "Not Found");
+
+        // Format and send response
+        const formatted_response = response.format() catch return;
+        defer std.heap.page_allocator.free(formatted_response);
+        // Release any pending response buffers back to the pool after formatting
+        // This is safe because format() has already copied the body data
+        response_mod.releasePendingBuffer();
+        _ = posix.write(socket, formatted_response) catch {};
+
+        // Close connection if client doesn't want keep-alive
+        if (!keep_alive) return;
     }
-
-    // Process middleware
-    if (server.inner.middleware.process(&request)) |mw_response| {
-        const formatted = mw_response.format() catch return;
-        defer std.heap.page_allocator.free(formatted);
-        _ = posix.write(socket, formatted) catch {};
-        return;
-    }
-
-    // Match route and call handler
-    const response = if (server.inner.router.matchRoute(&request)) |route_response|
-        route_response
-    else
-        ziggurat.response.Response.init(.not_found, "text/plain", "Not Found");
-
-    // Format and send response
-    const formatted_response = response.format() catch return;
-    defer std.heap.page_allocator.free(formatted_response);
-    _ = posix.write(socket, formatted_response) catch {};
 }
 
 /// Set socket timeouts
@@ -373,10 +408,9 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
                 defer engine12_request.deinit();
 
-                // Find route in runtime registry - use actual request path for matching
+                // Find route in runtime registry - use path without query string for matching
                 const method_str = @tagName(ziggurat_request.method);
-                const request_path = ziggurat_request.path;
-                const route = runtime_registry.findRoute(method_str, request_path, &engine12_request) catch |err| {
+                const route = runtime_registry.findRoute(method_str, engine12_request.path(), &engine12_request) catch |err| {
                     std.debug.print("[Runtime Route] Error finding route: {}\n", .{err});
                     return Response.text("Internal server error").withStatus(500).toZiggurat();
                 };
@@ -392,16 +426,15 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
             // Access metrics collector from global
             const metrics_collector = global_metrics;
 
-            // Start timing - use actual request path
-            const request_path = ziggurat_request.path;
-            var timing = metrics.RequestTiming.start(request_path);
-
             // Create request with arena allocator
             var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
 
             // Generate request ID
             const request_id = generateRequestId(engine12_request.arena.allocator()) catch "unknown";
             engine12_request.set("request_id", request_id) catch {};
+
+            // Start timing - use path without query string for consistent metrics
+            var timing = metrics.RequestTiming.start(engine12_request.path());
 
             // Ensure cleanup happens even if handler panics
             defer engine12_request.deinit();
@@ -416,9 +449,9 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 return abort_response.toZiggurat();
             }
 
-            // Find route in runtime registry - use actual request path for matching
+            // Find route in runtime registry - use path without query string for matching
             const method_str = @tagName(ziggurat_request.method);
-            const route = runtime_registry.findRoute(method_str, request_path, &engine12_request) catch |err| {
+            const route = runtime_registry.findRoute(method_str, engine12_request.path(), &engine12_request) catch |err| {
                 std.debug.print("[Runtime Route] Error finding route: {}\n", .{err});
                 if (metrics_collector) |mc| {
                     mc.incrementError();
@@ -2110,6 +2143,12 @@ pub const Engine12 = struct {
     /// This method returns immediately after starting the server.
     /// Use listen() instead if you want to block until shutdown.
     pub fn start(self: *Engine12) !void {
+        // Warn about debug mode performance impact
+        if (@import("builtin").mode == .Debug) {
+            std.debug.print("\n[WARN] Running in Debug mode. Performance is significantly slower.\n", .{});
+            std.debug.print("       Use: zig build -Doptimize=ReleaseFast for production.\n\n", .{});
+        }
+
         self.start_time = std.time.milliTimestamp();
         self.is_running = true;
 

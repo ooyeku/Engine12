@@ -59,7 +59,14 @@ pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreR
     defer body_size_limit_mutex.unlock();
 
     // Allocate middleware instance
-    const instance = std.heap.page_allocator.create(BodySizeLimitMiddleware) catch unreachable;
+    // If allocation fails, return a no-op middleware that allows all requests
+    const instance = std.heap.page_allocator.create(BodySizeLimitMiddleware) catch {
+        return struct {
+            fn mw(_: *Request) middleware_chain.MiddlewareResult {
+                return .proceed;
+            }
+        }.mw;
+    };
     instance.* = BodySizeLimitMiddleware{ .limit = limit };
 
     // Store in registry

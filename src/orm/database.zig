@@ -94,6 +94,7 @@ pub const ConnectionPool = struct {
     available: std.ArrayListUnmanaged(Database),
     in_use: std.ArrayListUnmanaged(Database),
     mutex: std.Thread.Mutex,
+    condition: std.Thread.Condition,
     created: usize = 0,
 
     pub fn init(db_path: []const u8, config: ConnectionPoolConfig, allocator: std.mem.Allocator) ConnectionPool {
@@ -104,32 +105,59 @@ pub const ConnectionPool = struct {
             .available = std.ArrayListUnmanaged(Database){},
             .in_use = std.ArrayListUnmanaged(Database){},
             .mutex = std.Thread.Mutex{},
+            .condition = std.Thread.Condition{},
             .created = 0,
         };
     }
 
     pub fn acquire(self: *ConnectionPool) !Database {
         self.mutex.lock();
-        defer self.mutex.unlock();
+        errdefer self.mutex.unlock();
+        
+        // Calculate deadline for timeout
+        const deadline_ns = std.time.nanoTimestamp() + @as(i128, self.config.acquire_timeout_ms) * std.time.ns_per_ms;
 
-        // Try to get from available pool
-        if (self.available.items.len > 0) {
-            const db = self.available.items[self.available.items.len - 1];
-            _ = self.available.pop();
-            try self.in_use.append(self.allocator, db);
-            return db;
+        while (true) {
+            // Try to get from available pool
+            if (self.available.items.len > 0) {
+                const db = self.available.items[self.available.items.len - 1];
+                _ = self.available.pop();
+                try self.in_use.append(self.allocator, db);
+                self.mutex.unlock();
+                return db;
+            }
+
+            // Create new connection if under limit
+            if (self.created < self.config.max_connections) {
+                // Temporarily unlock while creating connection (slow operation)
+                self.mutex.unlock();
+                const db = try Database.open(self.db_path, self.allocator);
+                self.mutex.lock();
+                self.created += 1;
+                try self.in_use.append(self.allocator, db);
+                self.mutex.unlock();
+                return db;
+            }
+
+            // Check for timeout before waiting
+            const now = std.time.nanoTimestamp();
+            if (now >= deadline_ns) {
+                self.mutex.unlock();
+                return error.PoolExhausted;
+            }
+
+            // Calculate remaining wait time
+            const remaining_ns: u64 = @intCast(deadline_ns - now);
+            
+            // Wait for a connection to become available (with timeout)
+            // timedWait releases mutex while waiting and reacquires it when signaled/timed out
+            self.condition.timedWait(&self.mutex, remaining_ns) catch {
+                // Timeout occurred
+                self.mutex.unlock();
+                return error.PoolExhausted;
+            };
+            // Signaled - loop and try to acquire again
         }
-
-        // Create new connection if under limit
-        if (self.created < self.config.max_connections) {
-            const db = try Database.open(self.db_path, self.allocator);
-            self.created += 1;
-            try self.in_use.append(self.allocator, db);
-            return db;
-        }
-
-        // Wait for available connection (simplified - just return error for now)
-        return error.PoolExhausted;
     }
 
     pub fn release(self: *ConnectionPool, db: Database) void {
@@ -145,7 +173,10 @@ pub const ConnectionPool = struct {
                     std.debug.print("[ConnectionPool] Warning: Failed to return connection to pool: {}. Closing connection.\n", .{err});
                     removed_db.close();
                     self.created -= 1;
+                    return;
                 };
+                // Signal waiting threads that a connection is available
+                self.condition.signal();
                 return;
             }
         }
@@ -212,13 +243,27 @@ pub const Database = struct {
         // Apply SQLite performance optimizations automatically
         // WAL mode allows concurrent reads during writes (major performance boost)
         // These pragmas are safe and improve performance for all workloads
-        db.execute("PRAGMA journal_mode = WAL") catch {};
-        db.execute("PRAGMA synchronous = NORMAL") catch {};
-        db.execute("PRAGMA cache_size = -256000") catch {}; // 256MB cache for high-performance workloads
-        db.execute("PRAGMA busy_timeout = 10000") catch {}; // 10 second timeout for better concurrency
-        db.execute("PRAGMA temp_store = MEMORY") catch {};
-        db.execute("PRAGMA mmap_size = 268435456") catch {}; // 256MB memory-mapped I/O
-        db.execute("PRAGMA page_size = 4096") catch {}; // 4KB page size (optimal for most systems)
+        db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
+            std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA synchronous = NORMAL") catch |pragma_err| {
+            std.debug.print("[Database] Warning: Failed to set synchronous mode: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA cache_size = -256000") catch |pragma_err| { // 256MB cache for high-performance workloads
+            std.debug.print("[Database] Warning: Failed to set cache_size: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA busy_timeout = 10000") catch |pragma_err| { // 10 second timeout for better concurrency
+            std.debug.print("[Database] Warning: Failed to set busy_timeout: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA temp_store = MEMORY") catch |pragma_err| {
+            std.debug.print("[Database] Warning: Failed to set temp_store: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA mmap_size = 268435456") catch |pragma_err| { // 256MB memory-mapped I/O
+            std.debug.print("[Database] Warning: Failed to set mmap_size: {}\n", .{pragma_err});
+        };
+        db.execute("PRAGMA page_size = 4096") catch |pragma_err| { // 4KB page size (optimal for most systems)
+            std.debug.print("[Database] Warning: Failed to set page_size: {}\n", .{pragma_err});
+        };
 
         return db;
     }

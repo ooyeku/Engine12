@@ -87,6 +87,10 @@ pub const ResponseCache = struct {
 
     /// Maximum number of cache entries (0 = unlimited)
     max_entries: usize = 0,
+    
+    /// Insertion order tracking for FIFO eviction (simple alternative to LRU)
+    /// Stores keys in insertion order for O(1) eviction lookup
+    insertion_order: std.ArrayListUnmanaged([]const u8) = .{},
 
     /// Mutex for thread-safe access
     mutex: std.Thread.Mutex = .{},
@@ -97,20 +101,40 @@ pub const ResponseCache = struct {
             .allocator = allocator,
             .default_ttl_ms = default_ttl_ms,
             .max_entries = 0,
+            .insertion_order = .{},
             .mutex = .{},
         };
     }
 
     /// Initialize cache with maximum entry limit
-    /// When limit is reached, oldest entries are evicted (LRU)
+    /// When limit is reached, oldest entries are evicted (FIFO)
     pub fn initWithLimit(allocator: std.mem.Allocator, default_ttl_ms: u64, max_entries: usize) ResponseCache {
         return ResponseCache{
             .entries = std.StringHashMap(CacheEntry).init(allocator),
             .allocator = allocator,
             .default_ttl_ms = default_ttl_ms,
             .max_entries = max_entries,
+            .insertion_order = .{},
             .mutex = .{},
         };
+    }
+
+    /// Evict the oldest entry (O(1) operation using insertion order tracking)
+    fn evictOldest(self: *ResponseCache) void {
+        if (self.insertion_order.items.len == 0) return;
+        
+        // Get oldest key from front of insertion order
+        const key = self.insertion_order.items[0];
+        
+        // Remove from insertion order (shift remaining elements)
+        _ = self.insertion_order.orderedRemove(0);
+        
+        // Remove from entries and free entry (and key)
+        if (self.entries.fetchRemove(key)) |removed| {
+            var mutable_value = removed.value;
+            mutable_value.deinit(self.allocator);
+            self.allocator.free(removed.key);
+        }
     }
 
     /// Get a cached response if available and not expired
@@ -173,25 +197,25 @@ pub const ResponseCache = struct {
 
         const cache_ttl = ttl_ms orelse self.default_ttl_ms;
 
-        // Remove existing entry if present (and free its key)
+        // Remove existing entry if present
         if (self.entries.fetchRemove(key)) |old_entry| {
+            // Remove from insertion order
+            for (self.insertion_order.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, old_entry.key)) {
+                    _ = self.insertion_order.orderedRemove(i);
+                    break;
+                }
+            }
+            
+            // Free the entry and key
             var mutable_value = old_entry.value;
             mutable_value.deinit(self.allocator);
             self.allocator.free(old_entry.key);
         }
 
-        // Enforce max entries limit (simple eviction - remove oldest entry)
-        // Note: This is a simple implementation. For true LRU, we'd need to track access order
+        // Enforce max entries limit - O(1) eviction using insertion order
         if (self.max_entries > 0 and self.entries.count() >= self.max_entries) {
-            // Remove first entry (simple eviction strategy)
-            var iterator = self.entries.iterator();
-            if (iterator.next()) |first_entry| {
-                var mutable_value = first_entry.value_ptr.*;
-                mutable_value.deinit(self.allocator);
-                const evicted_key = first_entry.key_ptr.*;
-                _ = self.entries.remove(evicted_key);
-                self.allocator.free(evicted_key);
-            }
+            self.evictOldest();
         }
 
         // Duplicate the key so it persists beyond the request lifetime
@@ -205,6 +229,9 @@ pub const ResponseCache = struct {
         }
 
         try self.entries.put(key_copy, entry);
+        
+        // Add to insertion order (newest position at end)
+        try self.insertion_order.append(self.allocator, key_copy);
     }
 
     /// Invalidate a cache entry
@@ -219,8 +246,17 @@ pub const ResponseCache = struct {
 
         self.mutex.lock();
         defer self.mutex.unlock();
-
+        
+        // Remove from entries and free
         if (self.entries.fetchRemove(key)) |entry| {
+            // Remove from insertion order
+            for (self.insertion_order.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, entry.key)) {
+                    _ = self.insertion_order.orderedRemove(i);
+                    break;
+                }
+            }
+            
             var mutable_value = entry.value;
             mutable_value.deinit(self.allocator);
             self.allocator.free(entry.key);
@@ -251,8 +287,15 @@ pub const ResponseCache = struct {
         }
 
         // Remove entries and free keys
-        for (keys_to_remove.items) |key| {
-            if (self.entries.fetchRemove(key)) |entry| {
+        for (keys_to_remove.items) |k| {
+            // Remove from insertion order
+            for (self.insertion_order.items, 0..) |io_key, i| {
+                if (std.mem.eql(u8, io_key, k)) {
+                    _ = self.insertion_order.orderedRemove(i);
+                    break;
+                }
+            }
+            if (self.entries.fetchRemove(k)) |entry| {
                 self.allocator.free(entry.key);
             }
         }
@@ -290,6 +333,7 @@ pub const ResponseCache = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        // Free all cache entries
         var iterator = self.entries.iterator();
         while (iterator.next()) |entry| {
             var mutable_value = entry.value_ptr.*;
@@ -298,6 +342,9 @@ pub const ResponseCache = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.entries.deinit();
+        
+        // Free insertion order tracking
+        self.insertion_order.deinit(self.allocator);
     }
 };
 

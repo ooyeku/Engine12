@@ -526,8 +526,9 @@ pub const Request = struct {
         }
 
         // Slow path: overflow to HashMap (rare case)
+        // Uses arena allocator so memory is automatically freed with request
         if (self._context_overflow == null) {
-            self._context_overflow = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+            self._context_overflow = std.StringHashMap([]const u8).init(self.arena.allocator());
         }
         try self._context_overflow.?.put(key_dup, value_dup);
 
@@ -595,8 +596,9 @@ pub const Request = struct {
                 self._route_param_count += 1;
             } else {
                 // Slow path: overflow to HashMap (rare case - more than 8 route params)
+                // Uses arena allocator so memory is automatically freed with request
                 if (self._route_params_overflow == null) {
-                    self._route_params_overflow = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+                    self._route_params_overflow = std.StringHashMap([]const u8).init(self.arena.allocator());
                 }
                 try self._route_params_overflow.?.put(key_dup, value_dup);
             }

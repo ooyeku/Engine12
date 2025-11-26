@@ -56,7 +56,7 @@ fn renderStreaming(
     allocator: std.mem.Allocator,
 ) ![]u8 {
     // Pre-allocate output buffer (estimate: template size + some extra for variable values)
-    var output = std.ArrayList(u8).init(allocator);
+    var output: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0, .allocator = allocator };
     errdefer output.deinit();
     try output.ensureTotalCapacity(template.len + 1024);
 
