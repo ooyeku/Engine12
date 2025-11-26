@@ -5,9 +5,9 @@ const c = @cImport({
 const QueryResult = @import("row.zig").QueryResult;
 
 pub const ConnectionPoolConfig = struct {
-    max_connections: usize = 10,
-    idle_timeout_ms: u64 = 300000, // 5 minutes default
-    acquire_timeout_ms: u64 = 5000, // 5 seconds default
+    max_connections: usize = 100,
+    idle_timeout_ms: u64 = 600000, // 10 minutes default for better connection reuse
+    acquire_timeout_ms: u64 = 10000, // 10 seconds default for better reliability under load
 
     /// Validate configuration values
     pub fn validate(self: *const ConnectionPoolConfig) !void {
@@ -34,7 +34,7 @@ pub const PreparedStatementCache = struct {
     };
 
     /// Create a new prepared statement cache for a database
-    /// max_statements: Maximum number of statements to cache (0 = default 128)
+    /// max_statements: Maximum number of statements to cache (0 = default 512)
     pub fn init(db: *Database, max_statements: usize, allocator: std.mem.Allocator) !PreparedStatementCache {
         var c_cache: ?*c.E12StmtCache = null;
         const err = c.e12_stmt_cache_create(db.c_db, max_statements, &c_cache);
@@ -214,9 +214,11 @@ pub const Database = struct {
         // These pragmas are safe and improve performance for all workloads
         db.execute("PRAGMA journal_mode = WAL") catch {};
         db.execute("PRAGMA synchronous = NORMAL") catch {};
-        db.execute("PRAGMA cache_size = -64000") catch {}; // 64MB cache
-        db.execute("PRAGMA busy_timeout = 5000") catch {}; // 5 second timeout
+        db.execute("PRAGMA cache_size = -256000") catch {}; // 256MB cache for high-performance workloads
+        db.execute("PRAGMA busy_timeout = 10000") catch {}; // 10 second timeout for better concurrency
         db.execute("PRAGMA temp_store = MEMORY") catch {};
+        db.execute("PRAGMA mmap_size = 268435456") catch {}; // 256MB memory-mapped I/O
+        db.execute("PRAGMA page_size = 4096") catch {}; // 4KB page size (optimal for most systems)
 
         return db;
     }

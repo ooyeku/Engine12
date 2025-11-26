@@ -282,8 +282,8 @@ pub fn main() !void {
 **ServerConfig options:**
 - `host`: Server bind address (default: `"127.0.0.1"`)
 - `port`: Server port (default: `8080`)
-- `read_timeout`: Read timeout in ms (default: `5000`)
-- `write_timeout`: Write timeout in ms (default: `5000`)
+- `read_timeout`: Read timeout in ms (default: `10000`)
+- `write_timeout`: Write timeout in ms (default: `10000`)
 
 ## Step 3: Add Routes
 
@@ -999,7 +999,7 @@ var app = try Engine12.initProduction();
 app.configure(.{
     .host = "0.0.0.0",
     .port = 8080,
-    .worker_threads = 8,  // Increase for higher concurrency (default: 4)
+    .worker_threads = 16,  // Increase for even higher concurrency (default: 12)
 });
 ```
 
@@ -1007,9 +1007,9 @@ app.configure(.{
 
 | Workload Type | Recommended Workers | Notes |
 |---------------|---------------------|-------|
-| Low traffic | 2-4 | Default is sufficient |
-| Medium traffic | 4-8 | Match CPU cores |
-| High traffic | 8-16 | Consider CPU cores and I/O patterns |
+| Low traffic | 4-8 | Default (12) is sufficient |
+| Medium traffic | 8-16 | Default (12) handles well |
+| High traffic | 12-24 | Default (12) optimized for production |
 | I/O bound | 2x CPU cores | More workers for waiting on I/O |
 | CPU bound | 1x CPU cores | Avoid oversubscription |
 
@@ -1017,8 +1017,8 @@ app.configure(.{
 
 ```zig
 app.configure(.{
-    .buffer_size = 8192,        // Request buffer (8KB default)
-    .max_header_size = 16384,   // Max header size (16KB default)
+    .buffer_size = 16384,       // Request buffer (16KB default)
+    .max_header_size = 32768,  // Max header size (32KB default)
     .max_body_size = 10485760,  // Max body size (10MB default)
 });
 ```

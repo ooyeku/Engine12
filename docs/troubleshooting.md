@@ -681,7 +681,7 @@ If your files aren't matching, ensure:
 1. Increase worker threads for higher concurrency:
    ```zig
    app.configure(.{
-       .worker_threads = 8,  // Default is 4
+       .worker_threads = 16,  // Default is 12
    });
    ```
 2. Check database queries - slow queries block worker threads

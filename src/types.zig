@@ -38,7 +38,7 @@ pub const ServerProfile_Production = ServerProfile{
     .enable_metrics = true,
     .enable_health_checks = true,
     .graceful_shutdown_timeout_ms = 30000,
-    .max_concurrent_tasks = 16,
+    .max_concurrent_tasks = 32,
 };
 
 pub const ServerProfile_Testing = ServerProfile{
@@ -125,7 +125,7 @@ test "ServerProfile_Production defaults" {
     try std.testing.expect(profile.enable_metrics == true);
     try std.testing.expect(profile.enable_health_checks == true);
     try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 30000);
-    try std.testing.expectEqual(profile.max_concurrent_tasks, 16);
+    try std.testing.expectEqual(profile.max_concurrent_tasks, 32);
 }
 
 test "ServerProfile_Testing defaults" {

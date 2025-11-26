@@ -70,7 +70,7 @@ const profile = ServerProfile{
     .enable_metrics = true,
     .enable_health_checks = true,
     .graceful_shutdown_timeout_ms = 30000,
-    .max_concurrent_tasks = 16,
+    .max_concurrent_tasks = 32,
 };
 var app = try Engine12.initWithProfile(profile);
 ```
@@ -84,19 +84,19 @@ Configuration options for the HTTP server.
 pub const ServerConfig = struct {
     host: []const u8 = "127.0.0.1",      // Server bind address
     port: u16 = 8080,                     // Server port
-    read_timeout: u32 = 5000,             // Read timeout in ms
-    write_timeout: u32 = 5000,            // Write timeout in ms
-    worker_threads: u16 = 4,              // Number of worker threads (0 = single-threaded)
-    buffer_size: usize = 8192,            // HTTP request buffer size (8KB)
-    max_header_size: usize = 16384,       // Maximum header size (16KB)
+    read_timeout: u32 = 10000,            // Read timeout in ms
+    write_timeout: u32 = 10000,           // Write timeout in ms
+    worker_threads: u16 = 12,             // Number of worker threads (0 = single-threaded)
+    buffer_size: usize = 16384,           // HTTP request buffer size (16KB)
+    max_header_size: usize = 32768,       // Maximum header size (32KB)
     max_body_size: usize = 10485760,      // Maximum body size (10MB)
 };
 ```
 
 **Worker Threads:**
-- Default: 4 worker threads for concurrent request handling
+- Default: 12 worker threads for high-performance concurrent request handling
 - Set to 0 to use legacy single-threaded mode
-- Increase for high-concurrency workloads (e.g., 8-16 for production)
+- Optimized for production workloads with high concurrency
 
 #### `configure(config: ServerConfig) void`
 Configure server settings. Must be called before `start()`.
@@ -108,7 +108,7 @@ app.configure(.{
     .port = 3000,
     .read_timeout = 10000,
     .write_timeout = 10000,
-    .worker_threads = 8,  // Use 8 worker threads for higher concurrency
+    .worker_threads = 16,  // Use 16 worker threads for even higher concurrency (default: 12)
 });
 try app.start();
 ```
@@ -2936,9 +2936,9 @@ Configuration for connection pooling.
 
 ```zig
 const config = ConnectionPoolConfig{
-    .max_connections = 10,
-    .idle_timeout_ms = 300000, // 5 minutes
-    .acquire_timeout_ms = 5000, // 5 seconds
+    .max_connections = 100,  // Default: 100 connections for maximum performance
+    .idle_timeout_ms = 600000, // 10 minutes (default)
+    .acquire_timeout_ms = 10000, // 10 seconds (default)
 };
 ```
 

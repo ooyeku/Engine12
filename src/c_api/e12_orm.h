@@ -176,7 +176,7 @@ void e12_pool_close(E12ConnectionPool* pool);
 /// Create a prepared statement cache for a database
 /// The cache stores compiled SQL statements for reuse, improving performance
 /// @param db Database handle
-/// @param max_statements Maximum number of statements to cache (0 = default 128)
+/// @param max_statements Maximum number of statements to cache (0 = default 512)
 /// @param out_cache Output parameter for the cache handle
 /// @return E12_ORM_OK on success, error code on failure
 E12ORMErrorCode e12_stmt_cache_create(E12Database* db, size_t max_statements, E12StmtCache** out_cache);

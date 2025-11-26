@@ -482,7 +482,7 @@ E12ORMErrorCode e12_stmt_cache_create(E12Database* db, size_t max_statements, E1
     
     // Default to 128 statements if not specified
     if (max_statements == 0) {
-        max_statements = 128;
+        max_statements = 512;
     }
     
     // Use prime number of buckets for better distribution

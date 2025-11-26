@@ -26,7 +26,7 @@ Engine12 uses the `ziggurat` library for HTTP server functionality with a custom
 - Request/Response wrappers bridge ziggurat and Engine12 APIs
 - **Thread Pool**: Engine12 implements its own thread pool on top of ziggurat for concurrent request handling
 - **Accept Thread**: A dedicated thread accepts connections and distributes them to workers
-- **Worker Threads**: Multiple worker threads (default: 4) process requests concurrently using ziggurat's public APIs
+- **Worker Threads**: Multiple worker threads (default: 12) process requests concurrently using ziggurat's public APIs
 
 ### Request/Response Handling
 
@@ -279,14 +279,14 @@ Engine12 uses a thread pool architecture for handling HTTP requests concurrently
 **Key Components:**
 
 1. **Accept Thread**: Dedicated thread that accepts incoming connections and pushes them to a queue
-2. **Connection Queue**: Thread-safe bounded queue (1024 slots) using mutex and condition variables
-3. **Worker Threads**: Configurable number of threads (default: 4) that pull connections from the queue and handle requests
+2. **Connection Queue**: Thread-safe bounded queue (4096 slots) using mutex and condition variables
+3. **Worker Threads**: Configurable number of threads (default: 12) that pull connections from the queue and handle requests
 
 **Configuration:**
 
 ```zig
 app.configure(.{
-    .worker_threads = 8,  // Number of worker threads (default: 4)
+    .worker_threads = 16,  // Number of worker threads (default: 12)
 });
 ```
 

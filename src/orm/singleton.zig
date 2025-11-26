@@ -6,26 +6,26 @@ const ORM = @import("orm.zig").ORM;
 
 /// Configuration for DatabaseSingleton with connection pooling
 pub const DatabasePoolConfig = struct {
-    /// Number of connections in the pool (default: 4)
-    pool_size: usize = 4,
+    /// Number of connections in the pool (default: 50)
+    pool_size: usize = 50,
     /// Whether to enable WAL mode (already enabled by default in Database.open)
     enable_wal: bool = true,
-    /// Idle timeout for connections in milliseconds (default: 5 minutes)
-    idle_timeout_ms: u64 = 300000,
-    /// Acquire timeout in milliseconds (default: 5 seconds)
-    acquire_timeout_ms: u64 = 5000,
+    /// Idle timeout for connections in milliseconds (default: 10 minutes)
+    idle_timeout_ms: u64 = 600000,
+    /// Acquire timeout in milliseconds (default: 10 seconds)
+    acquire_timeout_ms: u64 = 10000,
 };
 
 /// Thread-safe database singleton pattern with lock-free access
 /// Provides a global database/ORM instance that can be safely accessed from multiple threads
 /// Uses atomic initialization check to eliminate mutex contention on hot path
-/// 
+///
 /// Example:
 /// ```zig
 /// // Initialize singleton once at startup
 /// try DatabaseSingleton.init("myapp.db", allocator);
 /// defer DatabaseSingleton.deinit();
-/// 
+///
 /// // Access from anywhere in your application (lock-free!)
 /// const orm = try DatabaseSingleton.get();
 /// const todos = try orm.findAll(Todo);
@@ -44,7 +44,7 @@ pub const DatabaseSingleton = struct {
     /// Opens the database and creates the ORM instance
     /// Thread-safe: can be called multiple times safely (idempotent)
     /// Uses double-checked locking for efficient thread-safe initialization
-    /// 
+    ///
     /// Example:
     /// ```zig
     /// try DatabaseSingleton.init("myapp.db", allocator);
@@ -76,7 +76,7 @@ pub const DatabaseSingleton = struct {
     /// Initialize the database singleton with connection pooling
     /// Enables concurrent database access with multiple connections
     /// Thread-safe: can be called multiple times safely (idempotent)
-    /// 
+    ///
     /// Example:
     /// ```zig
     /// try DatabaseSingleton.initWithPool("myapp.db", .{
@@ -118,7 +118,7 @@ pub const DatabaseSingleton = struct {
     /// Get the ORM instance
     /// Returns a pointer to the thread-safe ORM instance
     /// Lock-free: uses atomic check instead of mutex
-    /// 
+    ///
     /// Example:
     /// ```zig
     /// const orm = try DatabaseSingleton.get();
@@ -141,7 +141,7 @@ pub const DatabaseSingleton = struct {
     /// Get the database instance directly
     /// Returns a pointer to the thread-safe Database instance
     /// Lock-free: uses atomic check instead of mutex
-    /// 
+    ///
     /// Example:
     /// ```zig
     /// const db = try DatabaseSingleton.getDatabase();
@@ -208,7 +208,7 @@ pub const DatabaseSingleton = struct {
     /// Deinitialize the singleton
     /// Closes the database connection and cleans up resources
     /// Thread-safe: should be called once at application shutdown
-    /// 
+    ///
     /// Example:
     /// ```zig
     /// defer DatabaseSingleton.deinit();
@@ -248,15 +248,15 @@ pub const DatabaseSingleton = struct {
 test "DatabaseSingleton init and get" {
     const allocator = std.testing.allocator;
     const test_db_path = ":memory:";
-    
+
     try DatabaseSingleton.init(test_db_path, allocator);
     defer DatabaseSingleton.deinit();
-    
+
     try std.testing.expect(DatabaseSingleton.isInitialized());
-    
+
     const orm = try DatabaseSingleton.get();
     _ = orm; // Use ORM
-    
+
     const db = try DatabaseSingleton.getDatabase();
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
 }
@@ -264,10 +264,10 @@ test "DatabaseSingleton init and get" {
 test "DatabaseSingleton idempotent init" {
     const allocator = std.testing.allocator;
     const test_db_path = ":memory:";
-    
+
     try DatabaseSingleton.init(test_db_path, allocator);
     defer DatabaseSingleton.deinit();
-    
+
     // Second init should not error
     try DatabaseSingleton.init(test_db_path, allocator);
 }
@@ -277,8 +277,7 @@ test "DatabaseSingleton error when not initialized" {
     if (DatabaseSingleton.isInitialized()) {
         DatabaseSingleton.deinit();
     }
-    
+
     const result = DatabaseSingleton.get();
     try std.testing.expectError(error.DatabaseNotInitialized, result);
 }
-

@@ -139,7 +139,7 @@ var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 /// Workers pull sockets from this queue to handle requests
 const ConnectionQueue = struct {
     const Self = @This();
-    const MAX_QUEUE_SIZE = 1024;
+    const MAX_QUEUE_SIZE = 4096;
 
     queue: [MAX_QUEUE_SIZE]posix.socket_t = undefined,
     head: usize = 0,
@@ -564,24 +564,24 @@ pub const ServerConfig = struct {
     host: []const u8 = "127.0.0.1",
     /// Server port (default: 8080)
     port: u16 = 8080,
-    /// Read timeout in milliseconds (default: 5000)
-    read_timeout: u32 = 5000,
-    /// Write timeout in milliseconds (default: 5000)
-    write_timeout: u32 = 5000,
-    /// Number of worker threads for handling requests (default: 4)
+    /// Read timeout in milliseconds (default: 10000)
+    read_timeout: u32 = 10000,
+    /// Write timeout in milliseconds (default: 10000)
+    write_timeout: u32 = 10000,
+    /// Number of worker threads for handling requests (default: 12)
     /// Set to 0 to use single-threaded mode (legacy behavior)
-    worker_threads: u16 = 4,
-    /// Buffer size for reading HTTP requests (default: 8KB)
-    buffer_size: usize = 8192,
-    /// Maximum header size (default: 16KB)
-    max_header_size: usize = 16384,
+    worker_threads: u16 = 12,
+    /// Buffer size for reading HTTP requests (default: 16KB)
+    buffer_size: usize = 16384,
+    /// Maximum header size (default: 32KB)
+    max_header_size: usize = 32768,
     /// Maximum body size (default: 10MB)
     max_body_size: usize = 10 * 1024 * 1024,
 };
 
 pub const Engine12 = struct {
     const MAX_ROUTES = 5000;
-    const MAX_WORKERS = 16;
+    const MAX_WORKERS = 32;
     const MAX_HEALTH_CHECKS = 8;
     const MAX_STATIC_ROUTES = 4;
     const MAX_WS_ROUTES = 100;
