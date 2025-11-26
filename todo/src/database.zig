@@ -14,8 +14,7 @@ const allocator = std.heap.page_allocator;
 var global_db: ?Database = null;
 var global_orm: ?ORM = null;
 var global_index_template: ?*RuntimeTemplate = null;
-var global_template_registry: E12.TemplateRegistry = undefined;
-var template_registry_initialized: bool = false;
+var global_template_registry_storage: ?E12.TemplateRegistry = null;
 var db_mutex: std.Thread.Mutex = .{};
 var global_app: ?*E12.Engine12 = null;
 var global_cache: ?*ResponseCache = null;
@@ -90,14 +89,15 @@ pub fn getGlobalTemplate() ?*RuntimeTemplate {
 
 /// Set the global template registry instance
 pub fn setGlobalTemplateRegistry(registry: E12.TemplateRegistry) void {
-    global_template_registry = registry;
-    template_registry_initialized = true;
+    // Move the registry into global storage
+    // Note: This moves the HashMap, which is safe because we're moving the entire struct
+    global_template_registry_storage = registry;
 }
 
 /// Get the global template registry instance
 pub fn getGlobalTemplateRegistry() ?*E12.TemplateRegistry {
-    if (template_registry_initialized) {
-        return &global_template_registry;
+    if (global_template_registry_storage) |*registry| {
+        return registry;
     }
     return null;
 }

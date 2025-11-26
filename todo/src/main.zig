@@ -279,12 +279,13 @@ fn checkSystemPerformance() E12.HealthStatus {
 // APP SETUP
 // ============================================================================
 
-pub fn createApp() !E12.Engine12 {
+pub fn createApp() !*E12.Engine12 {
     // Initialize database
     try database.initDatabase();
 
-    // Use initDevelopment() to enable hot reloading for templates and static files
-    var app = try E12.Engine12.initDevelopment();
+    // Allocate Engine12 on heap - it's too large for stack (~500KB+)
+    const app = try allocator.create(E12.Engine12);
+    app.* = try E12.Engine12.initDevelopment();
 
     // Register root route FIRST before anything else that might build the server
     std.debug.print("[Todo] Registering root route / FIRST\n", .{});
@@ -366,8 +367,11 @@ pub fn createApp() !E12.Engine12 {
     const template_registry_result = app.discoverTemplates("todo/src/templates");
     if (template_registry_result) |template_registry| {
         // Store template registry globally for handlers to access
+        // TemplateRegistry is moved (not copied) into global storage
         database.setGlobalTemplateRegistry(template_registry);
-        std.debug.print("[Todo] Template registry set with {} templates\n", .{template_registry.count()});
+        if (database.getGlobalTemplateRegistry()) |registry| {
+            std.debug.print("[Todo] Template registry set with {} templates\n", .{registry.count()});
+        }
     } else |err| {
         std.debug.print("[Todo] Warning: Template discovery failed: {}\n", .{err});
         // Fall back to manual template loading if discovery fails
@@ -381,11 +385,35 @@ pub fn createApp() !E12.Engine12 {
         }
     }
 
+    // Also try loading HTMX template manually as fallback
+    const htmx_template_path = "todo/src/templates/htmx-index.zt.html";
+    _ = app.loadTemplate(htmx_template_path) catch |err| {
+        std.debug.print("[Todo] Warning: Could not load HTMX template: {}\n", .{err});
+    };
+
     // Note: Root route "/" is registered first in createApp() before any other initialization
 
     // HTMX-powered todo app - using minimal routes
     // Main page
     try app.get("/htmx", handlers.views.handleHtmxIndex);
+
+    // HTMX todo handlers
+    try app.get("/htmx/todos", handlers.htmx.handlePageAll);
+    try app.get("/htmx/todos/all", handlers.htmx.handlePageAll);
+    try app.get("/htmx/todos/active", handlers.htmx.handlePageActive);
+    try app.get("/htmx/todos/completed", handlers.htmx.handlePageCompleted);
+    try app.post("/htmx/todos", handlers.htmx.handleCreateTodo);
+    try app.get("/htmx/todos/search", handlers.htmx.handleSearchTodos);
+    try app.post("/htmx/todos/:id/toggle", handlers.htmx.handleToggleTodo);
+    try app.get("/htmx/todos/:id/edit", handlers.htmx.handleEditTodo);
+    try app.get("/htmx/todos/:id/view", handlers.htmx.handleViewTodo);
+    try app.put("/htmx/todos/:id", handlers.htmx.handleUpdateTodo);
+    try app.delete("/htmx/todos/:id", handlers.htmx.handleDeleteTodo);
+    try app.post("/htmx/todos/clear-completed", handlers.htmx.handleClearCompleted);
+    try app.get("/htmx/todos/stats", handlers.htmx.handleGetStats);
+
+    // HTMX analytics page
+    try app.get("/htmx/analytics", handlers.htmx.handleAnalyticsPage);
 
     // Enable OpenAPI documentation
     try app.enableOpenApiDocs("/docs", .{
@@ -401,7 +429,7 @@ pub fn createApp() !E12.Engine12 {
     try app.get("/auth/me", BasicAuthValve.handleGetMe);
 
     // Store app globally for background tasks to access logger
-    database.setGlobalApp(&app);
+    database.setGlobalApp(app);
 
     // Initialize cache with 60 second default TTL
     // Allocate on heap so it persists beyond createApp() scope
@@ -519,8 +547,11 @@ pub fn createApp() !E12.Engine12 {
 }
 
 pub fn main() !void {
-    var app = try createApp();
-    defer app.deinit();
+    const app = try createApp();
+    defer {
+        app.deinit();
+        allocator.destroy(app);
+    }
 
     if (database.getLogger()) |logger| {
         const entry = logger.info("Server starting - Press Ctrl+C to stop") catch null;
