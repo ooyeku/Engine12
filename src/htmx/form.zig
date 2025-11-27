@@ -31,12 +31,16 @@ pub const FormParser = struct {
     /// Get a form value as an integer
     pub fn getInt(self: *const FormParser, key: []const u8) !?i64 {
         const value = try self.get(key) orelse return null;
+        defer self.allocator.free(value);
+        // Handle empty strings
+        if (value.len == 0) return null;
         return std.fmt.parseInt(i64, value, 10) catch |err| return err;
     }
 
     /// Get a form value as a boolean (true if value is "true", "1", or "yes")
     pub fn getBool(self: *const FormParser, key: []const u8) !bool {
         const value = try self.get(key) orelse return false;
+        defer self.allocator.free(value);
         return std.mem.eql(u8, value, "true") or
             std.mem.eql(u8, value, "1") or
             std.mem.eql(u8, value, "yes");
@@ -45,6 +49,7 @@ pub const FormParser = struct {
     /// Get a form value as a date (YYYY-MM-DD format) and convert to timestamp
     pub fn getDate(self: *const FormParser, key: []const u8) !?i64 {
         const value = try self.get(key) orelse return null;
+        defer self.allocator.free(value);
         if (value.len < 10) return null;
 
         const year = std.fmt.parseInt(u32, value[0..4], 10) catch return null;
@@ -78,7 +83,7 @@ pub const FormParser = struct {
         while (iter.next()) |pair| {
             if (std.mem.indexOfScalar(u8, pair, '=')) |eq_pos| {
                 const k = pair[0..eq_pos];
-                const v = pair[eq_pos + 1..];
+                const v = pair[eq_pos + 1 ..];
                 if (std.mem.eql(u8, k, key)) {
                     return v;
                 }
@@ -118,7 +123,7 @@ pub const FormParser = struct {
                 i += 1;
                 j += 1;
             } else if (input[i] == '%' and i + 2 < input.len) {
-                const hex = input[i + 1..i + 3];
+                const hex = input[i + 1 .. i + 3];
                 decoded[j] = std.fmt.parseInt(u8, hex, 16) catch {
                     decoded[j] = input[i];
                     i += 1;
@@ -146,7 +151,7 @@ pub const FormParser = struct {
 test "FormParser.get" {
     const allocator = std.testing.allocator;
     var parser = FormParser.init("title=Hello+World&priority=high", allocator);
-    
+
     const title = try parser.get("title");
     defer if (title) |v| allocator.free(v);
     try std.testing.expect(title != null);
@@ -202,4 +207,3 @@ test "FormParser.getDate" {
     // 2024-01-15 should be approximately 54 years * 365 days + leap years + 14 days
     try std.testing.expect(date.? > 0);
 }
-

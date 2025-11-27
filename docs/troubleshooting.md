@@ -22,7 +22,12 @@ zig build
 **Solution**: Ensure you've added the Engine12 module correctly in `build.zig`:
 
 ```zig
-exe.addModule("Engine12", Engine12.module("Engine12"));
+const engine12_dep = b.dependency("engine12", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+exe.addModule("engine12", engine12_dep.module("engine12"));
 exe.linkLibC(); // Required for SQLite
 ```
 

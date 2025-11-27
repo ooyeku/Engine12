@@ -168,9 +168,9 @@ Create `build.zig.zon`:
     .name = .myapp,
     .version = "0.1.0",
     .dependencies = .{
-        .Engine12 = .{
-            .url = "git+https://github.com/yourusername/Engine12.git",
-            .hash = "...", // Run `zig build` to get the hash
+        .engine12 = .{
+            .url = "git+https://github.com/ooyeku/Engine12.git",
+            .hash = "...", // Run `zig fetch --save` to get the hash
         },
     },
 }
@@ -185,7 +185,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const Engine12 = b.dependency("Engine12", .{
+    const engine12_dep = b.dependency("engine12", .{
         .target = target,
         .optimize = optimize,
     });
@@ -197,7 +197,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.addModule("Engine12", Engine12.module("Engine12"));
+    exe.addModule("engine12", engine12_dep.module("engine12"));
     exe.linkLibC();
 
     b.installArtifact(exe);
@@ -225,7 +225,7 @@ Create `src/main.zig`:
 
 ```zig
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const Request = Engine12.Request;
 const Response = Engine12.Response;
 
@@ -293,7 +293,7 @@ Let's add more routes for a simple todo API.
 
 ```zig
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const Request = Engine12.Request;
 const Response = Engine12.Response;
 
@@ -457,7 +457,9 @@ var global_orm: ?*ORM = null;
 
 pub fn init() !void {
     global_db = try Database.open("todos.db", std.heap.page_allocator);
+    // Initialize ORM with statement caching for better performance
     global_orm = try ORM.initPtr(global_db.?, std.heap.page_allocator);
+    try global_orm.?.enableStatementCache(512);
 
     // Use migration auto-discovery
     const migration_discovery = @import("engine12").orm.migration_discovery;
@@ -708,7 +710,7 @@ Instead of using `@embedFile` for templates, you can use `loadTemplate()` for ho
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 pub fn main() !void {
     var app = try E12.Engine12.initDevelopment();
@@ -1312,7 +1314,7 @@ Let's create a logging valve that tracks API requests:
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 const LoggingValve = struct {
     valve: E12.Valve,
@@ -1325,7 +1327,7 @@ const LoggingValve = struct {
                     .name = "logging",
                     .version = "1.0.0",
                     .description = "Request logging valve",
-                    .author = "Your Name",
+                    .author = "Engine12 Developer",
                     .required_capabilities = &[_]E12.ValveCapability{ .middleware },
                 },
                 .init = &LoggingValve.initValve,
@@ -1391,7 +1393,7 @@ const ApiValve = struct {
                     .name = "api",
                     .version = "1.0.0",
                     .description = "API routes valve",
-                    .author = "Your Name",
+                    .author = "Engine12 Developer",
                     .required_capabilities = &[_]E12.ValveCapability{ .routes },
                 },
                 .init = &ApiValve.initValve,
@@ -1437,7 +1439,7 @@ const FullFeatureValve = struct {
                     .name = "full_feature",
                     .version = "1.0.0",
                     .description = "Full-featured valve",
-                    .author = "Your Name",
+                    .author = "Engine12 Developer",
                     .required_capabilities = &[_]E12.ValveCapability{
                         .routes,
                         .middleware,
@@ -1505,7 +1507,7 @@ const LifecycleValve = struct {
                     .name = "lifecycle",
                     .version = "1.0.0",
                     .description = "Lifecycle demo valve",
-                    .author = "Your Name",
+                    .author = "Engine12 Developer",
                     .required_capabilities = &[_]E12.ValveCapability{},
                 },
                 .init = &LifecycleValve.initValve,
@@ -1549,7 +1551,7 @@ Engine12 includes production-ready builtin valves. Here's how to use the `BasicA
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -1765,8 +1767,8 @@ fn handleGetStats(request: *Request) Response {
     // Check cache
     if (ctx.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type);
-            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
+            .withContentType(entry.content_type)
+            .withHeader("X-Cache", "HIT");
     }
 
     // Fetch data from database
@@ -1781,7 +1783,8 @@ fn handleGetStats(request: *Request) Response {
     };
     ctx.cacheSet(cache_key, json, 10000, "application/json");
 
-    return Response.json(json); // .withHeader("X-Cache", "MISS"); // TODO: Uncomment when custom headers are supported
+    return Response.json(json)
+        .withHeader("X-Cache", "MISS");
 }
 ```
 
@@ -1822,8 +1825,8 @@ fn handleSearchTodos(request: *Request) Response {
     // Check cache
     if (request.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type);
-            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
+            .withContentType(entry.content_type)
+            .withHeader("X-Cache", "HIT");
     }
 
     // ... rest of handler logic
@@ -1859,8 +1862,8 @@ fn handleSearchTodos(request: *Request) Response {
 
     if (ctx.cacheGet(cache_key) catch null) |entry| {
         return Response.text(entry.body)
-            .withContentType(entry.content_type);
-            // .withHeader("X-Cache", "HIT"); // TODO: Uncomment when custom headers are supported
+            .withContentType(entry.content_type)
+            .withHeader("X-Cache", "HIT");
     }
 
     const orm = ctx.orm() catch unreachable;

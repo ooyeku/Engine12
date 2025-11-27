@@ -1633,7 +1633,7 @@ pub const User = struct {
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 // Initialize database and ORM
 const db = try E12.orm.Database.open("app.db", allocator);
@@ -1665,7 +1665,7 @@ try app.listen();
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 const MyValve = struct {
     valve: E12.Valve,
@@ -4203,7 +4203,7 @@ file_server.enableCache();
 
 ```zig
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 
 pub fn main() !void {
     // Initialize in development mode (hot reloading enabled)
@@ -4253,7 +4253,7 @@ Engine12 provides WebSocket support for real-time bidirectional communication. E
 Register a WebSocket endpoint. The handler function is called when a connection is established. The `path_pattern` must be comptime-known.
 
 ```zig
-const websocket = @import("Engine12").websocket;
+const websocket = @import("engine12").websocket;
 
 fn handleChat(conn: *websocket.WebSocketConnection) void {
     std.debug.print("New connection: {s}\n", .{conn.id});
@@ -4418,7 +4418,7 @@ if (chatRoom.isEmpty()) {
 
 ```zig
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const websocket = Engine12.websocket;
 
 var chatRoom: websocket.WebSocketRoom = undefined;
@@ -4819,7 +4819,7 @@ return htmx.errors.errorFragmentWithStatus("Database error", 500);
 Handler:
 
 ```zig
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const Request = Engine12.Request;
 const Response = Engine12.Response;
 

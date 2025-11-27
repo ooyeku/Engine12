@@ -16,7 +16,7 @@ Create `src/valves/metrics_valve.zig`:
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 
 const MetricsValve = struct {
     valve: E12.Valve,
@@ -33,7 +33,7 @@ const MetricsValve = struct {
                     .name = "metrics",
                     .version = "1.0.0",
                     .description = "Request metrics tracking valve",
-                    .author = "Your Name",
+                    .author = "Engine12 Developer",
                     .required_capabilities = &[_]E12.ValveCapability{
                         .routes,
                         .middleware,
@@ -142,7 +142,7 @@ In your `main.zig`:
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 const MetricsValve = @import("valves/metrics_valve.zig").MetricsValve;
 
 const allocator = std.heap.page_allocator;
@@ -178,7 +178,7 @@ Create a test file `src/valves/metrics_valve_test.zig`:
 
 ```zig
 const std = @import("std");
-const E12 = @import("Engine12");
+const E12 = @import("engine12");
 const MetricsValve = @import("metrics_valve.zig").MetricsValve;
 
 test "MetricsValve registration" {

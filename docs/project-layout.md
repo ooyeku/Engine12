@@ -278,7 +278,7 @@ pub const AnalyticsValve = Engine12.Valve{
         .name = "analytics",
         .version = "1.0.0",
         .description = "Analytics tracking",
-        .author = "Your Name",
+                    .author = "Engine12 Developer",
         .required_capabilities = &[_]Engine12.ValveCapability{
             .routes,
             .middleware,
@@ -490,7 +490,7 @@ migrations/
 
 ```zig
 // migrations/init.zig
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const Migration = Engine12.orm.Migration;
 
 pub const migrations = [_]Migration{
@@ -784,7 +784,7 @@ pub fn handleWebSocket(conn: *Engine12.WebSocketConnection) void {
 ```zig
 // Group imports logically
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 
 // Models and migrations
 const models = @import("models.zig");
@@ -810,7 +810,7 @@ const my_plugin = @import("valves/my_plugin.zig");
 
 ```zig
 const std = @import("std");
-const Engine12 = @import("Engine12");
+const Engine12 = @import("engine12");
 const HandlerCtx = Engine12.HandlerCtx;
 
 // Relative imports for project modules
@@ -1146,7 +1146,7 @@ pub const MyPluginValve = Engine12.Valve{
         .name = "my_plugin",
         .version = "1.0.0",
         .description = "My custom plugin",
-        .author = "Your Name",
+                    .author = "Engine12 Developer",
         .required_capabilities = &[_]Engine12.ValveCapability{
             .routes,
             .middleware,
