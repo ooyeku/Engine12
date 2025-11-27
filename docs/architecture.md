@@ -144,8 +144,54 @@ The `Database` struct (`src/orm/database.zig`) provides:
 
 - SQLite connection management
 - SQL execution (execute/query)
+- **Parameterized queries**: `executeParams()` and `queryParams()` for SQL injection prevention
 - Transaction support
 - Connection pooling
+- **Prepared statement caching**: Optional caching of compiled SQL statements for performance
+
+### Parameter Binding
+
+The ORM uses SQLite's parameter binding API to prevent SQL injection:
+
+- **All CRUD operations use parameter binding**: `create()`, `update()`, `find()`, `delete()` all use `?` placeholders
+- **ParamList**: Type-safe parameter list builder for complex queries
+- **Automatic type conversion**: `Param.from()` converts Zig types to SQLite parameters
+- **Zero SQL injection risk**: User input is always bound as parameters, never interpolated into SQL strings
+
+**Example:**
+```zig
+// Safe - uses parameter binding
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addString(user_input); // User input safely bound
+try db.queryParams("SELECT * FROM users WHERE name = ?", &params);
+
+// Unsafe - DO NOT DO THIS
+// var sql = try std.fmt.allocPrint(allocator, "SELECT * FROM users WHERE name = '{s}'", .{user_input});
+```
+
+### Prepared Statement Caching
+
+The ORM supports optional prepared statement caching for improved performance:
+
+- **Statement Cache**: Caches compiled SQL statements for reuse
+- **Performance**: Avoids repeated SQL parsing overhead
+- **Integration**: Automatically used when enabled via `ORM.initWithCache()` or `ORM.enableStatementCache()`
+- **Statistics**: Cache hit/miss statistics available via `getStatementCacheStats()`
+
+**Usage:**
+```zig
+// Enable caching at initialization
+var orm = try ORM.initWithCache(db, 512, allocator);
+
+// Or enable later
+try orm.enableStatementCache(512);
+
+// Check statistics
+if (orm.getStatementCacheStats()) |stats| {
+    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
+}
+```
 
 ### Query Builder
 
@@ -159,11 +205,12 @@ The `QueryBuilder` (`src/orm/query_builder.zig`) provides:
 
 The ORM uses Zig's comptime features for type safety:
 
-- `model.inferTableName(T)`: Infers table name from struct name
+- `model.comptimeTableName(T)`: Comptime table name inference (zero-allocation)
 - Field introspection via `std.meta.fields(T)`
 - Compile-time SQL generation
 - **Enum support**: Enum types are automatically converted to their integer values when saving
 - **Optional field handling**: Null optional fields are automatically skipped in INSERT/UPDATE statements, allowing partial updates
+- **Comptime table name caching**: Table names are computed at compile time, avoiding runtime allocations
 
 ### Row Mapping
 

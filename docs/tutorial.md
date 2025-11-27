@@ -407,7 +407,7 @@ const AppUser = struct {
 
 ### 4.1 Initialize Database
 
-**Recommended**: Use Engine12's built-in database initialization:
+**Recommended**: Use Engine12's built-in database initialization with statement caching:
 
 ```zig
 pub fn main() !void {
@@ -417,10 +417,24 @@ pub fn main() !void {
     // Initialize database and run migrations automatically
     try app.initDatabaseWithMigrations("todos.db", "src/migrations");
 
-    // Get ORM instance when needed
+    // Get ORM instance when needed (statement caching enabled automatically)
     const orm = try app.getORM();
     
     // ... rest of code
+}
+```
+
+**Alternative**: If you need more control, initialize with explicit statement caching:
+
+```zig
+const Database = Engine12.orm.Database;
+const ORM = Engine12.orm.ORM;
+
+pub fn initDatabase() !void {
+    const db = try Database.open("todos.db", allocator);
+    // Enable statement caching for better performance (recommended: 512 statements)
+    const orm = try ORM.initWithCache(db, 512, allocator);
+    // ... rest of initialization
 }
 ```
 
@@ -494,6 +508,8 @@ const Todo = struct {
 **Note**: The ORM supports:
 - **Enum types**: Automatically converted to integers when saving
 - **Optional fields**: Null values are skipped in INSERT/UPDATE operations
+- **Parameter binding**: All CRUD operations use parameter binding to prevent SQL injection
+- **Statement caching**: Optional prepared statement caching for improved performance
 
 ### 4.3 Update Handlers
 
@@ -593,6 +609,10 @@ pub fn main() !void {
 ```
 
 **Note**: With the recommended approach, you don't need a separate `database.zig` file. The database is managed by Engine12's singleton pattern, and you can access the ORM using `app.getORM()` anywhere in your handlers.
+
+**Security**: All ORM operations (`create()`, `update()`, `find()`, `delete()`) use parameter binding to prevent SQL injection. User input is always safely bound as parameters, never interpolated into SQL strings.
+
+**Performance**: Statement caching is automatically enabled when using `initDatabaseWithMigrations()`, improving query performance by reusing compiled SQL statements.
 
 ## Step 5: Templates
 
@@ -1175,7 +1195,84 @@ if (!errors.isEmpty()) {
 return Response.notFound("Todo not found");
 ```
 
-### 9.4 JSON Serialization
+### 9.4 Parameterized Queries
+
+The ORM uses parameter binding for all CRUD operations to prevent SQL injection. For custom queries with user input, use `whereParams()`:
+
+```zig
+const ParamList = Engine12.orm.ParamList;
+
+fn handleSearchTodos(req: *Request) Response {
+    const search_query = req.queryParamTyped([]const u8, "q") orelse "";
+    
+    const orm = try getORM();
+    
+    // Build parameterized query
+    var params = ParamList.init(req.allocator());
+    defer params.deinit();
+    try params.addString(search_query);
+    
+    // Safe - uses parameter binding
+    var todos = try orm.whereParams(Todo, "title LIKE ?", &params);
+    defer {
+        for (todos.items) |todo| {
+            allocator.free(todo.title);
+        }
+        todos.deinit(allocator);
+    }
+    
+    // Return results...
+}
+
+// With multiple parameters
+fn handleFilterTodos(req: *Request) Response {
+    const status = req.queryParamTyped([]const u8, "status") orelse "pending";
+    const min_priority = req.queryParamTyped(i32, "min_priority") orelse 0;
+    
+    var params = ParamList.init(req.allocator());
+    defer params.deinit();
+    try params.addString(status);
+    try params.addInt(min_priority);
+    
+    var todos = try orm.whereParamsWithOptions(Todo, 
+        "status = ? AND priority >= ?", 
+        &params,
+        .{ .order_by = "created_at", .ascending = false }
+    );
+    defer {
+        for (todos.items) |todo| {
+            allocator.free(todo.title);
+        }
+        todos.deinit(allocator);
+    }
+    
+    // Return results...
+}
+```
+
+**Security Best Practices:**
+- ✅ **Always use parameter binding** for user input: `whereParams()`, `executeParams()`, `queryParams()`
+- ✅ **Use ORM methods** (`create()`, `update()`, `find()`, `delete()`) - they use parameter binding automatically
+- ❌ **Never interpolate user input** into SQL strings: `std.fmt.allocPrint(allocator, "SELECT * FROM users WHERE name = '{s}'", .{user_input})`
+- ❌ **Avoid `where()` with user input** - use `whereParams()` instead
+
+**Statement Caching:**
+Enable statement caching for better performance with repeated queries:
+
+```zig
+// At initialization
+var orm = try ORM.initWithCache(db, 512, allocator);
+
+// Or enable later
+try orm.enableStatementCache(512);
+
+// Check cache statistics
+if (orm.getStatementCacheStats()) |stats| {
+    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
+}
+```
+
+### 9.5 JSON Serialization
 
 Use `fromStruct()` or `jsonFrom()` to automatically serialize structs:
 

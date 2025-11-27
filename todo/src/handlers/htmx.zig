@@ -3,6 +3,7 @@ const E12 = @import("engine12");
 const Request = E12.Request;
 const Response = E12.Response;
 const htmx = E12.htmx;
+const ParamList = E12.orm.ParamList;
 const database = @import("../database.zig");
 const models = @import("../models.zig");
 const Todo = models.Todo;
@@ -830,7 +831,14 @@ pub fn handleClearCompleted(req: *Request) Response {
         return htmx.errors.errorFragment("Database not initialized");
     };
 
-    orm.db.execute("DELETE FROM todos WHERE completed = 1") catch {
+    // Use parameterized query for consistency and SQL injection prevention
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    params.addInt(1) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to prepare query", 500);
+    };
+
+    orm.db.executeParams("DELETE FROM todos WHERE completed = ?", &params) catch {
         return htmx.errors.errorFragmentWithStatus("Failed to clear completed", 500);
     };
 

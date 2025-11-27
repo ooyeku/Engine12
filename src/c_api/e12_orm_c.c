@@ -49,6 +49,13 @@ typedef struct {
     bool rolled_back;
 } E12TransactionImpl;
 
+// Prepared statement structure for parameter binding
+typedef struct {
+    sqlite3_stmt* stmt;
+    E12DatabaseImpl* db;
+    bool executed;
+} E12PreparedStmtImpl;
+
 // Prepared statement cache entry
 typedef struct E12StmtCacheEntry {
     char* sql;                      // SQL string (owned)
@@ -252,6 +259,344 @@ void e12_result_free(E12Result* result) {
         sqlite3_finalize(result_impl->stmt);
     }
     free(result_impl);
+}
+
+// ============================================================================
+// Parameterized Query Operations
+// ============================================================================
+
+E12ORMErrorCode e12_stmt_prepare(E12Database* db, const char* sql, E12PreparedStmt** out_stmt) {
+    clear_error();
+    
+    if (!db || !sql || !out_stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12DatabaseImpl* db_impl = (E12DatabaseImpl*)db;
+    
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db_impl->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(db_impl->db));
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)malloc(sizeof(E12PreparedStmtImpl));
+    if (!stmt_impl) {
+        sqlite3_finalize(stmt);
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        return E12_ORM_ERROR;
+    }
+    
+    stmt_impl->stmt = stmt;
+    stmt_impl->db = db_impl;
+    stmt_impl->executed = false;
+    
+    *out_stmt = (E12PreparedStmt*)stmt_impl;
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_bind_int64(E12PreparedStmt* stmt, int index, int64_t value) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    int rc = sqlite3_bind_int64(stmt_impl->stmt, index, value);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_bind_double(E12PreparedStmt* stmt, int index, double value) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    int rc = sqlite3_bind_double(stmt_impl->stmt, index, value);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_bind_text(E12PreparedStmt* stmt, int index, const char* value, int len) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    
+    // If value is NULL, bind NULL
+    if (!value) {
+        int rc = sqlite3_bind_null(stmt_impl->stmt, index);
+        if (rc != SQLITE_OK) {
+            set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+            return E12_ORM_ERROR_QUERY_FAILED;
+        }
+        return E12_ORM_OK;
+    }
+    
+    // Use SQLITE_TRANSIENT to copy the string
+    int rc = sqlite3_bind_text(stmt_impl->stmt, index, value, len, SQLITE_TRANSIENT);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_bind_null(E12PreparedStmt* stmt, int index) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    int rc = sqlite3_bind_null(stmt_impl->stmt, index);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_execute(E12PreparedStmt* stmt, int64_t* rows_affected) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    
+    int rc = sqlite3_step(stmt_impl->stmt);
+    
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(stmt_impl->db->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    stmt_impl->executed = true;
+    
+    if (rows_affected) {
+        *rows_affected = sqlite3_changes(stmt_impl->db->db);
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_query(E12PreparedStmt* stmt, E12Result** out_result) {
+    clear_error();
+    
+    if (!stmt || !out_result) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    
+    E12ResultImpl* result_impl = (E12ResultImpl*)malloc(sizeof(E12ResultImpl));
+    if (!result_impl) {
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        return E12_ORM_ERROR;
+    }
+    
+    result_impl->stmt = stmt_impl->stmt;
+    result_impl->column_count = sqlite3_column_count(stmt_impl->stmt);
+    result_impl->has_row = false;
+    result_impl->row_fetched = false;
+    result_impl->owns_stmt = false;  // Prepared statement owns it
+    
+    *out_result = (E12Result*)result_impl;
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_stmt_reset(E12PreparedStmt* stmt) {
+    clear_error();
+    
+    if (!stmt) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid statement");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    
+    sqlite3_reset(stmt_impl->stmt);
+    sqlite3_clear_bindings(stmt_impl->stmt);
+    stmt_impl->executed = false;
+    
+    return E12_ORM_OK;
+}
+
+void e12_stmt_free(E12PreparedStmt* stmt) {
+    if (!stmt) return;
+    
+    E12PreparedStmtImpl* stmt_impl = (E12PreparedStmtImpl*)stmt;
+    if (stmt_impl->stmt) {
+        sqlite3_finalize(stmt_impl->stmt);
+    }
+    free(stmt_impl);
+}
+
+// Helper function to bind parameters from array
+static E12ORMErrorCode bind_params(sqlite3_stmt* stmt, E12DatabaseImpl* db,
+                                    const E12Param* params, size_t param_count) {
+    for (size_t i = 0; i < param_count; i++) {
+        int index = (int)(i + 1);  // SQLite uses 1-based indexing
+        int rc = SQLITE_OK;
+        
+        switch (params[i].type) {
+            case E12_PARAM_NULL:
+                rc = sqlite3_bind_null(stmt, index);
+                break;
+            case E12_PARAM_INT64:
+                rc = sqlite3_bind_int64(stmt, index, params[i].value.i64);
+                break;
+            case E12_PARAM_DOUBLE:
+                rc = sqlite3_bind_double(stmt, index, params[i].value.f64);
+                break;
+            case E12_PARAM_TEXT:
+                rc = sqlite3_bind_text(stmt, index, params[i].value.text.ptr, 
+                                       (int)params[i].value.text.len, SQLITE_TRANSIENT);
+                break;
+            case E12_PARAM_BLOB:
+                rc = sqlite3_bind_blob(stmt, index, params[i].value.blob.ptr,
+                                       (int)params[i].value.blob.len, SQLITE_TRANSIENT);
+                break;
+            default:
+                set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Unknown parameter type");
+                return E12_ORM_ERROR_INVALID_ARGUMENT;
+        }
+        
+        if (rc != SQLITE_OK) {
+            set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(db->db));
+            return E12_ORM_ERROR_QUERY_FAILED;
+        }
+    }
+    
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_db_execute_params(E12Database* db, const char* sql,
+                                       const E12Param* params, size_t param_count,
+                                       int64_t* rows_affected) {
+    clear_error();
+    
+    if (!db || !sql) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12DatabaseImpl* db_impl = (E12DatabaseImpl*)db;
+    
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db_impl->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(db_impl->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    // Bind parameters if provided
+    if (params && param_count > 0) {
+        E12ORMErrorCode bind_err = bind_params(stmt, db_impl, params, param_count);
+        if (bind_err != E12_ORM_OK) {
+            sqlite3_finalize(stmt);
+            return bind_err;
+        }
+    }
+    
+    // Execute
+    rc = sqlite3_step(stmt);
+    
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(db_impl->db));
+        sqlite3_finalize(stmt);
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    if (rows_affected) {
+        *rows_affected = sqlite3_changes(db_impl->db);
+    }
+    
+    sqlite3_finalize(stmt);
+    return E12_ORM_OK;
+}
+
+E12ORMErrorCode e12_db_query_params(E12Database* db, const char* sql,
+                                     const E12Param* params, size_t param_count,
+                                     E12Result** out_result) {
+    clear_error();
+    
+    if (!db || !sql || !out_result) {
+        set_error(E12_ORM_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return E12_ORM_ERROR_INVALID_ARGUMENT;
+    }
+    
+    E12DatabaseImpl* db_impl = (E12DatabaseImpl*)db;
+    
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db_impl->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        set_error(E12_ORM_ERROR_QUERY_FAILED, sqlite3_errmsg(db_impl->db));
+        return E12_ORM_ERROR_QUERY_FAILED;
+    }
+    
+    // Bind parameters if provided
+    if (params && param_count > 0) {
+        E12ORMErrorCode bind_err = bind_params(stmt, db_impl, params, param_count);
+        if (bind_err != E12_ORM_OK) {
+            sqlite3_finalize(stmt);
+            return bind_err;
+        }
+    }
+    
+    E12ResultImpl* result_impl = (E12ResultImpl*)malloc(sizeof(E12ResultImpl));
+    if (!result_impl) {
+        set_error(E12_ORM_ERROR, "Memory allocation failed");
+        sqlite3_finalize(stmt);
+        return E12_ORM_ERROR;
+    }
+    
+    result_impl->stmt = stmt;
+    result_impl->column_count = sqlite3_column_count(stmt);
+    result_impl->has_row = false;
+    result_impl->row_fetched = false;
+    result_impl->owns_stmt = true;  // This result owns the statement
+    
+    *out_result = (E12Result*)result_impl;
+    return E12_ORM_OK;
 }
 
 // ============================================================================

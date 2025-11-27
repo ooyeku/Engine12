@@ -16,6 +16,33 @@ typedef void E12Row;
 typedef void E12Transaction;
 typedef void E12ConnectionPool;
 typedef void E12StmtCache;
+typedef void E12PreparedStmt;
+
+// Parameter types for bound parameters
+typedef enum {
+    E12_PARAM_NULL = 0,
+    E12_PARAM_INT64 = 1,
+    E12_PARAM_DOUBLE = 2,
+    E12_PARAM_TEXT = 3,
+    E12_PARAM_BLOB = 4,
+} E12ParamType;
+
+// Parameter value union
+typedef struct {
+    E12ParamType type;
+    union {
+        int64_t i64;
+        double f64;
+        struct {
+            const char* ptr;
+            size_t len;
+        } text;
+        struct {
+            const void* ptr;
+            size_t len;
+        } blob;
+    } value;
+} E12Param;
 
 // Error codes
 typedef enum {
@@ -79,6 +106,88 @@ bool e12_result_next_row(E12Result* result, E12Row** out_row);
 /// Free a result set
 /// @param result Result handle to free
 void e12_result_free(E12Result* result);
+
+// ============================================================================
+// Parameterized Query Operations
+// ============================================================================
+
+/// Prepare a SQL statement for parameter binding
+/// @param db Database handle
+/// @param sql SQL statement with ? placeholders
+/// @param out_stmt Output parameter for the prepared statement handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_prepare(E12Database* db, const char* sql, E12PreparedStmt** out_stmt);
+
+/// Bind an integer parameter to a prepared statement
+/// @param stmt Prepared statement handle
+/// @param index Parameter index (1-based)
+/// @param value Integer value to bind
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_bind_int64(E12PreparedStmt* stmt, int index, int64_t value);
+
+/// Bind a double parameter to a prepared statement
+/// @param stmt Prepared statement handle
+/// @param index Parameter index (1-based)
+/// @param value Double value to bind
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_bind_double(E12PreparedStmt* stmt, int index, double value);
+
+/// Bind a text parameter to a prepared statement
+/// @param stmt Prepared statement handle
+/// @param index Parameter index (1-based)
+/// @param value Text value to bind (null-terminated)
+/// @param len Length of text (-1 for strlen)
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_bind_text(E12PreparedStmt* stmt, int index, const char* value, int len);
+
+/// Bind a NULL parameter to a prepared statement
+/// @param stmt Prepared statement handle
+/// @param index Parameter index (1-based)
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_bind_null(E12PreparedStmt* stmt, int index);
+
+/// Execute a prepared statement (for INSERT, UPDATE, DELETE)
+/// @param stmt Prepared statement handle
+/// @param rows_affected Output parameter for number of rows affected (can be NULL)
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_execute(E12PreparedStmt* stmt, int64_t* rows_affected);
+
+/// Execute a prepared statement and return result set (for SELECT)
+/// @param stmt Prepared statement handle
+/// @param out_result Output parameter for the result handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_query(E12PreparedStmt* stmt, E12Result** out_result);
+
+/// Reset a prepared statement for reuse with new parameters
+/// @param stmt Prepared statement handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_stmt_reset(E12PreparedStmt* stmt);
+
+/// Free a prepared statement
+/// @param stmt Prepared statement handle to free
+void e12_stmt_free(E12PreparedStmt* stmt);
+
+/// Execute a parameterized query with an array of parameters
+/// @param db Database handle
+/// @param sql SQL statement with ? placeholders
+/// @param params Array of parameters
+/// @param param_count Number of parameters
+/// @param rows_affected Output parameter for number of rows affected (can be NULL)
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_db_execute_params(E12Database* db, const char* sql, 
+                                       const E12Param* params, size_t param_count,
+                                       int64_t* rows_affected);
+
+/// Execute a parameterized SELECT query with an array of parameters
+/// @param db Database handle
+/// @param sql SQL statement with ? placeholders
+/// @param params Array of parameters
+/// @param param_count Number of parameters
+/// @param out_result Output parameter for the result handle
+/// @return E12_ORM_OK on success, error code on failure
+E12ORMErrorCode e12_db_query_params(E12Database* db, const char* sql,
+                                     const E12Param* params, size_t param_count,
+                                     E12Result** out_result);
 
 // ============================================================================
 // Row Operations

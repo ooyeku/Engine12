@@ -88,7 +88,7 @@ exe.linkLibC();
 - **Project Scaffolding** - CLI tool (`e12 new`) to generate projects with recommended structure
 - **Structured Logging** - JSON and human-readable logging with multiple destinations (stdout, file, syslog)
 - **Middleware System** - Pre-request and response middleware chains
-- **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, and managed memory
+- **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, managed memory, parameter binding for SQL injection prevention, and prepared statement caching for performance
 - **Template Engine** - Server-side HTML rendering
 - **Request/Response API** - Clean, memory-safe HTTP handling with struct-to-JSON convenience methods
 - **Rate Limiting** - Per-route rate limiting

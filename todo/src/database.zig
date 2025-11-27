@@ -53,8 +53,9 @@ pub fn initDatabase() !void {
     const db_path = "todo.db";
     global_db = try Database.open(db_path, allocator);
 
-    // Initialize ORM first (needed for migrations)
-    global_orm = ORM.init(global_db.?, allocator);
+    // Initialize ORM with statement caching for better performance
+    // Cache up to 512 prepared statements for reuse
+    global_orm = try ORM.initWithCache(global_db.?, 512, allocator);
 
     // Use migration auto-discovery to automatically load migrations
     // Scans migrations/ directory for numbered files: {number}_{name}.zig

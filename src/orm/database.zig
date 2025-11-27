@@ -1,8 +1,9 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("e12_orm.h");
-});
+const params_mod = @import("params.zig");
+const c = params_mod.c;
 const QueryResult = @import("row.zig").QueryResult;
+pub const Param = params_mod.Param;
+pub const ParamList = params_mod.ParamList;
 
 pub const ConnectionPoolConfig = struct {
     max_connections: usize = 100,
@@ -356,6 +357,102 @@ pub const Database = struct {
         return error.NoResult;
     }
 
+    /// Execute a parameterized SQL statement (INSERT, UPDATE, DELETE)
+    /// Uses bound parameters to prevent SQL injection
+    ///
+    /// Example:
+    /// ```zig
+    /// var params = ParamList.init(allocator);
+    /// defer params.deinit();
+    /// try params.add("Alice");
+    /// try params.add(@as(i64, 25));
+    /// try db.executeParams("INSERT INTO users (name, age) VALUES (?, ?)", &params);
+    /// ```
+    pub fn executeParams(self: *Database, sql: []const u8, params: *const ParamList) !void {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        const err = c.e12_db_execute_params(
+            self.c_db,
+            c_sql,
+            params.cParams(),
+            params.cCount(),
+            null,
+        );
+
+        if (err != c.E12_ORM_OK) {
+            captureError("Failed to execute parameterized SQL statement", sql);
+            return switch (err) {
+                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
+                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
+                else => error.DatabaseError,
+            };
+        }
+    }
+
+    /// Execute a parameterized SQL statement and return rows affected
+    /// Uses bound parameters to prevent SQL injection
+    pub fn executeParamsWithRowsAffected(self: *Database, sql: []const u8, params: *const ParamList) !i64 {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        var rows_affected: i64 = 0;
+        const err = c.e12_db_execute_params(
+            self.c_db,
+            c_sql,
+            params.cParams(),
+            params.cCount(),
+            &rows_affected,
+        );
+
+        if (err != c.E12_ORM_OK) {
+            captureError("Failed to execute parameterized SQL statement", sql);
+            return switch (err) {
+                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
+                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
+                else => error.DatabaseError,
+            };
+        }
+
+        return rows_affected;
+    }
+
+    /// Execute a parameterized SELECT query
+    /// Uses bound parameters to prevent SQL injection
+    ///
+    /// Example:
+    /// ```zig
+    /// var params = ParamList.init(allocator);
+    /// defer params.deinit();
+    /// try params.add(@as(i64, 25));
+    /// var result = try db.queryParams("SELECT * FROM users WHERE age > ?", &params);
+    /// defer result.deinit();
+    /// ```
+    pub fn queryParams(self: *Database, sql: []const u8, params: *const ParamList) !QueryResult {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        var c_result: ?*c.E12Result = null;
+        const err = c.e12_db_query_params(
+            self.c_db,
+            c_sql,
+            params.cParams(),
+            params.cCount(),
+            &c_result,
+        );
+
+        if (err != c.E12_ORM_OK) {
+            captureError("Failed to execute parameterized SQL query", sql);
+            return switch (err) {
+                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
+                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
+                else => error.DatabaseError,
+            };
+        }
+
+        return QueryResult.init(c_result.?, self.allocator);
+    }
+
     pub const Error = error{
         DatabaseOpenFailed,
         QueryFailed,
@@ -421,6 +518,55 @@ pub const Transaction = struct {
 
         if (err != c.E12_ORM_OK) {
             Database.captureError("Failed to execute SQL query in transaction", sql);
+            return switch (err) {
+                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
+                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
+                else => error.DatabaseError,
+            };
+        }
+
+        return QueryResult.init(c_result.?, self.allocator);
+    }
+
+    /// Execute a parameterized SQL statement within the transaction
+    pub fn executeParams(self: *Transaction, sql: []const u8, params: *const ParamList) !void {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        const err = c.e12_db_execute_params(
+            self.db.c_db,
+            c_sql,
+            params.cParams(),
+            params.cCount(),
+            null,
+        );
+
+        if (err != c.E12_ORM_OK) {
+            Database.captureError("Failed to execute parameterized SQL in transaction", sql);
+            return switch (err) {
+                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
+                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
+                else => error.DatabaseError,
+            };
+        }
+    }
+
+    /// Execute a parameterized SELECT query within the transaction
+    pub fn queryParams(self: *Transaction, sql: []const u8, params: *const ParamList) !QueryResult {
+        const c_sql = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(c_sql);
+
+        var c_result: ?*c.E12Result = null;
+        const err = c.e12_db_query_params(
+            self.db.c_db,
+            c_sql,
+            params.cParams(),
+            params.cCount(),
+            &c_result,
+        );
+
+        if (err != c.E12_ORM_OK) {
+            Database.captureError("Failed to execute parameterized query in transaction", sql);
             return switch (err) {
                 c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
                 c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
@@ -619,4 +765,130 @@ test "Connection pool max connections" {
     const db2 = try pool.acquire();
     try std.testing.expect(@intFromPtr(db2.c_db) != 0);
     pool.release(db2);
+}
+
+test "Database executeParams INSERT" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Alice");
+    try params.addInt(25);
+
+    try db.executeParams("INSERT INTO users (name, age) VALUES (?, ?)", &params);
+
+    var result = try db.query("SELECT name, age FROM users");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+        try std.testing.expectEqual(@as(i64, 25), row.getInt64(1));
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database queryParams SELECT" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Alice', 25)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Bob', 30)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Charlie', 25)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addInt(25);
+
+    var result = try db.queryParams("SELECT name FROM users WHERE age = ?", &params);
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |_| {
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "Database executeParams SQL injection prevention" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    // Attempt SQL injection - should be safely escaped
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("'; DROP TABLE users; --");
+
+    try db.executeParams("INSERT INTO users (name) VALUES (?)", &params);
+
+    // Table should still exist with the malicious string as data
+    var result = try db.query("SELECT name FROM users");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("'; DROP TABLE users; --", row.getText(0).?);
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database executeParams with NULL" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, notes TEXT)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Alice");
+    try params.addNull();
+
+    try db.executeParams("INSERT INTO users (name, notes) VALUES (?, ?)", &params);
+
+    var result = try db.query("SELECT name, notes FROM users");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+        try std.testing.expect(row.isNull(1));
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Transaction executeParams" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var trans = try db.beginTransaction();
+    defer trans.deinit();
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Alice");
+
+    try trans.executeParams("INSERT INTO users (name) VALUES (?)", &params);
+    try trans.commit();
+
+    var result = try db.query("SELECT name FROM users");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+    } else {
+        try std.testing.expect(false);
+    }
 }

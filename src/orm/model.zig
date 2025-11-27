@@ -217,6 +217,101 @@ pub fn getFieldNames(comptime T: type) *const [std.meta.fields(T).len][]const u8
     return &names;
 }
 
+/// Comptime table name generation
+/// Returns the pluralized, lowercase table name for a type at compile time
+/// Supports custom table_name declaration on the type
+///
+/// Example:
+/// ```zig
+/// const User = struct { id: i64, name: []const u8 };
+/// const table_name = comptimeTableName(User); // "users"
+/// ```
+pub fn comptimeTableName(comptime T: type) []const u8 {
+    return comptime blk: {
+        // Check for custom table_name declaration
+        if (@hasDecl(T, "table_name")) {
+            break :blk @field(T, "table_name");
+        }
+
+        // Get struct name
+        const raw_name = inferTableName(T);
+
+        // Convert to lowercase
+        var lowercase: [raw_name.len]u8 = undefined;
+        for (raw_name, 0..) |c, i| {
+            lowercase[i] = if (c >= 'A' and c <= 'Z') (c + 32) else c;
+        }
+        const lowercase_slice: []const u8 = &lowercase;
+
+        // Pluralize (simplified comptime version)
+        break :blk comptimePluralize(lowercase_slice);
+    };
+}
+
+/// Comptime pluralization (simplified for compile-time use)
+fn comptimePluralize(comptime singular: []const u8) []const u8 {
+    if (singular.len == 0) return singular;
+
+    const last = singular[singular.len - 1];
+    const second_last = if (singular.len >= 2) singular[singular.len - 2] else 0;
+
+    // Irregular plurals
+    if (comptimeEql(singular, "person")) return "people";
+    if (comptimeEql(singular, "child")) return "children";
+    if (comptimeEql(singular, "man")) return "men";
+    if (comptimeEql(singular, "woman")) return "women";
+    if (comptimeEql(singular, "foot")) return "feet";
+    if (comptimeEql(singular, "tooth")) return "teeth";
+    if (comptimeEql(singular, "goose")) return "geese";
+    if (comptimeEql(singular, "mouse")) return "mice";
+    if (comptimeEql(singular, "datum")) return "data";
+    if (comptimeEql(singular, "medium")) return "media";
+
+    // Words ending in s, x, z -> add "es"
+    if (last == 's' or last == 'x' or last == 'z') {
+        return singular ++ "es";
+    }
+
+    // Words ending in ch, sh -> add "es"
+    if (singular.len >= 2) {
+        if ((second_last == 'c' and last == 'h') or
+            (second_last == 's' and last == 'h'))
+        {
+            return singular ++ "es";
+        }
+    }
+
+    // Words ending in consonant + y -> change to "ies"
+    if (last == 'y' and singular.len >= 2 and !comptimeIsVowel(second_last)) {
+        return singular[0 .. singular.len - 1] ++ "ies";
+    }
+
+    // Words ending in f -> change to "ves"
+    if (last == 'f') {
+        return singular[0 .. singular.len - 1] ++ "ves";
+    }
+
+    // Words ending in fe -> change to "ves"
+    if (singular.len >= 2 and second_last == 'f' and last == 'e') {
+        return singular[0 .. singular.len - 2] ++ "ves";
+    }
+
+    // Default: just add "s"
+    return singular ++ "s";
+}
+
+fn comptimeEql(comptime a: []const u8, comptime b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |ac, bc| {
+        if (ac != bc) return false;
+    }
+    return true;
+}
+
+fn comptimeIsVowel(c: u8) bool {
+    return c == 'a' or c == 'e' or c == 'i' or c == 'o' or c == 'u';
+}
+
 test "inferTableName simple struct" {
     const TestUser = struct {
         id: i64,

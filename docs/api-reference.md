@@ -2393,6 +2393,20 @@ var db = try Database.open("app.db", allocator);
 var orm = ORM.init(db, allocator);
 ```
 
+#### `initWithCache(db: Database, max_statements: usize, allocator: Allocator) !ORM`
+Initialize ORM with prepared statement caching enabled. Recommended for production use to improve query performance.
+
+```zig
+var db = try Database.open("app.db", allocator);
+var orm = try ORM.initWithCache(db, 512, allocator);
+defer orm.deinit();
+```
+
+**Statement Caching Benefits:**
+- Reuses compiled SQL statements, avoiding repeated parsing
+- Significant performance improvement for repeated queries
+- Recommended cache size: 512 statements (default)
+
 #### `initPtr(db: Database, allocator: Allocator) !*ORM`
 Initialize ORM and return a heap-allocated pointer. Recommended for handler usage where you need to pass pointers.
 
@@ -2400,6 +2414,30 @@ Initialize ORM and return a heap-allocated pointer. Recommended for handler usag
 var db = try Database.open("app.db", allocator);
 var orm = try ORM.initPtr(db, allocator);
 defer orm.deinitPtr(allocator);
+```
+
+#### `enableStatementCache(self: *ORM, max_statements: usize) !void`
+Enable prepared statement caching for improved query performance. Can be called after initialization.
+
+```zig
+var orm = ORM.init(db, allocator);
+try orm.enableStatementCache(512); // Cache up to 512 statements
+```
+
+#### `disableStatementCache(self: *ORM) void`
+Disable and clear the statement cache.
+
+```zig
+orm.disableStatementCache();
+```
+
+#### `getStatementCacheStats(self: *ORM) ?CacheStats`
+Get statement cache statistics (hits and misses). Returns null if caching is not enabled.
+
+```zig
+if (orm.getStatementCacheStats()) |stats| {
+    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
+}
 ```
 
 **When to use `initPtr()`:**
@@ -2467,7 +2505,9 @@ try orm.create(AppUser, user);
 The ORM maps columns to struct fields by name, not by position. This means column order in your queries doesn't need to match struct field order - the ORM will automatically match columns by name.
 
 #### `create(comptime T: type, instance: T) !void`
-Create a new record. Supports structs with enum types and optional fields.
+Create a new record. Supports structs with enum types and optional fields. **Uses parameter binding to prevent SQL injection.**
+
+**Security**: All values are bound as parameters using SQLite's `?` placeholders, preventing SQL injection attacks.
 
 **Enum Support**: Enums are automatically converted to their integer values when saving to the database.
 
@@ -2540,7 +2580,7 @@ try orm.upsertIgnore(Todo, todo); // Silently ignored if UNIQUE constraint viola
 - `upsertIgnore()`: Ignores the insert, keeping the existing record (INSERT OR IGNORE)
 
 #### `find(comptime T: type, id: i64) !?T`
-Find a record by ID. Columns are mapped to struct fields by name, so column order doesn't matter.
+Find a record by ID. Columns are mapped to struct fields by name, so column order doesn't matter. **Uses parameter binding for the ID to prevent SQL injection.**
 
 ```zig
 const todo = try orm.find(Todo, 1);
@@ -2549,6 +2589,8 @@ if (todo) |t| {
     defer allocator.free(t.title);
 }
 ```
+
+**Security**: The ID parameter is bound using SQLite's `?` placeholder, preventing SQL injection even if the ID comes from user input.
 
 #### `findManaged(comptime T: type, id: i64) !?Result(T)`
 Find a record by ID with automatic memory management. Returns a `Result` wrapper that automatically frees string fields on `deinit()`.
@@ -2619,9 +2661,58 @@ defer {
 }
 ```
 
-**Note**: The condition string is inserted directly into the SQL query. Be careful with user input to prevent SQL injection. Consider using parameterized queries or the Query Builder for dynamic conditions.
+**Security Warning**: The condition string is inserted directly into the SQL query. **Do not use user input directly in the condition string** - this can lead to SQL injection. Use `whereParams()` for user-provided values.
 
 **Column Mapping**: Columns are mapped to struct fields by name, so column order doesn't matter.
+
+#### `whereParams(comptime T: type, condition: []const u8, params: *const ParamList) !ArrayListUnmanaged(T)`
+Find records matching a parameterized condition. **Uses bound parameters to prevent SQL injection.**
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addInt(25); // Age parameter
+
+var users = try orm.whereParams(User, "age > ?", &params);
+defer {
+    for (users.items) |user| {
+        allocator.free(user.name);
+    }
+    users.deinit(allocator);
+}
+```
+
+**Security**: All parameter values are bound using SQLite's `?` placeholders, preventing SQL injection even with user-provided values.
+
+**Parameter List**: Use `ParamList` to build parameter arrays:
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addInt(25);           // Integer parameter
+try params.addString("pending"); // String parameter
+try params.addBool(true);        // Boolean parameter
+try params.addNull();            // NULL parameter
+```
+
+#### `whereParamsWithOptions(comptime T: type, condition: []const u8, params: *const ParamList, options: WhereOptions) !ArrayListUnmanaged(T)`
+Find records matching a parameterized condition with sorting options.
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addString("pending");
+
+var todos = try orm.whereParamsWithOptions(Todo, "status = ?", &params, .{
+    .order_by = "created_at",
+    .ascending = false,
+});
+defer {
+    for (todos.items) |todo| {
+        allocator.free(todo.title);
+    }
+    todos.deinit(allocator);
+}
+```
 
 #### `whereWithOptions(comptime T: type, condition: []const u8, options: WhereOptions) !ArrayListUnmanaged(T)`
 Find records matching a condition with sorting options. Allows ORDER BY without post-fetch sorting.
@@ -2698,7 +2789,7 @@ for (result.getItems()) |todo| {
 **Benefits**: Eliminates manual memory management for ORM results. The `Result` wrapper handles freeing all string fields automatically.
 
 #### `update(comptime T: type, instance: T) !void`
-Update a record. Optional fields that are `null` are skipped in UPDATE statements (not included in the SQL).
+Update a record. Optional fields that are `null` are skipped in UPDATE statements (not included in the SQL). **Uses parameter binding to prevent SQL injection.**
 
 ```zig
 const todo = Todo{
@@ -2713,14 +2804,18 @@ const todo = Todo{
 try orm.update(Todo, todo);
 ```
 
+**Security**: All field values and the ID are bound as parameters using SQLite's `?` placeholders, preventing SQL injection.
+
 **Note**: Only non-null optional fields are included in the UPDATE statement. This allows partial updates where you only set the fields you want to change.
 
 #### `delete(comptime T: type, id: i64) !void`
-Delete a record by ID.
+Delete a record by ID. **Uses parameter binding for the ID to prevent SQL injection.**
 
 ```zig
 try orm.delete(Todo, 1);
 ```
+
+**Security**: The ID parameter is bound using SQLite's `?` placeholder, preventing SQL injection even if the ID comes from user input.
 
 ### Transactions
 
@@ -2882,6 +2977,106 @@ Execute a SQL statement (INSERT, UPDATE, DELETE, CREATE TABLE, etc.).
 try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 try db.execute("INSERT INTO users (name) VALUES ('Alice')");
 ```
+
+#### `executeParams(sql: []const u8, params: *const ParamList) !void`
+Execute a parameterized SQL statement. **Uses bound parameters to prevent SQL injection.**
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addString("Alice");
+try params.addInt(25);
+
+try db.executeParams("INSERT INTO users (name, age) VALUES (?, ?)", &params);
+```
+
+**Security**: All parameter values are bound using SQLite's `?` placeholders, preventing SQL injection attacks.
+
+#### `executeParamsWithRowsAffected(sql: []const u8, params: *const ParamList) !i64`
+Execute a parameterized SQL statement and return the number of rows affected.
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addString("Alice");
+
+const rows_affected = try db.executeParamsWithRowsAffected(
+    "UPDATE users SET name = ? WHERE id = 1", 
+    &params
+);
+```
+
+#### `queryParams(sql: []const u8, params: *const ParamList) !QueryResult`
+Execute a parameterized SELECT query. **Uses bound parameters to prevent SQL injection.**
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+try params.addInt(25);
+
+var result = try db.queryParams("SELECT * FROM users WHERE age > ?", &params);
+defer result.deinit();
+```
+
+**Security**: All parameter values are bound using SQLite's `?` placeholders, preventing SQL injection even with user-provided values.
+
+### Parameter Binding
+
+#### `ParamList` struct
+A list of parameters for SQL prepared statements. Manages an array of parameters that can be passed to parameterized queries.
+
+```zig
+var params = ParamList.init(allocator);
+defer params.deinit();
+
+// Add parameters
+try params.addInt(42);              // Integer
+try params.addString("hello");      // String
+try params.addFloat(3.14);         // Float
+try params.addBool(true);           // Boolean
+try params.addNull();               // NULL
+
+// Or use the generic add() method
+try params.add(@as(i32, 42));      // Automatically converts to Param
+try params.add("world");            // Automatically converts to Param
+try params.add(false);              // Automatically converts to Param
+```
+
+**Methods:**
+- `init(allocator: Allocator) ParamList` - Create a new parameter list
+- `deinit() void` - Free the parameter list
+- `add(param: Param) !void` - Add a parameter (accepts Param or any supported type)
+- `addInt(value: i64) !void` - Add an integer parameter
+- `addString(value: []const u8) !void` - Add a text parameter
+- `addFloat(value: f64) !void` - Add a float parameter
+- `addBool(value: bool) !void` - Add a boolean parameter
+- `addNull() !void` - Add a NULL parameter
+- `len() usize` - Get the number of parameters
+- `reset() void` - Clear all parameters
+
+#### `Param` union
+A single parameter value for SQL prepared statements. Provides type-safe parameter binding.
+
+```zig
+const p1 = Param.int(42);
+const p2 = Param.string("hello");
+const p3 = Param.float(3.14);
+const p4 = Param.boolean(true);
+const p5 = Param.nullValue();
+
+// Or use Param.from() for automatic conversion
+const p6 = Param.from(@as(i32, 42));
+const p7 = Param.from("world");
+const p8 = Param.from(false);
+const p9 = Param.from(@as(?i64, null)); // Optional null
+```
+
+**Types:**
+- `null` - NULL parameter
+- `int64` - Integer parameter
+- `float64` - Float parameter
+- `text` - Text parameter
+- `blob` - Binary parameter
 
 #### `executeWithRowsAffected(sql: []const u8) !i64`
 Execute SQL and return the number of rows affected.

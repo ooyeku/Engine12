@@ -7,6 +7,10 @@ const model = @import("model.zig");
 const MigrationRunner = @import("migration_runner.zig").MigrationRunner;
 const Migration = @import("migration.zig").Migration;
 const MigrationRegistry = @import("migration.zig").MigrationRegistry;
+const params_mod = @import("params.zig");
+
+// Re-export comptime table name function
+pub const comptimeTableName = model.comptimeTableName;
 
 // Re-export utility modules
 pub const SqlEscape = @import("sql_escape.zig").SqlEscape;
@@ -16,6 +20,12 @@ pub const DatabasePoolConfig = @import("singleton.zig").DatabasePoolConfig;
 pub const PreparedStatementCache = @import("database.zig").PreparedStatementCache;
 pub const ConnectionPool = @import("database.zig").ConnectionPool;
 pub const ConnectionPoolConfig = @import("database.zig").ConnectionPoolConfig;
+
+// Re-export parameter binding types
+pub const Param = params_mod.Param;
+pub const ParamList = params_mod.ParamList;
+pub const fromTuple = params_mod.fromTuple;
+pub const tupleToCArray = params_mod.tupleToCArray;
 
 // Re-export migration types
 pub const MigrationType = Migration;
@@ -117,12 +127,32 @@ pub const QueryError = struct {
 pub const ORM = struct {
     db: Database,
     allocator: std.mem.Allocator,
+    stmt_cache: ?PreparedStatementCache = null,
 
     pub fn init(db: Database, allocator: std.mem.Allocator) ORM {
         return ORM{
             .db = db,
             .allocator = allocator,
+            .stmt_cache = null,
         };
+    }
+
+    /// Initialize ORM with statement caching enabled for better performance
+    /// Statement caching reuses compiled SQL statements, reducing parse overhead
+    ///
+    /// Example:
+    /// ```zig
+    /// var orm = try ORM.initWithCache(db, 512, allocator);
+    /// defer orm.deinit();
+    /// ```
+    pub fn initWithCache(db: Database, max_statements: usize, allocator: std.mem.Allocator) !ORM {
+        var orm = ORM{
+            .db = db,
+            .allocator = allocator,
+            .stmt_cache = null,
+        };
+        try orm.enableStatementCache(max_statements);
+        return orm;
     }
 
     /// Initialize ORM and return a heap-allocated pointer
@@ -148,8 +178,56 @@ pub const ORM = struct {
     /// defer orm.deinitPtr(allocator);
     /// ```
     pub fn deinitPtr(self: *ORM, allocator: std.mem.Allocator) void {
-        self.close();
+        self.deinit();
         allocator.destroy(self);
+    }
+
+    /// Deinitialize the ORM, freeing statement cache if enabled
+    pub fn deinit(self: *ORM) void {
+        if (self.stmt_cache) |*cache| {
+            cache.deinit();
+            self.stmt_cache = null;
+        }
+    }
+
+    /// Enable prepared statement caching for improved query performance
+    /// Caches compiled SQL statements for reuse, avoiding repeated parsing
+    ///
+    /// Example:
+    /// ```zig
+    /// try orm.enableStatementCache(512); // Cache up to 512 statements
+    /// ```
+    pub fn enableStatementCache(self: *ORM, max_statements: usize) !void {
+        if (self.stmt_cache != null) {
+            return; // Already enabled
+        }
+        self.stmt_cache = try PreparedStatementCache.init(&self.db, max_statements, self.allocator);
+    }
+
+    /// Disable and clear the statement cache
+    pub fn disableStatementCache(self: *ORM) void {
+        if (self.stmt_cache) |*cache| {
+            cache.deinit();
+            self.stmt_cache = null;
+        }
+    }
+
+    /// Statement cache statistics
+    pub const CacheStats = struct { hits: u64, misses: u64 };
+
+    /// Get statement cache statistics (hits and misses)
+    /// Returns null if statement caching is not enabled
+    pub fn getStatementCacheStats(self: *ORM) ?CacheStats {
+        if (self.stmt_cache) |*cache| {
+            const stats = cache.getStats();
+            return CacheStats{ .hits = stats.hits, .misses = stats.misses };
+        }
+        return null;
+    }
+
+    /// Check if statement caching is enabled
+    pub fn isStatementCacheEnabled(self: *const ORM) bool {
+        return self.stmt_cache != null;
     }
 
     pub fn initWithPool(pool: *Database.ConnectionPool, allocator: std.mem.Allocator) !ORM {
@@ -159,32 +237,37 @@ pub const ORM = struct {
     }
 
     /// Helper to get pluralized, lowercase table name for a type
+    /// Uses comptime table name caching for zero-allocation table name lookup
     /// Follows database naming conventions:
     /// - Converts struct name to lowercase
     /// - Pluralizes (User -> users, Todo -> todos, Category -> categories)
     /// - Supports custom table names via `table_name` decl
     fn getTableName(self: *ORM, comptime T: type) ![]const u8 {
-        // Check for custom table_name declaration
-        if (@hasDecl(T, "table_name")) {
-            return try self.allocator.dupe(u8, @field(T, "table_name"));
-        }
+        // Use comptime table name (no allocation needed, just dupe the static string)
+        return try self.allocator.dupe(u8, tableNameFor(T));
+    }
 
-        // Get struct name and convert to lowercase
-        const raw_table_name = model.inferTableName(T);
-        const lowercase_name = try model.toLowercaseTableName(self.allocator, raw_table_name);
-        defer self.allocator.free(lowercase_name);
-
-        // Pluralize for conventional table naming
-        return try model.pluralize(self.allocator, lowercase_name);
+    /// Get the table name for a type at compile time
+    /// This is a static string that doesn't require allocation
+    /// Supports custom table_name declaration on the type
+    ///
+    /// Example:
+    /// ```zig
+    /// const table = ORM.tableNameFor(User); // "users" (compile-time constant)
+    /// ```
+    pub fn tableNameFor(comptime T: type) []const u8 {
+        return comptime model.comptimeTableName(T);
     }
 
     pub fn create(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
+
         var fields = std.ArrayListUnmanaged([]const u8){};
         defer fields.deinit(self.allocator);
 
-        var values = std.ArrayListUnmanaged([]const u8){};
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
 
         inline for (std.meta.fields(T)) |field| {
             const is_id_field = comptime std.mem.eql(u8, field.name, "id");
@@ -192,8 +275,7 @@ pub const ORM = struct {
                 const id_value = @field(instance, field.name);
                 if (id_value != 0) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(id_value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(id_value);
                 }
             } else {
                 const value = @field(instance, field.name);
@@ -208,17 +290,9 @@ pub const ORM = struct {
                 // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(value);
                 }
             }
-        }
-
-        defer {
-            for (values.items) |item| {
-                self.allocator.free(item);
-            }
-            values.deinit(self.allocator);
         }
 
         // Validate that we have at least one field to insert
@@ -231,17 +305,22 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        const values_str = try std.mem.join(self.allocator, ", ", values.items);
-        defer self.allocator.free(values_str);
+        // Build placeholders string: "?, ?, ?"
+        var placeholders = std.ArrayListUnmanaged(u8){};
+        defer placeholders.deinit(self.allocator);
+        for (0..fields.items.len) |i| {
+            if (i > 0) try placeholders.appendSlice(self.allocator, ", ");
+            try placeholders.append(self.allocator, '?');
+        }
 
         const sql = try std.fmt.allocPrint(
             self.allocator,
             "INSERT INTO {s} ({s}) VALUES ({s})",
-            .{ table_name, fields_str, values_str },
+            .{ table_name, fields_str, placeholders.items },
         );
         defer self.allocator.free(sql);
 
-        self.db.execute(sql) catch |err| {
+        self.db.executeParams(sql, &params) catch |err| {
             std.debug.print("[ORM Error] create() failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  Fields: ", .{});
@@ -266,10 +345,12 @@ pub const ORM = struct {
     pub fn upsert(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
+
         var fields = std.ArrayListUnmanaged([]const u8){};
         defer fields.deinit(self.allocator);
 
-        var values = std.ArrayListUnmanaged([]const u8){};
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
 
         inline for (std.meta.fields(T)) |field| {
             const is_id_field = comptime std.mem.eql(u8, field.name, "id");
@@ -277,8 +358,7 @@ pub const ORM = struct {
                 const id_value = @field(instance, field.name);
                 if (id_value != 0) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(id_value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(id_value);
                 }
             } else {
                 const value = @field(instance, field.name);
@@ -293,17 +373,9 @@ pub const ORM = struct {
                 // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(value);
                 }
             }
-        }
-
-        defer {
-            for (values.items) |item| {
-                self.allocator.free(item);
-            }
-            values.deinit(self.allocator);
         }
 
         // Validate that we have at least one field to insert
@@ -316,18 +388,23 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        const values_str = try std.mem.join(self.allocator, ", ", values.items);
-        defer self.allocator.free(values_str);
+        // Build placeholders string: "?, ?, ?"
+        var placeholders = std.ArrayListUnmanaged(u8){};
+        defer placeholders.deinit(self.allocator);
+        for (0..fields.items.len) |i| {
+            if (i > 0) try placeholders.appendSlice(self.allocator, ", ");
+            try placeholders.append(self.allocator, '?');
+        }
 
         const sql = try std.fmt.allocPrint(
             self.allocator,
             "INSERT OR REPLACE INTO {s} ({s}) VALUES ({s})",
-            .{ table_name, fields_str, values_str },
+            .{ table_name, fields_str, placeholders.items },
         );
         defer self.allocator.free(sql);
 
         // INSERT OR REPLACE handles constraint violations silently
-        try self.db.execute(sql);
+        try self.db.executeParams(sql, &params);
     }
 
     /// Upsert a record silently (INSERT OR IGNORE)
@@ -341,10 +418,12 @@ pub const ORM = struct {
     pub fn upsertIgnore(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
+
         var fields = std.ArrayListUnmanaged([]const u8){};
         defer fields.deinit(self.allocator);
 
-        var values = std.ArrayListUnmanaged([]const u8){};
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
 
         inline for (std.meta.fields(T)) |field| {
             const is_id_field = comptime std.mem.eql(u8, field.name, "id");
@@ -352,8 +431,7 @@ pub const ORM = struct {
                 const id_value = @field(instance, field.name);
                 if (id_value != 0) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(id_value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(id_value);
                 }
             } else {
                 const value = @field(instance, field.name);
@@ -368,17 +446,9 @@ pub const ORM = struct {
                 // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
-                    const value_str = try self.valueToString(value);
-                    try values.append(self.allocator, value_str);
+                    try params.add(value);
                 }
             }
-        }
-
-        defer {
-            for (values.items) |item| {
-                self.allocator.free(item);
-            }
-            values.deinit(self.allocator);
         }
 
         // Validate that we have at least one field to insert
@@ -389,18 +459,23 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        const values_str = try std.mem.join(self.allocator, ", ", values.items);
-        defer self.allocator.free(values_str);
+        // Build placeholders string: "?, ?, ?"
+        var placeholders = std.ArrayListUnmanaged(u8){};
+        defer placeholders.deinit(self.allocator);
+        for (0..fields.items.len) |i| {
+            if (i > 0) try placeholders.appendSlice(self.allocator, ", ");
+            try placeholders.append(self.allocator, '?');
+        }
 
         const sql = try std.fmt.allocPrint(
             self.allocator,
             "INSERT OR IGNORE INTO {s} ({s}) VALUES ({s})",
-            .{ table_name, fields_str, values_str },
+            .{ table_name, fields_str, placeholders.items },
         );
         defer self.allocator.free(sql);
 
         // INSERT OR IGNORE handles constraint violations silently - don't return error
-        self.db.execute(sql) catch {
+        self.db.executeParams(sql, &params) catch {
             // Silently ignore errors - this is the expected behavior for upsertIgnore
         };
     }
@@ -418,12 +493,16 @@ pub const ORM = struct {
             if (i > 0) try sql_buf.writer(self.allocator).print(", ", .{});
             try sql_buf.writer(self.allocator).print("{s}", .{field.name});
         }
-        try sql_buf.writer(self.allocator).print(" FROM {s} WHERE id = {d}", .{ table_name, id });
+        try sql_buf.writer(self.allocator).print(" FROM {s} WHERE id = ?", .{table_name});
 
         const sql = try sql_buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(sql);
 
-        var result = self.db.query(sql) catch |err| {
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
+        try params.addInt(id);
+
+        var result = self.db.queryParams(sql, &params) catch |err| {
             std.debug.print("[ORM Error] find() failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  ID: {d}\n", .{id});
@@ -762,16 +841,106 @@ pub const ORM = struct {
         return result;
     }
 
+    /// Query records with parameterized WHERE clause for SQL injection prevention
+    /// The condition should use ? placeholders for values
+    ///
+    /// Example:
+    /// ```zig
+    /// var params = ParamList.init(allocator);
+    /// defer params.deinit();
+    /// try params.add(@as(i64, 25));
+    /// try params.add("active");
+    /// const users = try orm.whereParams(User, "age > ? AND status = ?", &params);
+    /// ```
+    pub fn whereParams(self: *ORM, comptime T: type, condition: []const u8, params: *const ParamList) !std.ArrayListUnmanaged(T) {
+        return self.whereParamsWithOptions(T, condition, params, .{});
+    }
+
+    /// Query records with parameterized WHERE clause and ordering options
+    /// Uses bound parameters for SQL injection prevention
+    ///
+    /// Example:
+    /// ```zig
+    /// var params = ParamList.init(allocator);
+    /// defer params.deinit();
+    /// try params.add("pending");
+    /// const todos = try orm.whereParamsWithOptions(
+    ///     Todo,
+    ///     "status = ?",
+    ///     &params,
+    ///     .{ .order_by = "created_at", .ascending = false },
+    /// );
+    /// ```
+    pub fn whereParamsWithOptions(
+        self: *ORM,
+        comptime T: type,
+        condition: []const u8,
+        params: *const ParamList,
+        options: WhereOptions,
+    ) !std.ArrayListUnmanaged(T) {
+        const table_name = try self.getTableName(T);
+        defer self.allocator.free(table_name);
+
+        // Generate SELECT with explicit column names in struct field order
+        var sql_buf = std.ArrayListUnmanaged(u8){};
+        defer sql_buf.deinit(self.allocator);
+
+        try sql_buf.writer(self.allocator).print("SELECT ", .{});
+        inline for (std.meta.fields(T), 0..) |field, i| {
+            if (i > 0) try sql_buf.writer(self.allocator).print(", ", .{});
+            try sql_buf.writer(self.allocator).print("{s}", .{field.name});
+        }
+        try sql_buf.writer(self.allocator).print(" FROM {s} WHERE {s}", .{ table_name, condition });
+
+        // Add ORDER BY clause if specified
+        if (options.order_by) |order_field| {
+            try sql_buf.writer(self.allocator).print(" ORDER BY {s}", .{order_field});
+            if (!options.ascending) {
+                try sql_buf.writer(self.allocator).print(" DESC", .{});
+            }
+        }
+
+        const sql = try sql_buf.toOwnedSlice(self.allocator);
+        defer self.allocator.free(sql);
+
+        var query_result = self.db.queryParams(sql, params) catch |err| {
+            std.debug.print("[ORM Error] whereParams() failed for table '{s}'\n", .{table_name});
+            std.debug.print("  SQL: {s}\n", .{sql});
+            std.debug.print("  Condition: {s}\n", .{condition});
+            std.debug.print("  Parameter count: {d}\n", .{params.len()});
+            if (options.order_by) |order_field| {
+                std.debug.print("  ORDER BY: {s} ({s})\n", .{ order_field, if (options.ascending) "ASC" else "DESC" });
+            }
+            std.debug.print("  Error: {}\n", .{err});
+            return err;
+        };
+        defer query_result.deinit();
+
+        const result = query_result.toArrayList(T) catch |err| {
+            const field_count = std.meta.fields(T).len;
+            const column_count = query_result.columnCount();
+
+            std.debug.print("[ORM Error] whereParams() deserialization failed for table '{s}'\n", .{table_name});
+            std.debug.print("  SQL: {s}\n", .{sql});
+            std.debug.print("  Condition: {s}\n", .{condition});
+            std.debug.print("  Expected {d} fields, got {d} columns\n", .{ field_count, column_count });
+            std.debug.print("  Error: {}\n", .{err});
+
+            return err;
+        };
+
+        return result;
+    }
+
     pub fn update(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
-        var updates = std.ArrayListUnmanaged([]const u8){};
-        defer {
-            for (updates.items) |item| {
-                self.allocator.free(item);
-            }
-            updates.deinit(self.allocator);
-        }
+
+        var field_names = std.ArrayListUnmanaged([]const u8){};
+        defer field_names.deinit(self.allocator);
+
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
 
         var id_value: i64 = 0;
 
@@ -792,19 +961,13 @@ pub const ORM = struct {
 
             // Skip optional fields that are null (don't update them)
             if (!is_optional_null) {
-                const value_str = try self.valueToString(value);
-                defer self.allocator.free(value_str);
-                const update_str = try std.fmt.allocPrint(
-                    self.allocator,
-                    "{s} = {s}",
-                    .{ field.name, value_str },
-                );
-                try updates.append(self.allocator, update_str);
+                try field_names.append(self.allocator, field.name);
+                try params.add(value);
             }
         }
 
         // Validate that we have at least one field to update
-        if (updates.items.len == 0) {
+        if (field_names.items.len == 0) {
             std.debug.print("[ORM Error] update() failed for table '{s}'\n", .{table_name});
             std.debug.print("  Reason: No fields to update (all fields are null)\n", .{});
             std.debug.print("  ID: {d}\n", .{id_value});
@@ -818,24 +981,33 @@ pub const ORM = struct {
             return error.InvalidArgument;
         }
 
-        const updates_str = try std.mem.join(self.allocator, ", ", updates.items);
-        defer self.allocator.free(updates_str);
+        // Add id as the last parameter (for WHERE clause)
+        try params.addInt(id_value);
+
+        // Build SET clause: "f1 = ?, f2 = ?"
+        var set_clause = std.ArrayListUnmanaged(u8){};
+        defer set_clause.deinit(self.allocator);
+        for (field_names.items, 0..) |name, i| {
+            if (i > 0) try set_clause.appendSlice(self.allocator, ", ");
+            try set_clause.appendSlice(self.allocator, name);
+            try set_clause.appendSlice(self.allocator, " = ?");
+        }
 
         const sql = try std.fmt.allocPrint(
             self.allocator,
-            "UPDATE {s} SET {s} WHERE id = {d}",
-            .{ table_name, updates_str, id_value },
+            "UPDATE {s} SET {s} WHERE id = ?",
+            .{ table_name, set_clause.items },
         );
         defer self.allocator.free(sql);
 
-        self.db.execute(sql) catch |err| {
+        self.db.executeParams(sql, &params) catch |err| {
             std.debug.print("[ORM Error] update() failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  ID: {d}\n", .{id_value});
             std.debug.print("  Fields updated: ", .{});
-            for (updates.items, 0..) |update_str, i| {
+            for (field_names.items, 0..) |name, i| {
                 if (i > 0) std.debug.print(", ", .{});
-                std.debug.print("{s}", .{update_str});
+                std.debug.print("{s}", .{name});
             }
             std.debug.print("\n", .{});
             std.debug.print("  Error: {}\n", .{err});
@@ -848,12 +1020,16 @@ pub const ORM = struct {
         defer self.allocator.free(table_name);
         const sql = try std.fmt.allocPrint(
             self.allocator,
-            "DELETE FROM {s} WHERE id = {d}",
-            .{ table_name, id },
+            "DELETE FROM {s} WHERE id = ?",
+            .{table_name},
         );
         defer self.allocator.free(sql);
 
-        try self.db.execute(sql);
+        var params = ParamList.init(self.allocator);
+        defer params.deinit();
+        try params.addInt(id);
+
+        try self.db.executeParams(sql, &params);
     }
 
     pub fn query(self: *ORM, sql: []const u8) !QueryResult {
@@ -919,6 +1095,7 @@ pub const ORM = struct {
     }
 
     pub fn close(self: *ORM) void {
+        self.deinit();
         self.db.close();
     }
 
@@ -1554,3 +1731,194 @@ test "ORM update with id 0 should error" {
     const result = orm.update(User, user);
     try std.testing.expectError(error.InvalidArgument, result);
 }
+
+test "ORM statement cache integration" {
+    const allocator = std.testing.allocator;
+
+    const User = struct {
+        id: i64,
+        name: []const u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var orm = try ORM.initWithCache(db, 100, allocator);
+    defer orm.deinit();
+
+    // Verify cache is enabled
+    try std.testing.expect(orm.isStatementCacheEnabled());
+
+    // Perform some operations
+    try orm.create(User, .{ .id = 0, .name = "Alice" });
+    try orm.create(User, .{ .id = 0, .name = "Bob" });
+
+    // Check cache stats
+    const stats = orm.getStatementCacheStats();
+    try std.testing.expect(stats != null);
+}
+
+test "ORM SQL injection prevention with create" {
+    const allocator = std.testing.allocator;
+
+    const User = struct {
+        id: i64,
+        name: []const u8,
+        notes: []const u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, notes TEXT)");
+
+    var orm = ORM.init(db, allocator);
+
+    // Attempt SQL injection - should be safely handled
+    const malicious_user = User{
+        .id = 0,
+        .name = "'; DROP TABLE users; --",
+        .notes = "test",
+    };
+
+    try orm.create(User, malicious_user);
+
+    // Table should still exist
+    var result = try orm.db.query("SELECT COUNT(*) FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    }
+
+    // Verify the malicious string was stored as data, not executed
+    var check = try orm.findAll(User);
+    defer check.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), check.items.len);
+    try std.testing.expectEqualStrings("'; DROP TABLE users; --", check.items[0].name);
+    allocator.free(check.items[0].name);
+    allocator.free(check.items[0].notes);
+}
+
+test "ORM whereParams" {
+    const allocator = std.testing.allocator;
+
+    const User = struct {
+        id: i64,
+        name: []const u8,
+        age: i64,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var orm = ORM.init(db, allocator);
+
+    // Create test users
+    try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
+    try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
+    try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
+
+    // Query with parameterized WHERE
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addInt(25);
+
+    var results = try orm.whereParams(User, "age = ?", &params);
+    defer {
+        for (results.items) |user| {
+            allocator.free(user.name);
+        }
+        results.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), results.items.len);
+}
+
+test "ORM whereParamsWithOptions" {
+    const allocator = std.testing.allocator;
+
+    const User = struct {
+        id: i64,
+        name: []const u8,
+        age: i64,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var orm = ORM.init(db, allocator);
+
+    // Create test users
+    try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
+    try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
+    try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
+
+    // Query with parameterized WHERE and ordering
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addInt(20);
+
+    var results = try orm.whereParamsWithOptions(User, "age > ?", &params, .{
+        .order_by = "name",
+        .ascending = true,
+    });
+    defer {
+        for (results.items) |user| {
+            allocator.free(user.name);
+        }
+        results.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), results.items.len);
+    try std.testing.expectEqualStrings("Alice", results.items[0].name);
+}
+
+test "ORM comptime table name" {
+    const User = struct {
+        id: i64,
+        name: []const u8,
+    };
+
+    const table_name = ORM.tableNameFor(User);
+    try std.testing.expectEqualStrings("users", table_name);
+}
+
+test "ORM comptime table name with custom declaration" {
+    const CustomUser = struct {
+        id: i64,
+        name: []const u8,
+        pub const table_name = "custom_users_table";
+    };
+
+    const table_name = ORM.tableNameFor(CustomUser);
+    try std.testing.expectEqualStrings("custom_users_table", table_name);
+}
+
+test "ORM enable and disable statement cache" {
+    const allocator = std.testing.allocator;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    var orm = ORM.init(db, allocator);
+    defer orm.deinit();
+
+    // Initially no cache
+    try std.testing.expect(!orm.isStatementCacheEnabled());
+    try std.testing.expect(orm.getStatementCacheStats() == null);
+
+    // Enable cache
+    try orm.enableStatementCache(100);
+    try std.testing.expect(orm.isStatementCacheEnabled());
+
+    // Disable cache
+    orm.disableStatementCache();
+    try std.testing.expect(!orm.isStatementCacheEnabled());
+}
+
