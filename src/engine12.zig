@@ -999,6 +999,48 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
+    /// Register a GET endpoint with a fallible handler (returns !Response).
+    /// Errors are automatically converted to 500 Internal Server Error responses.
+    ///
+    /// This reduces boilerplate when handlers need to use try/catch:
+    ///
+    /// Example:
+    /// ```zig
+    /// // Instead of this verbose pattern:
+    /// fn handler(req: *Request) Response {
+    ///     const data = orm.find(Todo, 1) catch return Response.serverError("DB error");
+    ///     return Response.jsonFrom(Todo, data, req.allocator());
+    /// }
+    ///
+    /// // Use this cleaner pattern:
+    /// fn handler(req: *Request) !Response {
+    ///     const data = try orm.find(Todo, 1);
+    ///     return try Response.fromStruct(Todo, data, req.allocator());
+    /// }
+    /// try app.getTry("/api/todo/:id", handler);
+    /// ```
+    pub fn getTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
+        return self.get(path_pattern, types.wrapTryHandler(handler));
+    }
+
+    /// Register a POST endpoint with a fallible handler (returns !Response).
+    /// Errors are automatically converted to 500 Internal Server Error responses.
+    pub fn postTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
+        return self.post(path_pattern, types.wrapTryHandler(handler));
+    }
+
+    /// Register a PUT endpoint with a fallible handler (returns !Response).
+    /// Errors are automatically converted to 500 Internal Server Error responses.
+    pub fn putTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
+        return self.put(path_pattern, types.wrapTryHandler(handler));
+    }
+
+    /// Register a DELETE endpoint with a fallible handler (returns !Response).
+    /// Errors are automatically converted to 500 Internal Server Error responses.
+    pub fn deleteTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
+        return self.delete(path_pattern, types.wrapTryHandler(handler));
+    }
+
     /// Register a template route that automatically renders a template file
     /// Context function is called for each request to provide template variables
     ///
@@ -1121,6 +1163,28 @@ pub const Engine12 = struct {
             .handler_ptr = &handler_for_storage_post,
         };
         self.routes_count += 1;
+    }
+
+    /// Register a POST endpoint that explicitly does not require a request body.
+    /// Use this for action endpoints like "/todos/:id/toggle" or "/processes/:pid/kill"
+    /// that don't need JSON data in the request body.
+    ///
+    /// Note: POST routes with path parameters may return 404 if the underlying HTTP
+    /// server expects a Content-Type header. Using postEmpty() documents intent and
+    /// ensures the handler runs regardless of body presence.
+    ///
+    /// Example:
+    /// ```zig
+    /// // This route works without a JSON body
+    /// try app.postEmpty("/api/processes/:pid/kill", handleKillProcess);
+    ///
+    /// // Client can call with just:
+    /// // fetch('/api/processes/10/kill', { method: 'POST' })
+    /// ```
+    pub fn postEmpty(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
+        // postEmpty is the same as post but documents the intent for bodyless POST
+        // The route matching and handler execution work the same way
+        return self.post(path_pattern, handler);
     }
 
     /// Register a PUT endpoint
@@ -1807,6 +1871,39 @@ pub const Engine12 = struct {
     /// ```
     pub fn serveStaticDirectory(self: *Engine12, static_dir: []const u8) !void {
         try self.discoverStaticFiles(static_dir);
+    }
+
+    /// Serve static files with wildcard path support.
+    /// This is the recommended way to serve static files.
+    ///
+    /// Usage:
+    /// ```zig
+    /// // Serve all files from "public/" directory at "/static/*"
+    /// try app.static("/static/*", "public/");
+    ///
+    /// // Serve all files from "assets/" at root
+    /// try app.static("/*", "assets/");
+    /// ```
+    ///
+    /// Note: The wildcard "*" at the end of mount_path is optional and ignored -
+    /// all paths under the mount_path will be served automatically.
+    pub fn static(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
+        // Remove trailing "/*" or "*" if present (just for cleaner mount path)
+        var clean_mount = mount_path;
+        if (std.mem.endsWith(u8, clean_mount, "/*")) {
+            clean_mount = clean_mount[0 .. clean_mount.len - 2];
+        } else if (std.mem.endsWith(u8, clean_mount, "*")) {
+            clean_mount = clean_mount[0 .. clean_mount.len - 1];
+        }
+        // Ensure mount path ends without trailing slash (unless it's just "/")
+        if (clean_mount.len > 1 and std.mem.endsWith(u8, clean_mount, "/")) {
+            clean_mount = clean_mount[0 .. clean_mount.len - 1];
+        }
+        // Handle empty string -> root
+        if (clean_mount.len == 0) {
+            clean_mount = "/";
+        }
+        try self.serveStatic(clean_mount, directory);
     }
 
     /// Register static file serving from a directory

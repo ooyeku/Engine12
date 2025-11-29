@@ -600,6 +600,163 @@ pub const ORM = struct {
         return Result(T).init(items, self.allocator);
     }
 
+    /// Convenience method to find a single record by ID.
+    /// Returns the record directly (caller owns any string fields).
+    /// This is an alias for find() with clearer naming.
+    ///
+    /// Example:
+    /// ```zig
+    /// if (try orm.findOne(Todo, 1)) |todo| {
+    ///     defer allocator.free(todo.title);
+    ///     std.debug.print("Found: {s}\n", .{todo.title});
+    /// }
+    /// ```
+    pub fn findOne(self: *ORM, comptime T: type, id: i64) !?T {
+        return self.find(T, id);
+    }
+
+    /// Find a single record matching a condition.
+    /// Returns the first match or null if no records match.
+    /// Caller owns any string fields in the returned record.
+    ///
+    /// Example:
+    /// ```zig
+    /// if (try orm.whereOne(Todo, "title = 'Buy milk'")) |todo| {
+    ///     defer allocator.free(todo.title);
+    ///     std.debug.print("Found: {s}\n", .{todo.title});
+    /// }
+    /// ```
+    pub fn whereOne(self: *ORM, comptime T: type, condition: []const u8) !?T {
+        var result = try self.whereManaged(T, condition);
+        defer result.deinit();
+
+        if (result.first()) |item| {
+            // Copy the item so it survives result.deinit()
+            var return_value: T = undefined;
+            inline for (std.meta.fields(T)) |field| {
+                const field_type = @TypeOf(@field(item, field.name));
+                if (@typeInfo(field_type) == .pointer) {
+                    const ptr_info = @typeInfo(field_type).pointer;
+                    if (ptr_info.size == .slice and ptr_info.child == u8) {
+                        @field(return_value, field.name) = try self.allocator.dupe(u8, @field(item, field.name));
+                    } else {
+                        @field(return_value, field.name) = @field(item, field.name);
+                    }
+                } else if (@typeInfo(field_type) == .optional) {
+                    const opt_info = @typeInfo(field_type).optional;
+                    if (@typeInfo(opt_info.child) == .pointer) {
+                        const ptr_info = @typeInfo(opt_info.child).pointer;
+                        if (ptr_info.size == .slice and ptr_info.child == u8) {
+                            if (@field(item, field.name)) |val| {
+                                @field(return_value, field.name) = try self.allocator.dupe(u8, val);
+                            } else {
+                                @field(return_value, field.name) = null;
+                            }
+                        } else {
+                            @field(return_value, field.name) = @field(item, field.name);
+                        }
+                    } else {
+                        @field(return_value, field.name) = @field(item, field.name);
+                    }
+                } else {
+                    @field(return_value, field.name) = @field(item, field.name);
+                }
+            }
+            return return_value;
+        }
+        return null;
+    }
+
+    /// Find a single record matching a parameterized condition.
+    /// Returns the first match or null if no records match.
+    /// Caller owns any string fields in the returned record.
+    ///
+    /// Example:
+    /// ```zig
+    /// var params = ParamList.init(allocator);
+    /// defer params.deinit();
+    /// try params.add("admin");
+    /// if (try orm.whereOneParams(User, "role = ?", &params)) |user| {
+    ///     defer allocator.free(user.name);
+    ///     std.debug.print("Found admin: {s}\n", .{user.name});
+    /// }
+    /// ```
+    pub fn whereOneParams(self: *ORM, comptime T: type, condition: []const u8, params: *const ParamList) !?T {
+        var results = try self.whereParams(T, condition, params);
+        defer {
+            // Free all but the first item
+            for (results.items[1..]) |item| {
+                inline for (std.meta.fields(T)) |field| {
+                    const field_type = @TypeOf(@field(item, field.name));
+                    if (@typeInfo(field_type) == .pointer) {
+                        const ptr_info = @typeInfo(field_type).pointer;
+                        if (ptr_info.size == .slice and ptr_info.child == u8) {
+                            self.allocator.free(@field(item, field.name));
+                        }
+                    } else if (@typeInfo(field_type) == .optional) {
+                        const opt_info = @typeInfo(field_type).optional;
+                        if (@typeInfo(opt_info.child) == .pointer) {
+                            const ptr_info = @typeInfo(opt_info.child).pointer;
+                            if (ptr_info.size == .slice and ptr_info.child == u8) {
+                                if (@field(item, field.name)) |val| {
+                                    self.allocator.free(val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            results.deinit(self.allocator);
+        }
+
+        if (results.items.len > 0) {
+            return results.items[0]; // Caller owns this
+        }
+        return null;
+    }
+
+    /// Execute multiple operations atomically within a transaction.
+    /// If the callback returns an error, the transaction is rolled back.
+    /// If the callback succeeds, the transaction is committed.
+    ///
+    /// Example:
+    /// ```zig
+    /// try orm.withTransaction(struct {
+    ///     fn run(trans: *database.Transaction) !void {
+    ///         try trans.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
+    ///         try trans.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
+    ///     }
+    /// }.run);
+    /// ```
+    pub fn withTransaction(self: *ORM, comptime callback: fn (*database.Transaction) anyerror!void) !void {
+        var trans = try self.db.beginTransaction();
+        defer trans.deinit();
+
+        callback(&trans) catch |err| {
+            trans.rollback() catch {};
+            return err;
+        };
+
+        try trans.commit();
+    }
+
+    /// Execute multiple operations atomically within a transaction, returning a value.
+    /// If the callback returns an error, the transaction is rolled back.
+    /// If the callback succeeds, the transaction is committed and the value is returned.
+    ///
+    /// Example:
+    /// ```zig
+    /// const new_id = try orm.withTransactionResult(i64, struct {
+    ///     fn run(trans: *database.Transaction) !i64 {
+    ///         try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
+    ///         return 42; // Return the new ID or computed value
+    ///     }
+    /// }.run);
+    /// ```
+    pub fn withTransactionResult(self: *ORM, comptime T: type, comptime callback: fn (*database.Transaction) anyerror!T) !T {
+        return self.transaction(T, callback);
+    }
+
     pub fn findAll(self: *ORM, comptime T: type) !std.ArrayListUnmanaged(T) {
         const table_name = try self.getTableName(T);
         defer self.allocator.free(table_name);
@@ -1921,4 +2078,3 @@ test "ORM enable and disable statement cache" {
     orm.disableStatementCache();
     try std.testing.expect(!orm.isStatementCacheEnabled());
 }
-

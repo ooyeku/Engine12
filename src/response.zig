@@ -228,19 +228,19 @@ pub const Response = struct {
     pub fn fromStruct(comptime T: type, value: T, allocator: std.mem.Allocator) !Response {
         const json_str = try json_module.Json.serialize(T, value, allocator);
         defer allocator.free(json_str);
-        
+
         // Copy to pooled memory for response (reusable buffers)
         const persistent_body = dupePersistent(json_str) catch {
             return error.OutOfMemory;
         };
-        
+
         var resp = Response{
             .inner = ziggurat.response.Response.json(persistent_body),
             ._persistent_body = persistent_body,
             ._custom_headers = null,
             ._status_code = null,
         };
-        
+
         return resp.withContentType("application/json");
     }
 
@@ -256,19 +256,19 @@ pub const Response = struct {
     pub fn fromStructArray(comptime T: type, items: []const T, allocator: std.mem.Allocator) !Response {
         const json_str = try json_module.Json.serializeArray(T, items, allocator);
         defer allocator.free(json_str);
-        
+
         // Copy to pooled memory for response (reusable buffers)
         const persistent_body = dupePersistent(json_str) catch {
             return error.OutOfMemory;
         };
-        
+
         var resp = Response{
             .inner = ziggurat.response.Response.json(persistent_body),
             ._persistent_body = persistent_body,
             ._custom_headers = null,
             ._status_code = null,
         };
-        
+
         return resp.withContentType("application/json");
     }
 
@@ -602,6 +602,58 @@ pub const Response = struct {
             return Response.serverError("Failed to allocate response");
         };
         allocator.free(json_str);
+        return Response.json(persistent_json);
+    }
+
+    /// Create a JSON response from std.json.Value.
+    /// Useful for dynamic/heterogeneous JSON structures that can't be represented as a struct.
+    ///
+    /// Example:
+    /// ```zig
+    /// var obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+    /// try obj.object.put("count", .{ .integer = 42 });
+    /// try obj.object.put("name", .{ .string = "test" });
+    /// return Response.fromJsonValue(obj, allocator);
+    /// ```
+    pub fn fromJsonValue(value: std.json.Value, allocator: std.mem.Allocator) Response {
+        // Stringify the JSON value
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+
+        std.json.stringify(value, .{}, output.writer()) catch {
+            return Response.serverError("Failed to serialize JSON value");
+        };
+
+        // Copy to persistent memory
+        const persistent_json = dupePersistent(output.items) catch {
+            return Response.serverError("Failed to allocate JSON response");
+        };
+
+        return Response.json(persistent_json);
+    }
+
+    /// Create a JSON response from std.json.Value with custom formatting options.
+    ///
+    /// Example:
+    /// ```zig
+    /// return Response.fromJsonValueFmt(value, .{ .whitespace = .indent_2 }, allocator);
+    /// ```
+    pub fn fromJsonValueFmt(
+        value: std.json.Value,
+        options: std.json.StringifyOptions,
+        allocator: std.mem.Allocator,
+    ) Response {
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+
+        std.json.stringify(value, options, output.writer()) catch {
+            return Response.serverError("Failed to serialize JSON value");
+        };
+
+        const persistent_json = dupePersistent(output.items) catch {
+            return Response.serverError("Failed to allocate JSON response");
+        };
+
         return Response.json(persistent_json);
     }
 
@@ -939,13 +991,13 @@ pub const Response = struct {
         const stat = file.stat() catch |err| {
             return err;
         };
-        
+
         const file_size = @as(usize, @intCast(stat.size));
         const contents = allocator.alloc(u8, file_size) catch |err| {
             return err;
         };
         defer allocator.free(contents);
-        
+
         const bytes_read = file.readAll(contents) catch |err| {
             return err;
         };
@@ -1054,7 +1106,7 @@ pub const Response = struct {
         markBufferForRelease(self._persistent_body);
         return self.inner;
     }
-    
+
     /// Check if this response has custom headers stored
     /// Returns true if there are custom headers that would need to be applied
     pub fn hasCustomHeaders(self: Response) bool {
@@ -1063,7 +1115,7 @@ pub const Response = struct {
         }
         return false;
     }
-    
+
     /// Get custom headers for manual application if needed
     /// This allows external code to apply headers that ziggurat doesn't support directly
     pub fn getCustomHeaders(self: Response) ?std.StringHashMap([]const u8) {

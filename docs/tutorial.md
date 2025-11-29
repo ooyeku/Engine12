@@ -17,6 +17,7 @@ This tutorial will guide you through building a complete web application with En
   - [4.2 Define Todo Model](#42-define-todo-model)
   - [4.3 Update Handlers](#43-update-handlers)
   - [4.4 Initialize Database](#44-initialize-database)
+  - [4.5 ORM Convenience Methods](#45-orm-convenience-methods-new)
 - [Step 5: Templates](#step-5-templates)
   - [5.1 Create Template File](#51-create-template-file)
   - [5.2 Render Template](#52-render-template)
@@ -44,13 +45,18 @@ This tutorial will guide you through building a complete web application with En
   - [9.2 Pagination Helper](#92-pagination-helper)
   - [9.3 Error Response Helpers](#93-error-response-helpers)
   - [9.4 JSON Serialization](#94-json-serialization)
+  - [9.5 File Responses](#95-file-responses)
+  - [9.6 TryHandler Pattern](#96-tryhandler-pattern-new)
+  - [9.7 Response.fromJsonValue](#97-responsefromjsonvalue-new)
+  - [9.8 Typed Context Accessors](#98-typed-context-accessors-new)
+  - [9.9 Migration Schema Helpers](#99-migration-schema-helpers-new)
 - [Step 10: Using Valves](#step-10-using-valves)
   - [10.1 Creating a Simple Valve](#101-creating-a-simple-valve)
   - [10.2 Registering a Valve](#102-registering-a-valve)
   - [10.3 Creating a Valve with Routes](#103-creating-a-valve-with-routes)
   - [10.4 Using Multiple Capabilities](#104-using-multiple-capabilities)
-  - [10.5 Using Builtin Valves](#105-using-builtin-valves)
-  - [10.6 BasicAuthValve Example](#106-basicauthvalve-example)
+  - [10.5 Lifecycle Hooks](#105-lifecycle-hooks)
+  - [10.6 Using Builtin Valves](#106-using-builtin-valves)
   - [10.7 Best Practices](#107-best-practices)
 - [Step 11: Using HandlerCtx](#step-11-using-handlerctx)
   - [11.1 Introduction to HandlerCtx](#111-introduction-to-handlerctx)
@@ -59,9 +65,6 @@ This tutorial will guide you through building a complete web application with En
   - [11.4 Parameter Parsing](#114-parameter-parsing)
   - [11.5 Caching with HandlerCtx](#115-caching-with-handlerctx)
   - [11.6 Before and After Comparison](#116-before-and-after-comparison)
-  - [10.5 Lifecycle Hooks](#105-lifecycle-hooks)
-  - [10.6 Using Builtin Valves](#106-using-builtin-valves)
-  - [10.7 Best Practices](#107-best-practices)
 - [Step 12: Using Auto-Discovery Features](#step-12-using-auto-discovery-features)
   - [12.1 Migration Auto-Discovery](#121-migration-auto-discovery)
   - [12.2 Static File Auto-Discovery](#122-static-file-auto-discovery)
@@ -72,6 +75,11 @@ This tutorial will guide you through building a complete web application with En
   - [13.2 Detecting HTMX Requests](#132-detecting-htmx-requests)
   - [13.3 Creating HTMX Responses](#133-creating-htmx-responses)
   - [13.4 Complete Example](#134-complete-example)
+- [Step 14: Service Registry Pattern](#step-14-service-registry-pattern-new)
+  - [14.1 Defining a Service](#141-defining-a-service)
+  - [14.2 Using the Service Registry](#142-using-the-service-registry)
+  - [14.3 Restart Policies](#143-restart-policies)
+  - [14.4 Health Monitoring](#144-health-monitoring)
 - [Next Steps](#next-steps)
 
 ## Prerequisites
@@ -404,6 +412,9 @@ const AppUser = struct {
 - `whereManaged()` - Automatic memory management for query results
 - Improved error messages with SQL, table name, and context
 - Automatic table name pluralization
+- `findOne(T, id)` - Simpler single-record lookup returning `?T` directly
+- `whereOne(T, condition)` - Returns `?T` for single-result queries  
+- `withTransaction(callback)` - Execute operations atomically
 
 ### 4.1 Initialize Database
 
@@ -615,6 +626,82 @@ pub fn main() !void {
 **Security**: All ORM operations (`create()`, `update()`, `find()`, `delete()`) use parameter binding to prevent SQL injection. User input is always safely bound as parameters, never interpolated into SQL strings.
 
 **Performance**: Statement caching is automatically enabled when using `initDatabaseWithMigrations()`, improving query performance by reusing compiled SQL statements.
+
+### 4.5 ORM Convenience Methods (New!)
+
+Engine12 provides convenience methods that simplify common ORM patterns:
+
+#### `findOne` - Simpler Single-Record Lookup
+
+Instead of the verbose `find()` pattern:
+
+```zig
+// Old pattern (verbose)
+var todo = orm.find(Todo, id) catch {
+    return Response.notFound();
+} orelse {
+    return Response.notFound();
+};
+
+// New pattern (cleaner)
+var todo = orm.findOne(Todo, id) catch {
+    return Response.notFound();
+} orelse {
+    return Response.notFound();
+};
+```
+
+The `findOne` method returns `?T` directly without requiring manual memory management for the result set.
+
+#### `whereOne` - Single-Result Conditional Query
+
+For queries that should return at most one result:
+
+```zig
+// Find a user by email
+const user = orm.whereOne(User, "email = 'john@example.com'") catch {
+    return Response.serverError("Database error");
+} orelse {
+    return Response.notFound("User not found");
+};
+
+// With parameters
+const user = orm.whereOneParams(User, "email = ?", &params) catch {
+    return Response.serverError("Database error");
+} orelse {
+    return Response.notFound("User not found");
+};
+```
+
+#### `withTransaction` - Atomic Operations
+
+Execute multiple operations atomically:
+
+```zig
+// Execute operations in a transaction
+orm.withTransaction(struct {
+    pub fn call(tx_orm: *ORM) !void {
+        // All operations in here are atomic
+        try tx_orm.create(Order, order);
+        try tx_orm.create(OrderItem, item1);
+        try tx_orm.create(OrderItem, item2);
+        try tx_orm.update(Inventory, updated_inventory);
+    }
+}.call) catch |err| {
+    // Transaction automatically rolled back on error
+    return Response.serverError("Transaction failed");
+};
+
+// Or with a result
+const result = orm.withTransactionResult(i64, struct {
+    pub fn call(tx_orm: *ORM) !i64 {
+        try tx_orm.create(Order, order);
+        return tx_orm.db.lastInsertRowId();
+    }
+}.call) catch |err| {
+    return Response.serverError("Transaction failed");
+};
+```
 
 ## Step 5: Templates
 
@@ -913,6 +1000,48 @@ try logger.fromRequest(req, .info, "Request processed").log();
 
 // Logging errors
 try logger.logError("Database connection failed").log();
+```
+
+#### Convenience Logging Methods (New!)
+
+For simpler logging without the builder pattern, use convenience methods:
+
+```zig
+// Printf-style logging - simplest for formatted messages
+logger.infof("User {} logged in from {s}", .{user_id, ip_address});
+logger.warnf("Request took {}ms", .{duration_ms});
+logger.errorf("Failed to connect to {s}:{}", .{host, port});
+logger.debugf("Processing item {}", .{item_id});
+
+// Simple message logging - no formatting needed
+logger.infoMsg("Server started successfully");
+logger.warnMsg("High memory usage detected");
+logger.errorMsg("Database connection lost");
+logger.debugMsg("Entering critical section");
+
+// Structured logging with fields (convenience method)
+logger.infoWithFields("User action", &[_]Logger.Field{
+    .{ .key = "user_id", .value = "123" },
+    .{ .key = "action", .value = "login" },
+});
+```
+
+These convenience methods are especially useful in background tasks:
+
+```zig
+fn cleanupOldTodos() void {
+    const logger = getLogger() orelse return;
+    
+    // Old verbose pattern:
+    // if (logger.info("Cleanup started")) |entry| { entry.log(); }
+    
+    // New simple pattern:
+    logger.infoMsg("Cleanup started");
+    
+    // ... cleanup logic ...
+    
+    logger.infof("Cleaned up {} old todos", .{count});
+}
 ```
 
 #### Multiple Log Destinations
@@ -1302,6 +1431,144 @@ return try Response.fromFile("static/report.pdf", allocator);
 
 // Create a download response
 return Response.download("report.pdf", pdf_data);
+```
+
+### 9.6 TryHandler Pattern (New!)
+
+For handlers that may fail, use `getTry`, `postTry`, etc. to simplify error handling:
+
+```zig
+// Old pattern (verbose error handling)
+fn handleGetUser(req: *Request) Response {
+    const id = req.paramTyped(i64, "id") catch {
+        return Response.errorResponse("Invalid ID", 400);
+    };
+    const orm = getORM() catch {
+        return Response.serverError("Database error");
+    };
+    const user = orm.findOne(User, id) catch {
+        return Response.serverError("Query failed");
+    } orelse {
+        return Response.notFound("User not found");
+    };
+    return Response.fromStruct(User, user, req.allocator()) catch {
+        return Response.serverError("Serialization failed");
+    };
+}
+
+// New pattern with TryHandler (cleaner)
+fn handleGetUserTry(req: *Request) !Response {
+    const id = try req.paramTyped(i64, "id");
+    const orm = try getORM();
+    const user = try orm.findOne(User, id) orelse return Response.notFound("User not found");
+    return try Response.fromStruct(User, user, req.allocator());
+}
+
+// Register with automatic error conversion
+try app.getTry("/users/:id", handleGetUserTry);
+try app.postTry("/users", handleCreateUserTry);
+try app.putTry("/users/:id", handleUpdateUserTry);
+try app.deleteTry("/users/:id", handleDeleteUserTry);
+```
+
+Errors are automatically converted to appropriate HTTP responses (400 for validation, 500 for internal errors).
+
+### 9.7 Response.fromJsonValue (New!)
+
+For dynamic JSON responses (e.g., mixed types), use `fromJsonValue`:
+
+```zig
+const std = @import("std");
+
+fn handleDynamicJson(req: *Request) Response {
+    const allocator = req.allocator();
+    
+    // Build dynamic JSON using std.json.Value
+    var obj = std.json.ObjectMap.init(allocator);
+    try obj.put("status", .{ .string = "success" });
+    try obj.put("count", .{ .integer = 42 });
+    
+    // Add dynamic array
+    var arr = std.json.Array.init(allocator);
+    try arr.append(.{ .string = "item1" });
+    try arr.append(.{ .integer = 123 });
+    try obj.put("items", .{ .array = arr });
+    
+    const value = std.json.Value{ .object = obj };
+    
+    // Serialize directly to JSON response
+    return Response.fromJsonValue(value, allocator) catch {
+        return Response.serverError("Serialization failed");
+    };
+}
+```
+
+### 9.8 Typed Context Accessors (New!)
+
+Pass typed data between middleware and handlers:
+
+```zig
+// In middleware - set typed context
+fn authMiddleware(req: *Request) MiddlewareResult {
+    if (validateToken(req)) |user| {
+        // Store typed user in request context
+        req.setTyped(User, "current_user", &user);
+        return .proceed;
+    }
+    return .abort;
+}
+
+// In handler - retrieve typed context
+fn handleProfile(req: *Request) Response {
+    // Get typed user from context
+    const user = req.getTyped(User, "current_user") orelse {
+        return Response.unauthorized("Not authenticated");
+    };
+    
+    return Response.fromStruct(User, user.*, req.allocator()) catch {
+        return Response.serverError("Error");
+    };
+}
+
+// For value types (not pointers)
+req.setTypedValue(i64, "user_id", 123);
+const user_id = req.getTypedValue(i64, "user_id") orelse 0;
+```
+
+### 9.9 Migration Schema Helpers (New!)
+
+Idempotent migration helpers for safer migrations:
+
+```zig
+const Schema = @import("engine12").orm.Schema;
+
+pub fn up(db: *Database) !void {
+    // Create table only if it doesn't exist
+    try Schema.createTableIfNotExists(db, "users", 
+        \\id INTEGER PRIMARY KEY,
+        \\email TEXT UNIQUE NOT NULL,
+        \\created_at INTEGER
+    );
+    
+    // Add column only if it doesn't exist
+    try Schema.addColumnIfNotExists(db, "users", "verified", "INTEGER DEFAULT 0");
+    
+    // Create index only if it doesn't exist
+    try Schema.createIndexIfNotExists(db, "users", "idx_users_email", &[_][]const u8{"email"}, true);
+}
+
+// Schema diffing for validation
+const diff = try Schema.diff(db, expected_schema, allocator);
+defer diff.deinit();
+
+if (diff.hasDifferences()) {
+    for (diff.missing_tables) |table| {
+        std.log.warn("Missing table: {s}", .{table});
+    }
+    for (diff.missing_columns) |col| {
+        std.log.warn("Missing column: {s}.{s}", .{col.table, col.column});
+    }
+}
 ```
 
 ## Step 10: Using Valves
@@ -2355,6 +2622,134 @@ fn handleDeleteTodo(req: *Request) Response {
 
 See the [API Reference](api-reference.md#htmx-integration) for complete HTMX API documentation.
 
+## Step 14: Service Registry Pattern (New!)
+
+Engine12 provides a built-in service registry for managing long-running services and daemons. This is useful for background workers, scheduled tasks, and microservice architectures.
+
+### 14.1 Defining a Service
+
+Services implement the `Service` interface with lifecycle methods:
+
+```zig
+const E12 = @import("engine12");
+const Service = E12.services.Service;
+const ManagedService = E12.services.ManagedService;
+const ServiceRegistry = E12.services.ServiceRegistry;
+
+const EmailService = struct {
+    name: []const u8 = "email_service",
+    allocator: std.mem.Allocator,
+    running: bool = false,
+    
+    pub fn start(self: *EmailService) !void {
+        self.running = true;
+        // Initialize email client, connect to SMTP, etc.
+    }
+    
+    pub fn stop(self: *EmailService) void {
+        self.running = false;
+        // Cleanup connections
+    }
+    
+    pub fn healthCheck(self: *EmailService) E12.HealthStatus {
+        return if (self.running) .healthy else .unhealthy;
+    }
+    
+    // Implement Service interface
+    pub fn asService(self: *EmailService) Service {
+        return Service{
+            .ptr = self,
+            .startFn = @ptrCast(&EmailService.start),
+            .stopFn = @ptrCast(&EmailService.stop),
+            .healthCheckFn = @ptrCast(&EmailService.healthCheck),
+        };
+    }
+};
+```
+
+### 14.2 Using the Service Registry
+
+```zig
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+    
+    // Create service registry
+    var registry = ServiceRegistry.init(allocator);
+    defer registry.deinit();
+    
+    // Create and register services
+    var email_service = EmailService{ .allocator = allocator };
+    try registry.register("email", email_service.asService(), .{
+        .restart_policy = .on_failure,
+        .max_restarts = 3,
+        .health_check_interval_ms = 30000,
+    });
+    
+    var notification_service = NotificationService{ .allocator = allocator };
+    try registry.register("notifications", notification_service.asService(), .{
+        .restart_policy = .always,
+        .depends_on = &[_][]const u8{"email"},
+    });
+    
+    // Start all services (respects dependencies)
+    try registry.startAll();
+    
+    // Get service status
+    if (registry.get("email")) |managed| {
+        std.debug.print("Email service uptime: {}ms\n", .{managed.uptime()});
+        std.debug.print("Health: {}\n", .{managed.healthCheck()});
+    }
+    
+    // Stop all services (reverse order)
+    registry.stopAll();
+}
+```
+
+### 14.3 Restart Policies
+
+Configure how services should be restarted on failure:
+
+```zig
+const RestartPolicy = E12.services.RestartPolicy;
+
+// Never restart automatically
+.restart_policy = .never,
+
+// Restart only on failure (not on clean shutdown)
+.restart_policy = .on_failure,
+
+// Always restart (useful for daemons)
+.restart_policy = .always,
+
+// Restart on failure, but limit attempts
+.restart_policy = .on_failure_limited,
+.max_restarts = 5,
+```
+
+### 14.4 Health Monitoring
+
+The registry can automatically monitor service health:
+
+```zig
+// Enable background health checks
+try registry.startHealthMonitor(30000); // Check every 30 seconds
+
+// Manual health check
+const health = registry.checkHealth("email");
+switch (health) {
+    .healthy => std.debug.print("Service is healthy\n", .{}),
+    .unhealthy => std.debug.print("Service needs attention\n", .{}),
+    .degraded => std.debug.print("Service is degraded\n", .{}),
+}
+
+// Get all unhealthy services
+const unhealthy = try registry.getUnhealthyServices(allocator);
+defer allocator.free(unhealthy);
+for (unhealthy) |name| {
+    std.debug.print("Unhealthy: {s}\n", .{name});
+}
+```
+
 ## Next Steps
 
 - Add validation for request data
@@ -2363,6 +2758,7 @@ See the [API Reference](api-reference.md#htmx-integration) for complete HTMX API
 - Set up error handling
 - Use auto-discovery features to reduce boilerplate
 - Add HTMX interactivity to your templates
+- Use the Service Registry for background workers
 - Add more routes and features
 - Deploy to production
 

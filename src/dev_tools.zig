@@ -172,6 +172,18 @@ pub const LogEntry = struct {
         };
     }
 
+    /// Initialize with an already-allocated message (takes ownership, doesn't copy)
+    pub fn initOwned(allocator: std.mem.Allocator, level: LogLevel, message: []const u8) !LogEntry {
+        return LogEntry{
+            .level = level,
+            .message = message,
+            .timestamp = std.time.milliTimestamp(),
+            .fields = std.StringHashMap([]const u8).init(allocator),
+            .allocator = allocator,
+            .logger = null,
+        };
+    }
+
     /// Add a string field to the log entry (builder pattern)
     pub fn field(self: *LogEntry, key: []const u8, value: []const u8) !*LogEntry {
         const key_copy = try self.allocator.dupe(u8, key);
@@ -554,6 +566,142 @@ pub const Logger = struct {
         const err_name = @errorName(err);
         _ = try entry.field("error", err_name);
         entry.log();
+    }
+
+    // =========================================================================
+    // Printf-style Convenience Methods
+    // These provide simple one-liner logging without the builder pattern.
+    // =========================================================================
+
+    /// Log a formatted debug message (one-liner).
+    /// Example: logger.debugf("User {} logged in from {s}", .{user_id, ip});
+    pub fn debugf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
+        if (LogLevel.debug.toInt() < self.min_level.toInt()) return;
+        const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        const entry = LogEntry.initOwned(self.allocator, .debug, message) catch {
+            self.allocator.free(message);
+            return;
+        };
+        const entry_ptr = self.allocator.create(LogEntry) catch {
+            self.allocator.free(message);
+            return;
+        };
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a formatted info message (one-liner).
+    /// Example: logger.infof("Request processed in {d}ms", .{duration});
+    pub fn infof(self: *Logger, comptime fmt: []const u8, args: anytype) void {
+        if (LogLevel.info.toInt() < self.min_level.toInt()) return;
+        const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        const entry = LogEntry.initOwned(self.allocator, .info, message) catch {
+            self.allocator.free(message);
+            return;
+        };
+        const entry_ptr = self.allocator.create(LogEntry) catch {
+            self.allocator.free(message);
+            return;
+        };
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a formatted warning message (one-liner).
+    /// Example: logger.warnf("High memory usage: {d}%", .{mem_percent});
+    pub fn warnf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
+        if (LogLevel.warn.toInt() < self.min_level.toInt()) return;
+        const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        const entry = LogEntry.initOwned(self.allocator, .warn, message) catch {
+            self.allocator.free(message);
+            return;
+        };
+        const entry_ptr = self.allocator.create(LogEntry) catch {
+            self.allocator.free(message);
+            return;
+        };
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a formatted error message (one-liner).
+    /// Example: logger.errorf("Failed to connect to {s}: {}", .{host, err});
+    pub fn errorf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
+        const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        const entry = LogEntry.initOwned(self.allocator, .err, message) catch {
+            self.allocator.free(message);
+            return;
+        };
+        const entry_ptr = self.allocator.create(LogEntry) catch {
+            self.allocator.free(message);
+            return;
+        };
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a simple debug message (one-liner, no formatting).
+    /// Example: logger.debugMsg("Starting initialization");
+    pub fn debugMsg(self: *Logger, message: []const u8) void {
+        if (LogLevel.debug.toInt() < self.min_level.toInt()) return;
+        const entry = LogEntry.init(self.allocator, .debug, message) catch return;
+        const entry_ptr = self.allocator.create(LogEntry) catch return;
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a simple info message (one-liner, no formatting).
+    /// Example: logger.infoMsg("Server started");
+    pub fn infoMsg(self: *Logger, message: []const u8) void {
+        if (LogLevel.info.toInt() < self.min_level.toInt()) return;
+        const entry = LogEntry.init(self.allocator, .info, message) catch return;
+        const entry_ptr = self.allocator.create(LogEntry) catch return;
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a simple warning message (one-liner, no formatting).
+    /// Example: logger.warnMsg("Deprecated API used");
+    pub fn warnMsg(self: *Logger, message: []const u8) void {
+        if (LogLevel.warn.toInt() < self.min_level.toInt()) return;
+        const entry = LogEntry.init(self.allocator, .warn, message) catch return;
+        const entry_ptr = self.allocator.create(LogEntry) catch return;
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log a simple error message (one-liner, no formatting).
+    /// Example: logger.errorMsg("Connection failed");
+    pub fn errorMsg(self: *Logger, message: []const u8) void {
+        const entry = LogEntry.init(self.allocator, .err, message) catch return;
+        const entry_ptr = self.allocator.create(LogEntry) catch return;
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+        entry_ptr.log();
+    }
+
+    /// Log with structured fields (one-liner with key-value pairs).
+    /// Example: logger.infoWithFields("User action", &.{ .{"user_id", "123"}, .{"action", "login"} });
+    pub fn infoWithFields(self: *Logger, message: []const u8, fields: anytype) void {
+        if (LogLevel.info.toInt() < self.min_level.toInt()) return;
+        const entry = LogEntry.init(self.allocator, .info, message) catch return;
+        const entry_ptr = self.allocator.create(LogEntry) catch return;
+        entry_ptr.* = entry;
+        entry_ptr.logger = self;
+
+        // Add fields from tuple array
+        inline for (fields) |field_pair| {
+            _ = entry_ptr.field(field_pair[0], field_pair[1]) catch {};
+        }
+
+        entry_ptr.log();
     }
 
     /// Create a child logger with additional context fields

@@ -29,6 +29,7 @@ pub const valve = @import("valve/valve.zig");
 pub const websocket = @import("websocket/module.zig");
 pub const hot_reload = @import("hot_reload/module.zig");
 pub const htmx = @import("htmx/module.zig");
+pub const services = @import("services.zig");
 
 // Re-export main types for convenience
 pub const Engine12 = engine12.Engine12;
@@ -112,6 +113,19 @@ pub const migration_discovery = @import("orm/migration_discovery.zig");
 
 // Re-export TemplateRegistry (from Engine12 struct)
 pub const TemplateRegistry = engine12.Engine12.TemplateRegistry;
+
+// Re-export service types
+pub const Service = services.Service;
+pub const ServiceRegistry = services.ServiceRegistry;
+pub const ServiceState = services.ServiceState;
+pub const ServiceConfig = services.ServiceConfig;
+pub const RestartPolicy = services.RestartPolicy;
+pub const ManagedService = services.ManagedService;
+
+// Re-export TryHandler utilities
+pub const TryHttpHandler = types.TryHttpHandler;
+pub const wrapTryHandler = types.wrapTryHandler;
+pub const wrapTryHandlerCustom = types.wrapTryHandlerCustom;
 
 // Import test files to ensure all tests are discovered and run
 // These imports don't need to be used - they just need to be compiled

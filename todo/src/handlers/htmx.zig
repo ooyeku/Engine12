@@ -472,7 +472,8 @@ pub fn handleToggleTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
-    var todo = orm.find(Todo, id) catch {
+    // Use findOne for simpler single-record lookup (new API)
+    var todo = orm.findOne(Todo, id) catch {
         return htmx.errors.notFoundFragment("Todo");
     } orelse {
         return htmx.errors.notFoundFragment("Todo");
@@ -511,7 +512,8 @@ pub fn handleEditTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
-    const todo = orm.find(Todo, id) catch {
+    // Use findOne for simpler single-record lookup (new API)
+    const todo = orm.findOne(Todo, id) catch {
         return htmx.errors.notFoundFragment("Todo");
     } orelse {
         return htmx.errors.notFoundFragment("Todo");
@@ -638,7 +640,8 @@ pub fn handleUpdateTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
-    var todo = orm.find(Todo, id) catch {
+    // Use findOne for simpler single-record lookup (new API)
+    var todo = orm.findOne(Todo, id) catch {
         return htmx.errors.notFoundFragment("Todo");
     } orelse {
         return htmx.errors.notFoundFragment("Todo");
@@ -717,7 +720,8 @@ pub fn handleViewTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
-    const todo = orm.find(Todo, id) catch {
+    // Use findOne for simpler single-record lookup (new API)
+    const todo = orm.findOne(Todo, id) catch {
         return htmx.errors.notFoundFragment("Todo");
     } orelse {
         return htmx.errors.notFoundFragment("Todo");

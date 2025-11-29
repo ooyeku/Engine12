@@ -387,10 +387,11 @@ pub const Json = struct {
                 .pointer => |ptr_info| {
                     if (ptr_info.size == .slice) {
                         if (ptr_info.child == u8) {
-                            // String
+                            // String ([]u8 or []const u8)
                             return try self.parseString();
                         } else {
-                            @compileError("Unsupported slice type for JSON deserialization: " ++ @typeName(T));
+                            // Array of other types (e.g., [][]const u8, []SomeStruct)
+                            return try self.parseArray(ptr_info.child);
                         }
                     } else {
                         @compileError("Unsupported pointer type for JSON deserialization: " ++ @typeName(T));
@@ -471,6 +472,103 @@ pub const Json = struct {
             }
 
             return result.toOwnedSlice(self.allocator);
+        }
+
+        /// Parse a JSON array into a slice of the given element type.
+        /// Supports nested arrays like [][]const u8 and struct arrays like []User.
+        ///
+        /// Example JSON: ["hello", "world"] -> [][]const u8
+        /// Example JSON: [{"id": 1}, {"id": 2}] -> []User
+        fn parseArray(self: *Parser, comptime ElementType: type) ![]ElementType {
+            self.skipWhitespace();
+            if (self.pos >= self.input.len or self.input[self.pos] != '[') {
+                std.debug.print("[JSON Parser Error] Expected '[' at start of array\n", .{});
+                std.debug.print("  Position: {d}\n", .{self.pos});
+                return error.InvalidJson;
+            }
+            self.pos += 1;
+
+            var items = std.ArrayListUnmanaged(ElementType){};
+            errdefer {
+                // Clean up on error
+                for (items.items) |item| {
+                    self.freeValue(ElementType, item);
+                }
+                items.deinit(self.allocator);
+            }
+
+            self.skipWhitespace();
+
+            // Handle empty array
+            if (self.pos < self.input.len and self.input[self.pos] == ']') {
+                self.pos += 1;
+                return items.toOwnedSlice(self.allocator);
+            }
+
+            // Parse array elements
+            while (true) {
+                self.skipWhitespace();
+
+                // Parse element
+                const element = try self.parseFieldValue(ElementType);
+                try items.append(self.allocator, element);
+
+                self.skipWhitespace();
+
+                // Check for comma or end of array
+                if (self.pos >= self.input.len) {
+                    return error.InvalidJson;
+                }
+
+                if (self.input[self.pos] == ']') {
+                    self.pos += 1;
+                    break;
+                }
+
+                if (self.input[self.pos] == ',') {
+                    self.pos += 1;
+                    continue;
+                }
+
+                std.debug.print("[JSON Parser Error] Expected ',' or ']' in array\n", .{});
+                return error.InvalidJson;
+            }
+
+            return items.toOwnedSlice(self.allocator);
+        }
+
+        /// Free a value allocated during parsing (used for cleanup on error).
+        fn freeValue(self: *Parser, comptime T: type, value: T) void {
+            const type_info = @typeInfo(T);
+            switch (type_info) {
+                .pointer => |ptr_info| {
+                    if (ptr_info.size == .slice) {
+                        if (ptr_info.child == u8) {
+                            // String
+                            self.allocator.free(value);
+                        } else {
+                            // Array of other types
+                            for (value) |item| {
+                                self.freeValue(ptr_info.child, item);
+                            }
+                            self.allocator.free(value);
+                        }
+                    }
+                },
+                .@"struct" => {
+                    // Free string fields in struct
+                    inline for (std.meta.fields(T)) |field| {
+                        const field_type_info = @typeInfo(field.type);
+                        if (field_type_info == .pointer) {
+                            const ptr_info = field_type_info.pointer;
+                            if (ptr_info.size == .slice and ptr_info.child == u8) {
+                                self.allocator.free(@field(value, field.name));
+                            }
+                        }
+                    }
+                },
+                else => {}, // Primitives don't need freeing
+            }
         }
 
         fn parseInt(self: *Parser, comptime T: type) !T {
@@ -700,4 +798,64 @@ test "Json escape string" {
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\\\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\\n") != null);
+}
+
+test "Json.deserialize string array ([][]const u8)" {
+    const allocator = std.testing.allocator;
+    const TestStruct = struct {
+        tags: [][]const u8,
+    };
+
+    const json = "{\"tags\":[\"hello\",\"world\",\"test\"]}";
+    const parsed = try Json.deserialize(TestStruct, json, allocator);
+    defer {
+        for (parsed.tags) |tag| {
+            allocator.free(tag);
+        }
+        allocator.free(parsed.tags);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), parsed.tags.len);
+    try std.testing.expectEqualStrings("hello", parsed.tags[0]);
+    try std.testing.expectEqualStrings("world", parsed.tags[1]);
+    try std.testing.expectEqualStrings("test", parsed.tags[2]);
+}
+
+test "Json.deserialize empty array" {
+    const allocator = std.testing.allocator;
+    const TestStruct = struct {
+        items: [][]const u8,
+    };
+
+    const json = "{\"items\":[]}";
+    const parsed = try Json.deserialize(TestStruct, json, allocator);
+    defer allocator.free(parsed.items);
+
+    try std.testing.expectEqual(@as(usize, 0), parsed.items.len);
+}
+
+test "Json.deserialize struct array" {
+    const allocator = std.testing.allocator;
+    const Inner = struct {
+        id: i64,
+        name: []const u8,
+    };
+    const TestStruct = struct {
+        users: []Inner,
+    };
+
+    const json = "{\"users\":[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]}";
+    const parsed = try Json.deserialize(TestStruct, json, allocator);
+    defer {
+        for (parsed.users) |user| {
+            allocator.free(user.name);
+        }
+        allocator.free(parsed.users);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), parsed.users.len);
+    try std.testing.expectEqual(@as(i64, 1), parsed.users[0].id);
+    try std.testing.expectEqualStrings("Alice", parsed.users[0].name);
+    try std.testing.expectEqual(@as(i64, 2), parsed.users[1].id);
+    try std.testing.expectEqualStrings("Bob", parsed.users[1].name);
 }

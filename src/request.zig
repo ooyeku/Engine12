@@ -568,6 +568,89 @@ pub const Request = struct {
         return self.context.get(key);
     }
 
+    // =========================================================================
+    // Typed Context Accessors
+    // Store and retrieve typed data in request context.
+    // =========================================================================
+
+    /// Store a typed pointer in the request context.
+    /// The pointer is stored as a string representation of its address.
+    /// Use getTyped() to retrieve it with type safety.
+    ///
+    /// Example:
+    /// ```zig
+    /// // In middleware:
+    /// var user = try authenticateUser(req);
+    /// try req.setTyped(User, &user);
+    ///
+    /// // In handler:
+    /// if (req.getTyped(User)) |user| {
+    ///     // Use user safely
+    /// }
+    /// ```
+    pub fn setTyped(self: *Request, comptime T: type, ptr: *T) !void {
+        const key = comptime typeName(T);
+        const addr = @intFromPtr(ptr);
+        var buf: [20]u8 = undefined;
+        const addr_str = std.fmt.bufPrint(&buf, "{d}", .{addr}) catch return error.OutOfMemory;
+        try self.set(key, addr_str);
+    }
+
+    /// Retrieve a typed pointer from the request context.
+    /// Returns null if the type was not stored or if the stored value is invalid.
+    ///
+    /// Example:
+    /// ```zig
+    /// if (req.getTyped(User)) |user| {
+    ///     std.debug.print("User ID: {d}\n", .{user.id});
+    /// }
+    /// ```
+    pub fn getTyped(self: *const Request, comptime T: type) ?*T {
+        const key = comptime typeName(T);
+        if (self.get(key)) |addr_str| {
+            const addr = std.fmt.parseInt(usize, addr_str, 10) catch return null;
+            if (addr == 0) return null;
+            return @as(*T, @ptrFromInt(addr));
+        }
+        return null;
+    }
+
+    /// Retrieve a typed const pointer from the request context.
+    pub fn getTypedConst(self: *const Request, comptime T: type) ?*const T {
+        if (self.getTyped(T)) |ptr| {
+            return ptr;
+        }
+        return null;
+    }
+
+    /// Store a typed value by copying it into the request's arena.
+    /// The value is serialized and stored, then retrieved via getTypedValue().
+    ///
+    /// Example:
+    /// ```zig
+    /// try req.setTypedValue(UserContext, .{ .user_id = 123, .role = "admin" });
+    /// ```
+    pub fn setTypedValue(self: *Request, comptime T: type, value: T) !void {
+        // Allocate space in arena for the value
+        const ptr = try self.arena.allocator().create(T);
+        ptr.* = value;
+        try self.setTyped(T, ptr);
+    }
+
+    /// Retrieve a typed value that was stored via setTypedValue().
+    /// Returns null if not found.
+    pub fn getTypedValue(self: *const Request, comptime T: type) ?T {
+        if (self.getTyped(T)) |ptr| {
+            return ptr.*;
+        }
+        return null;
+    }
+
+    /// Get type name at comptime for use as context key.
+    fn typeName(comptime T: type) []const u8 {
+        return "__typed_" ++ @typeName(T);
+    }
+
     /// Set route parameters (internal use - called by router)
     /// Uses fixed-size array for fast path (no allocation for typical use cases)
     /// Falls back to HashMap only when array is full

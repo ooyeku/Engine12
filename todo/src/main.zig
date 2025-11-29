@@ -150,10 +150,7 @@ fn csrfMiddleware(req: *Request) middleware_chain.MiddlewareResult {
 fn cleanupOldCompletedTodos() void {
     const logger = database.getLogger();
     const orm = database.getORM() catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to get ORM for cleanup task") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to get ORM for cleanup task");
         return;
     };
     const now = std.time.milliTimestamp();
@@ -162,35 +159,23 @@ fn cleanupOldCompletedTodos() void {
     const sql = std.fmt.allocPrint(orm.allocator,
         \\DELETE FROM todos WHERE completed = 1 AND ({} - updated_at) > {}
     , .{ now, SEVEN_DAYS_MS }) catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to build cleanup SQL") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to build cleanup SQL");
         return;
     };
     defer orm.allocator.free(sql);
 
     _ = orm.db.execute(sql) catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to cleanup old todos") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to cleanup old todos");
         return;
     };
 
-    if (logger) |l| {
-        const entry = l.info("Cleaned up old completed todos") catch return;
-        entry.log();
-    }
+    if (logger) |l| l.infoMsg("Cleaned up old completed todos");
 }
 
 fn checkOverdueTodos() void {
     const logger = database.getLogger();
     const orm = database.getORM() catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to get ORM for overdue check") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to get ORM for overdue check");
         return;
     };
     const now = std.time.milliTimestamp();
@@ -199,28 +184,19 @@ fn checkOverdueTodos() void {
     const sql = std.fmt.allocPrint(orm.allocator,
         \\SELECT COUNT(*) as count FROM todos WHERE completed = 0 AND due_date IS NOT NULL AND due_date < {}
     , .{now}) catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to build overdue check SQL") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to build overdue check SQL");
         return;
     };
     defer orm.allocator.free(sql);
 
     var result = orm.db.query(sql) catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to check overdue todos") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to check overdue todos");
         return;
     };
     defer result.deinit();
 
     // Parse count from result (simplified - just log if any found)
-    if (logger) |l| {
-        const entry = l.info("Checked for overdue todos") catch return;
-        entry.log();
-    }
+    if (logger) |l| l.infoMsg("Checked for overdue todos");
 }
 
 fn generateStatistics() void {
@@ -232,30 +208,21 @@ fn generateStatistics() void {
 fn validateStoreHealth() void {
     const logger = database.getLogger();
     const orm = database.getORM() catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to get ORM for health validation") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to get ORM for health validation");
         return;
     };
 
     // Use raw SQL to count all todos across all users
     const sql = "SELECT COUNT(*) as count FROM todos";
     var result = orm.db.query(sql) catch {
-        if (logger) |l| {
-            const entry = l.logError("Failed to get todo count for health validation") catch return;
-            entry.log();
-        }
+        if (logger) |l| l.errorMsg("Failed to get todo count for health validation");
         return;
     };
     defer result.deinit();
 
     // Database doesn't have capacity limits, but we can warn if there are many todos
     // For now, just log that health check ran
-    if (logger) |l| {
-        const entry = l.info("Store health validation completed") catch return;
-        entry.log();
-    }
+    if (logger) |l| l.infoMsg("Store health validation completed");
 }
 
 // ============================================================================
@@ -554,8 +521,7 @@ pub fn main() !void {
     }
 
     if (database.getLogger()) |logger| {
-        const entry = logger.info("Server starting - Press Ctrl+C to stop") catch null;
-        if (entry) |e| e.log();
+        logger.infoMsg("Server starting - Press Ctrl+C to stop");
     }
 
     try app.listen(); // Blocks until shutdown
