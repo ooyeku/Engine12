@@ -616,8 +616,8 @@ pub const Engine12 = struct {
     const MAX_ROUTES = 5000;
     const MAX_WORKERS = 32;
     const MAX_HEALTH_CHECKS = 8;
-    const MAX_STATIC_ROUTES = 4;
-    const MAX_WS_ROUTES = 100;
+    const MAX_STATIC_ROUTES = 500;
+    const MAX_WS_ROUTES = 1000;
 
     allocator: std.mem.Allocator,
     profile: types.ServerProfile,
