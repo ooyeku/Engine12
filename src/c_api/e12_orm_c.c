@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "e12_orm.h"
 #include "sqlite3.h"
 #include <stdlib.h>
