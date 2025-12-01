@@ -1792,7 +1792,7 @@ test "ORM initPtr and deinitPtr" {
     var orm = try ORM.initPtr(db, allocator);
     defer orm.deinitPtr(allocator);
 
-    try std.testing.expect(@intFromPtr(orm.db.c_db) != 0);
+    try std.testing.expect(@intFromPtr(orm.db.db) != 0);
 }
 
 // Test deleted - failing column mismatch detection

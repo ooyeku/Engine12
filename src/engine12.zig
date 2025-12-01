@@ -2424,9 +2424,9 @@ pub const Engine12 = struct {
             i += 1;
         }
 
+        // Build and start supervisor
+        // Note: The supervisor is consumed when started, we don't need to store it
         var sup = supervisor.build();
-        self.supervisor = @ptrCast(&sup);
-
         try sup.start();
     }
 

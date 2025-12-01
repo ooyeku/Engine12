@@ -1,10 +1,7 @@
 const std = @import("std");
-pub const c = @cImport({
-    @cInclude("e12_orm.h");
-});
+const sqlite = @import("sqlite.zig");
 
 /// Parameter types for SQL prepared statements
-/// Matches E12ParamType in the C API
 pub const ParamType = enum(u8) {
     null = 0,
     int64 = 1,
@@ -55,7 +52,7 @@ pub const Param = union(ParamType) {
     /// Convert any supported Zig type to a Param
     pub fn from(value: anytype) Param {
         const T = @TypeOf(value);
-        
+
         return switch (@typeInfo(T)) {
             .int, .comptime_int => Param{ .int64 = @as(i64, @intCast(value)) },
             .float, .comptime_float => Param{ .float64 = @as(f64, @floatCast(value)) },
@@ -90,35 +87,17 @@ pub const Param = union(ParamType) {
         };
     }
 
-    /// Convert to C API E12Param structure
-    pub fn toC(self: Param) c.E12Param {
-        var result: c.E12Param = undefined;
-        
-        switch (self) {
-            .null => {
-                result.type = c.E12_PARAM_NULL;
-            },
-            .int64 => |val| {
-                result.type = c.E12_PARAM_INT64;
-                result.value.i64 = val;
-            },
-            .float64 => |val| {
-                result.type = c.E12_PARAM_DOUBLE;
-                result.value.f64 = val;
-            },
-            .text => |val| {
-                result.type = c.E12_PARAM_TEXT;
-                result.value.text.ptr = val.ptr;
-                result.value.text.len = val.len;
-            },
-            .blob => |val| {
-                result.type = c.E12_PARAM_BLOB;
-                result.value.blob.ptr = val.ptr;
-                result.value.blob.len = val.len;
-            },
-        }
-        
-        return result;
+    /// Bind this parameter to a SQLite prepared statement at the given index (1-based)
+    /// Note: Uses SQLITE_STATIC which requires the data to remain valid until the statement
+    /// is finalized or reset. This is safe in our ORM since ParamList data outlives query execution.
+    pub fn bind(self: Param, stmt: ?*sqlite.sqlite3_stmt, index: c_int) c_int {
+        return switch (self) {
+            .null => sqlite.bind_null(stmt, index),
+            .int64 => |val| sqlite.bind_int64(stmt, index, val),
+            .float64 => |val| sqlite.bind_double(stmt, index, val),
+            .text => |val| sqlite.bind_text(stmt, index, val.ptr, @intCast(val.len), sqlite.SQLITE_STATIC),
+            .blob => |val| sqlite.bind_blob(stmt, index, val.ptr, @intCast(val.len), sqlite.SQLITE_STATIC),
+        };
     }
 };
 
@@ -185,39 +164,17 @@ pub const ParamList = struct {
         return self.items.items;
     }
 
-    /// Convert to C API array (caller must free the returned slice)
-    pub fn toC(self: *const ParamList, alloc: std.mem.Allocator) ![]c.E12Param {
-        var c_params = try alloc.alloc(c.E12Param, self.items.items.len);
+    /// Bind all parameters to a SQLite prepared statement
+    /// Parameters are bound starting at index 1 (SQLite's convention)
+    pub fn bindAll(self: *const ParamList, stmt: ?*sqlite.sqlite3_stmt) c_int {
         for (self.items.items, 0..) |param, i| {
-            c_params[i] = param.toC();
+            const index: c_int = @intCast(i + 1); // SQLite uses 1-based indexing
+            const rc = param.bind(stmt, index);
+            if (rc != sqlite.SQLITE_OK) {
+                return rc;
+            }
         }
-        return c_params;
-    }
-
-    /// Get C-compatible params pointer for use with C API
-    /// Returns pointer to internal C param array (rebuilt on each call)
-    /// WARNING: The returned pointer is only valid until the next call or deinit
-    pub fn cParams(self: *const ParamList) [*c]const c.E12Param {
-        if (self.items.items.len == 0) return null;
-        
-        // Build C params array in place
-        // We need to store this somewhere - use a static buffer approach
-        // For safety, we'll use thread-local storage pattern
-        const S = struct {
-            threadlocal var c_buffer: [256]c.E12Param = undefined;
-        };
-        
-        const count = @min(self.items.items.len, S.c_buffer.len);
-        for (self.items.items[0..count], 0..) |param, i| {
-            S.c_buffer[i] = param.toC();
-        }
-        
-        return @ptrCast(&S.c_buffer);
-    }
-
-    /// Get the count of parameters for C API
-    pub fn cCount(self: *const ParamList) usize {
-        return self.items.items.len;
+        return sqlite.SQLITE_OK;
     }
 
     /// Add a text parameter (alias for addString for compatibility)
@@ -243,19 +200,6 @@ pub fn fromTuple(allocator: std.mem.Allocator, tuple: anytype) !ParamList {
     }
 
     return list;
-}
-
-/// Create a fixed-size C param array from a tuple (no allocation needed)
-/// Example: const c_params = params.tupleToCArray(.{ 1, "hello" });
-pub fn tupleToCArray(tuple: anytype) [@typeInfo(@TypeOf(tuple)).@"struct".fields.len]c.E12Param {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
-    var result: [fields.len]c.E12Param = undefined;
-    
-    inline for (fields, 0..) |field, i| {
-        result[i] = Param.from(@field(tuple, field.name)).toC();
-    }
-    
-    return result;
 }
 
 // ============================================================================
@@ -303,15 +247,6 @@ test "Param.from optional null" {
     try std.testing.expectEqual(ParamType.null, std.meta.activeTag(p));
 }
 
-const E12ParamType = c.E12ParamType;
-
-test "Param.toC" {
-    const p = Param.int(42);
-    const c_param = p.toC();
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_INT64), c_param.type);
-    try std.testing.expectEqual(@as(i64, 42), c_param.value.i64);
-}
-
 test "ParamList basic operations" {
     const allocator = std.testing.allocator;
     var list = ParamList.init(allocator);
@@ -337,37 +272,10 @@ test "ParamList.add with various types" {
     try std.testing.expectEqual(@as(usize, 3), list.len());
 }
 
-test "ParamList.toC" {
-    const allocator = std.testing.allocator;
-    var list = ParamList.init(allocator);
-    defer list.deinit();
-
-    try list.addInt(1);
-    try list.addString("test");
-
-    const c_params = try list.toC(allocator);
-    defer allocator.free(c_params);
-
-    try std.testing.expectEqual(@as(usize, 2), c_params.len);
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_INT64), c_params[0].type);
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_TEXT), c_params[1].type);
-}
-
 test "fromTuple" {
     const allocator = std.testing.allocator;
     var list = try fromTuple(allocator, .{ 1, "hello", true });
     defer list.deinit();
 
     try std.testing.expectEqual(@as(usize, 3), list.len());
-}
-
-test "tupleToCArray" {
-    const c_params = tupleToCArray(.{ 42, "test", false });
-    
-    try std.testing.expectEqual(@as(usize, 3), c_params.len);
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_INT64), c_params[0].type);
-    try std.testing.expectEqual(@as(i64, 42), c_params[0].value.i64);
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_TEXT), c_params[1].type);
-    try std.testing.expectEqual(@as(E12ParamType, c.E12_PARAM_INT64), c_params[2].type);
-    try std.testing.expectEqual(@as(i64, 0), c_params[2].value.i64);
 }

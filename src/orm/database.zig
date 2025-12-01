@@ -1,6 +1,6 @@
 const std = @import("std");
+const sqlite = @import("sqlite.zig");
 const params_mod = @import("params.zig");
-const c = params_mod.c;
 const QueryResult = @import("row.zig").QueryResult;
 pub const Param = params_mod.Param;
 pub const ParamList = params_mod.ParamList;
@@ -23,9 +23,18 @@ pub const ConnectionPoolConfig = struct {
 
 /// Prepared statement cache for improved query performance
 /// Caches compiled SQL statements for reuse, avoiding repeated parsing
+/// Thread-safe: uses mutex to protect concurrent access
 pub const PreparedStatementCache = struct {
-    c_cache: *c.E12StmtCache,
+    // Store the sqlite3 handle directly to avoid dangling pointer issues
+    // when ORM is returned by value
+    db_handle: *sqlite.sqlite3,
+    cache: std.StringHashMap(*sqlite.sqlite3_stmt),
     allocator: std.mem.Allocator,
+    max_statements: usize,
+    hits: u64 = 0,
+    misses: u64 = 0,
+    // Mutex for thread-safe cache access - SQLite statements aren't thread-safe
+    mutex: std.Thread.Mutex = .{},
 
     pub const Error = error{
         CacheCreationFailed,
@@ -37,54 +46,113 @@ pub const PreparedStatementCache = struct {
     /// Create a new prepared statement cache for a database
     /// max_statements: Maximum number of statements to cache (0 = default 512)
     pub fn init(db: *Database, max_statements: usize, allocator: std.mem.Allocator) !PreparedStatementCache {
-        var c_cache: ?*c.E12StmtCache = null;
-        const err = c.e12_stmt_cache_create(db.c_db, max_statements, &c_cache);
-
-        if (err != c.E12_ORM_OK) {
-            return error.CacheCreationFailed;
-        }
-
         return PreparedStatementCache{
-            .c_cache = c_cache.?,
+            // Copy the sqlite3 handle value, not a pointer to Database
+            .db_handle = db.db,
+            .cache = std.StringHashMap(*sqlite.sqlite3_stmt).init(allocator),
             .allocator = allocator,
+            .max_statements = if (max_statements == 0) 512 else max_statements,
+            .hits = 0,
+            .misses = 0,
+            .mutex = .{},
         };
     }
 
     /// Execute a cached query
     /// Uses cached prepared statement if available, otherwise prepares and caches
+    /// Thread-safe: protected by mutex
     pub fn query(self: *PreparedStatementCache, sql: []const u8) !QueryResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Try to get from cache
+        if (self.cache.get(sql)) |stmt| {
+            self.hits += 1;
+            // Reset the statement for reuse
+            _ = sqlite.reset(stmt);
+            _ = sqlite.clear_bindings(stmt);
+            // Return a result that doesn't own the statement
+            return QueryResult{
+                .stmt = stmt,
+                .allocator = self.allocator,
+                .column_count = sqlite.column_count(stmt),
+                ._column_map = null,
+                .owns_stmt = false,
+            };
+        }
+
+        // Cache miss - prepare new statement
+        self.misses += 1;
+
         const c_sql = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(c_sql);
 
-        var c_result: ?*c.E12Result = null;
-        const err = c.e12_stmt_cache_query(self.c_cache, c_sql, &c_result);
+        var stmt: ?*sqlite.sqlite3_stmt = null;
+        const rc = sqlite.prepare_v2(self.db_handle, c_sql, -1, &stmt, null);
 
-        if (err != c.E12_ORM_OK) {
+        if (rc != sqlite.SQLITE_OK) {
+            std.debug.print("[PreparedStatementCache] Query failed: {s}\n", .{sqlite.getErrorMessage(self.db_handle)});
+            std.debug.print("  SQL: {s}\n", .{sql});
             return error.QueryFailed;
         }
 
+        // Cache the statement if we have room
+        if (self.cache.count() < self.max_statements) {
+            const sql_copy = try self.allocator.dupe(u8, sql);
+            try self.cache.put(sql_copy, stmt.?);
+            // Return a result that doesn't own the statement (cache owns it)
+            return QueryResult{
+                .stmt = stmt.?,
+                .allocator = self.allocator,
+                .column_count = sqlite.column_count(stmt),
+                ._column_map = null,
+                .owns_stmt = false,
+            };
+        }
+
+        // Cache is full, don't cache this statement
         return QueryResult{
-            .c_result = c_result.?,
+            .stmt = stmt.?,
             .allocator = self.allocator,
+            .column_count = sqlite.column_count(stmt),
+            ._column_map = null,
+            .owns_stmt = true,
         };
     }
 
     /// Get cache statistics
+    /// Thread-safe: protected by mutex
     pub fn getStats(self: *PreparedStatementCache) struct { hits: u64, misses: u64 } {
-        var hits: u64 = 0;
-        var misses: u64 = 0;
-        c.e12_stmt_cache_stats(self.c_cache, &hits, &misses);
-        return .{ .hits = hits, .misses = misses };
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return .{ .hits = self.hits, .misses = self.misses };
     }
 
     /// Clear all cached statements
+    /// Thread-safe: protected by mutex
     pub fn clear(self: *PreparedStatementCache) void {
-        c.e12_stmt_cache_clear(self.c_cache);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var iterator = self.cache.iterator();
+        while (iterator.next()) |entry| {
+            _ = sqlite.finalize(entry.value_ptr.*);
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.cache.clearRetainingCapacity();
     }
 
     /// Destroy the cache and free all resources
     pub fn deinit(self: *PreparedStatementCache) void {
-        c.e12_stmt_cache_destroy(self.c_cache);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var iterator = self.cache.iterator();
+        while (iterator.next()) |entry| {
+            _ = sqlite.finalize(entry.value_ptr.*);
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.cache.deinit();
     }
 };
 
@@ -114,7 +182,7 @@ pub const ConnectionPool = struct {
     pub fn acquire(self: *ConnectionPool) !Database {
         self.mutex.lock();
         errdefer self.mutex.unlock();
-        
+
         // Calculate deadline for timeout
         const deadline_ns = std.time.nanoTimestamp() + @as(i128, self.config.acquire_timeout_ms) * std.time.ns_per_ms;
 
@@ -149,7 +217,7 @@ pub const ConnectionPool = struct {
 
             // Calculate remaining wait time
             const remaining_ns: u64 = @intCast(deadline_ns - now);
-            
+
             // Wait for a connection to become available (with timeout)
             // timedWait releases mutex while waiting and reacquires it when signaled/timed out
             self.condition.timedWait(&self.mutex, remaining_ns) catch {
@@ -167,7 +235,7 @@ pub const ConnectionPool = struct {
 
         // Find and remove from in_use
         for (self.in_use.items, 0..) |conn, i| {
-            if (conn.c_db == db.c_db) {
+            if (conn.db == db.db) {
                 var removed_db = self.in_use.swapRemove(i);
                 self.available.append(self.allocator, db) catch |err| {
                     // If we can't add to pool, log error and close connection
@@ -204,19 +272,17 @@ pub const ConnectionPool = struct {
 };
 
 pub const Database = struct {
-    c_db: *c.E12Database,
+    db: *sqlite.sqlite3,
     allocator: std.mem.Allocator,
 
-    /// Capture and log C API error message with context
+    /// Capture and log SQLite error message with context
     /// This provides detailed error information for debugging
-    fn captureError(comptime context: []const u8, sql: ?[]const u8) void {
-        const error_msg = c.e12_orm_get_last_error();
-        if (error_msg != null) {
-            std.debug.print("[Database Error] {s}\n", .{context});
-            std.debug.print("  C API Error: {s}\n", .{error_msg});
-            if (sql) |sql_str| {
-                std.debug.print("  SQL: {s}\n", .{sql_str});
-            }
+    fn captureError(db_handle: ?*sqlite.sqlite3, comptime context: []const u8, sql: ?[]const u8) void {
+        const error_msg = sqlite.getErrorMessage(db_handle);
+        std.debug.print("[Database Error] {s}\n", .{context});
+        std.debug.print("  SQLite Error: {s}\n", .{error_msg});
+        if (sql) |sql_str| {
+            std.debug.print("  SQL: {s}\n", .{sql_str});
         }
     }
 
@@ -224,20 +290,19 @@ pub const Database = struct {
         const c_path = try allocator.dupeZ(u8, path);
         defer allocator.free(c_path);
 
-        var c_db: ?*c.E12Database = null;
-        const err = c.e12_db_open(c_path, &c_db);
+        var db_handle: ?*sqlite.sqlite3 = null;
+        const rc = sqlite.open(c_path, &db_handle);
 
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to open database", null);
-            return switch (err) {
-                c.E12_ORM_ERROR_OPEN_FAILED => error.DatabaseOpenFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(db_handle, "Failed to open database", null);
+            if (db_handle != null) {
+                _ = sqlite.close(db_handle);
+            }
+            return error.DatabaseOpenFailed;
         }
 
         var db = Database{
-            .c_db = c_db.?,
+            .db = db_handle.?,
             .allocator = allocator,
         };
 
@@ -270,25 +335,18 @@ pub const Database = struct {
     }
 
     pub fn close(self: *Database) void {
-        c.e12_db_close(self.c_db);
+        _ = sqlite.close(self.db);
     }
 
     pub fn beginTransaction(self: *Database) !Transaction {
-        var c_transaction: ?*c.E12Transaction = null;
-        const err = c.e12_db_begin_transaction(self.c_db, &c_transaction);
-
-        if (err != c.E12_ORM_OK) {
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
+        // Execute BEGIN TRANSACTION
+        try self.execute("BEGIN TRANSACTION");
 
         return Transaction{
-            .c_transaction = c_transaction.?,
             .db = self,
             .allocator = self.allocator,
+            .committed = false,
+            .rolled_back = false,
         };
     }
 
@@ -296,65 +354,47 @@ pub const Database = struct {
         const c_sql = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(c_sql);
 
-        const err = c.e12_db_execute(self.c_db, c_sql, null);
+        var err_msg: [*c]u8 = null;
+        const rc = sqlite.exec(self.db, c_sql, null, null, &err_msg);
 
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute SQL statement", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (rc != sqlite.SQLITE_OK) {
+            if (err_msg != null) {
+                std.debug.print("[Database Error] Failed to execute SQL statement\n", .{});
+                std.debug.print("  SQLite Error: {s}\n", .{std.mem.sliceTo(err_msg, 0)});
+                std.debug.print("  SQL: {s}\n", .{sql});
+                sqlite.c.sqlite3_free(err_msg);
+            } else {
+                captureError(self.db, "Failed to execute SQL statement", sql);
+            }
+            return error.QueryFailed;
         }
     }
 
     pub fn executeWithRowsAffected(self: *Database, sql: []const u8) !i64 {
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        var rows_affected: i64 = 0;
-        const err = c.e12_db_execute(self.c_db, c_sql, &rows_affected);
-
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute SQL statement with rows affected", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
-
-        return rows_affected;
+        try self.execute(sql);
+        return @intCast(sqlite.changes(self.db));
     }
 
     pub fn query(self: *Database, sql: []const u8) !QueryResult {
         const c_sql = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(c_sql);
 
-        var c_result: ?*c.E12Result = null;
-        const err = c.e12_db_query(self.c_db, c_sql, &c_result);
+        var stmt: ?*sqlite.sqlite3_stmt = null;
+        const rc = sqlite.prepare_v2(self.db, c_sql, -1, &stmt, null);
 
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute SQL query", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(self.db, "Failed to execute SQL query", sql);
+            if (stmt != null) {
+                _ = sqlite.finalize(stmt);
+            }
+            return error.QueryFailed;
         }
 
-        return QueryResult.init(c_result.?, self.allocator);
+        return QueryResult.init(stmt.?, self.allocator);
     }
 
     pub fn lastInsertRowId(self: *Database) !i64 {
-        var result = try self.query("SELECT last_insert_rowid()");
-        defer result.deinit();
-
-        if (result.nextRow()) |row| {
-            return row.getInt64(0);
-        }
-
-        return error.NoResult;
+        return sqlite.last_insert_rowid(self.db);
     }
 
     /// Execute a parameterized SQL statement (INSERT, UPDATE, DELETE)
@@ -372,49 +412,35 @@ pub const Database = struct {
         const c_sql = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(c_sql);
 
-        const err = c.e12_db_execute_params(
-            self.c_db,
-            c_sql,
-            params.cParams(),
-            params.cCount(),
-            null,
-        );
+        var stmt: ?*sqlite.sqlite3_stmt = null;
+        var rc = sqlite.prepare_v2(self.db, c_sql, -1, &stmt, null);
 
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute parameterized SQL statement", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(self.db, "Failed to prepare parameterized SQL statement", sql);
+            return error.QueryFailed;
+        }
+        defer _ = sqlite.finalize(stmt);
+
+        // Bind parameters
+        rc = params.bindAll(stmt);
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(self.db, "Failed to bind parameters", sql);
+            return error.QueryFailed;
+        }
+
+        // Execute
+        rc = sqlite.step(stmt);
+        if (rc != sqlite.SQLITE_DONE and rc != sqlite.SQLITE_ROW) {
+            captureError(self.db, "Failed to execute parameterized SQL statement", sql);
+            return error.QueryFailed;
         }
     }
 
     /// Execute a parameterized SQL statement and return rows affected
     /// Uses bound parameters to prevent SQL injection
     pub fn executeParamsWithRowsAffected(self: *Database, sql: []const u8, params: *const ParamList) !i64 {
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        var rows_affected: i64 = 0;
-        const err = c.e12_db_execute_params(
-            self.c_db,
-            c_sql,
-            params.cParams(),
-            params.cCount(),
-            &rows_affected,
-        );
-
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute parameterized SQL statement", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
-
-        return rows_affected;
+        try self.executeParams(sql, params);
+        return @intCast(sqlite.changes(self.db));
     }
 
     /// Execute a parameterized SELECT query
@@ -432,25 +458,26 @@ pub const Database = struct {
         const c_sql = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(c_sql);
 
-        var c_result: ?*c.E12Result = null;
-        const err = c.e12_db_query_params(
-            self.c_db,
-            c_sql,
-            params.cParams(),
-            params.cCount(),
-            &c_result,
-        );
+        var stmt: ?*sqlite.sqlite3_stmt = null;
+        var rc = sqlite.prepare_v2(self.db, c_sql, -1, &stmt, null);
 
-        if (err != c.E12_ORM_OK) {
-            captureError("Failed to execute parameterized SQL query", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(self.db, "Failed to prepare parameterized SQL query", sql);
+            if (stmt != null) {
+                _ = sqlite.finalize(stmt);
+            }
+            return error.QueryFailed;
         }
 
-        return QueryResult.init(c_result.?, self.allocator);
+        // Bind parameters
+        rc = params.bindAll(stmt);
+        if (rc != sqlite.SQLITE_OK) {
+            captureError(self.db, "Failed to bind parameters", sql);
+            _ = sqlite.finalize(stmt);
+            return error.QueryFailed;
+        }
+
+        return QueryResult.init(stmt.?, self.allocator);
     }
 
     pub const Error = error{
@@ -465,120 +492,50 @@ pub const Database = struct {
 };
 
 pub const Transaction = struct {
-    c_transaction: *c.E12Transaction,
     db: *Database,
     allocator: std.mem.Allocator,
+    committed: bool,
+    rolled_back: bool,
 
     pub fn commit(self: *Transaction) !void {
-        const err = c.e12_db_commit(self.c_transaction);
-        if (err != c.E12_ORM_OK) {
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.TransactionFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (self.committed or self.rolled_back) {
+            return error.TransactionFailed;
         }
+        try self.db.execute("COMMIT");
+        self.committed = true;
     }
 
     pub fn rollback(self: *Transaction) !void {
-        const err = c.e12_db_rollback(self.c_transaction);
-        if (err != c.E12_ORM_OK) {
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.TransactionFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
+        if (self.committed or self.rolled_back) {
+            return error.TransactionFailed;
         }
+        try self.db.execute("ROLLBACK");
+        self.rolled_back = true;
     }
 
     pub fn execute(self: *Transaction, sql: []const u8) !void {
-        // Execute SQL within the transaction scope
-        // SQLite transactions are connection-scoped, so we can execute directly
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        const err = c.e12_db_execute(self.db.c_db, c_sql, null);
-        if (err != c.E12_ORM_OK) {
-            Database.captureError("Failed to execute SQL statement in transaction", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
+        try self.db.execute(sql);
     }
 
     pub fn query(self: *Transaction, sql: []const u8) !QueryResult {
-        // Query within the transaction scope
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        var c_result: ?*c.E12Result = null;
-        const err = c.e12_db_query(self.db.c_db, c_sql, &c_result);
-
-        if (err != c.E12_ORM_OK) {
-            Database.captureError("Failed to execute SQL query in transaction", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
-
-        return QueryResult.init(c_result.?, self.allocator);
+        return try self.db.query(sql);
     }
 
     /// Execute a parameterized SQL statement within the transaction
     pub fn executeParams(self: *Transaction, sql: []const u8, params: *const ParamList) !void {
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        const err = c.e12_db_execute_params(
-            self.db.c_db,
-            c_sql,
-            params.cParams(),
-            params.cCount(),
-            null,
-        );
-
-        if (err != c.E12_ORM_OK) {
-            Database.captureError("Failed to execute parameterized SQL in transaction", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
+        try self.db.executeParams(sql, params);
     }
 
     /// Execute a parameterized SELECT query within the transaction
     pub fn queryParams(self: *Transaction, sql: []const u8, params: *const ParamList) !QueryResult {
-        const c_sql = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(c_sql);
-
-        var c_result: ?*c.E12Result = null;
-        const err = c.e12_db_query_params(
-            self.db.c_db,
-            c_sql,
-            params.cParams(),
-            params.cCount(),
-            &c_result,
-        );
-
-        if (err != c.E12_ORM_OK) {
-            Database.captureError("Failed to execute parameterized query in transaction", sql);
-            return switch (err) {
-                c.E12_ORM_ERROR_QUERY_FAILED => error.QueryFailed,
-                c.E12_ORM_ERROR_INVALID_ARGUMENT => error.InvalidArgument,
-                else => error.DatabaseError,
-            };
-        }
-
-        return QueryResult.init(c_result.?, self.allocator);
+        return try self.db.queryParams(sql, params);
     }
 
     pub fn deinit(self: *Transaction) void {
-        c.e12_transaction_free(self.c_transaction);
+        // Auto-rollback if not committed or rolled back
+        if (!self.committed and !self.rolled_back) {
+            self.db.execute("ROLLBACK") catch {};
+        }
     }
 };
 
@@ -586,7 +543,7 @@ test "Database open and close" {
     const allocator = std.testing.allocator;
     var db = try Database.open(":memory:", allocator);
     defer db.close();
-    try std.testing.expect(@intFromPtr(db.c_db) != 0);
+    try std.testing.expect(@intFromPtr(db.db) != 0);
 }
 
 test "Database execute CREATE TABLE" {
@@ -635,7 +592,7 @@ test "Database query SELECT" {
     var result = try db.query("SELECT * FROM users");
     defer result.deinit();
 
-    try std.testing.expectEqual(@as(i32, 2), result.columnCount());
+    try std.testing.expectEqual(@as(c_int, 2), result.columnCount());
     try std.testing.expectEqualStrings("id", result.columnName(0).?);
     try std.testing.expectEqualStrings("name", result.columnName(1).?);
 }
@@ -658,7 +615,7 @@ test "Database query empty result" {
     var result = try db.query("SELECT * FROM users WHERE id = 999");
     defer result.deinit();
 
-    try std.testing.expectEqual(@as(i32, 2), result.columnCount());
+    try std.testing.expectEqual(@as(c_int, 2), result.columnCount());
     try std.testing.expect(result.nextRow() == null);
 }
 
@@ -763,7 +720,7 @@ test "Connection pool max connections" {
     pool.release(db1);
 
     const db2 = try pool.acquire();
-    try std.testing.expect(@intFromPtr(db2.c_db) != 0);
+    try std.testing.expect(@intFromPtr(db2.db) != 0);
     pool.release(db2);
 }
 

@@ -15,7 +15,9 @@ var global_db: ?Database = null;
 var global_orm: ?ORM = null;
 var global_index_template: ?*RuntimeTemplate = null;
 var global_template_registry_storage: ?E12.TemplateRegistry = null;
-var db_mutex: std.Thread.Mutex = .{};
+/// Database mutex for thread-safe access
+/// Background tasks should lock this before any database operations
+pub var db_mutex: std.Thread.Mutex = .{};
 var global_app: ?*E12.Engine12 = null;
 var global_cache: ?*ResponseCache = null;
 var cache_mutex: std.Thread.Mutex = .{};
@@ -29,15 +31,38 @@ pub fn getLogger() ?*Logger {
 }
 
 /// Get the ORM instance
+/// NOTE: This does NOT lock the database mutex. Callers that need thread-safe
+/// access (background tasks, etc.) should lock db_mutex before calling this
+/// and keep it locked during all database operations.
 pub fn getORM() !*ORM {
-    db_mutex.lock();
-    defer db_mutex.unlock();
-
     if (global_orm) |*orm| {
         return orm;
     }
 
     return error.DatabaseNotInitialized;
+}
+
+/// Execute a function with thread-safe ORM access
+/// The mutex is held for the entire duration of the callback
+/// Use this for background tasks that run in separate threads
+pub fn withORM(comptime callback: fn (*ORM) void) void {
+    db_mutex.lock();
+    defer db_mutex.unlock();
+
+    if (global_orm) |*orm| {
+        callback(orm);
+    }
+}
+
+/// Execute a function with thread-safe database access that can return a value
+pub fn withORMResult(comptime T: type, comptime callback: fn (*ORM) T) T {
+    db_mutex.lock();
+    defer db_mutex.unlock();
+
+    if (global_orm) |*orm| {
+        return callback(orm);
+    }
+    return undefined;
 }
 
 /// Initialize the database and run migrations
@@ -53,9 +78,10 @@ pub fn initDatabase() !void {
     const db_path = "todo.db";
     global_db = try Database.open(db_path, allocator);
 
-    // Initialize ORM with statement caching for better performance
-    // Cache up to 512 prepared statements for reuse
-    global_orm = try ORM.initWithCache(global_db.?, 512, allocator);
+    // Initialize ORM without statement caching for thread safety
+    // Note: Statement caching has thread-safety issues when statements are
+    // reused across threads. SQLite internally caches compiled SQL anyway.
+    global_orm = ORM.init(global_db.?, allocator);
 
     // Use migration auto-discovery to automatically load migrations
     // Scans migrations/ directory for numbered files: {number}_{name}.zig

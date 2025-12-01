@@ -1,7 +1,5 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("e12_orm.h");
-});
+const sqlite = @import("sqlite.zig");
 
 // Error types for ORM operations
 pub const ORMError = error{
@@ -12,63 +10,67 @@ pub const ORMError = error{
     DeserializationFailed,
 };
 
+/// Represents a single row in a query result
+/// Provides access to column values from the current row
 pub const Row = struct {
-    c_row: *c.E12Row,
+    stmt: *sqlite.sqlite3_stmt,
 
-    pub fn getText(self: Row, col_index: i32) ?[]const u8 {
-        const text_ptr = c.e12_row_get_text(self.c_row, col_index);
-        if (text_ptr == null) return null;
-        return std.mem.sliceTo(text_ptr, 0);
+    pub fn getText(self: Row, col_index: c_int) ?[]const u8 {
+        return sqlite.getColumnText(self.stmt, col_index);
     }
 
-    pub fn getInt64(self: Row, col_index: i32) i64 {
-        return c.e12_row_get_int64(self.c_row, col_index);
+    pub fn getInt64(self: Row, col_index: c_int) i64 {
+        return sqlite.column_int64(self.stmt, col_index);
     }
 
-    pub fn getDouble(self: Row, col_index: i32) f64 {
-        return c.e12_row_get_double(self.c_row, col_index);
+    pub fn getDouble(self: Row, col_index: c_int) f64 {
+        return sqlite.column_double(self.stmt, col_index);
     }
 
-    pub fn isNull(self: Row, col_index: i32) bool {
-        return c.e12_row_is_null(self.c_row, col_index);
+    pub fn isNull(self: Row, col_index: c_int) bool {
+        return sqlite.isColumnNull(self.stmt, col_index);
     }
 
-    pub fn getTextAlloc(self: Row, allocator: std.mem.Allocator, col_index: i32) !?[]u8 {
+    pub fn getTextAlloc(self: Row, allocator: std.mem.Allocator, col_index: c_int) !?[]u8 {
         const text = self.getText(col_index) orelse return null;
         return try allocator.dupe(u8, text);
     }
 };
 
+/// Represents the result of a SQL query
+/// Manages the SQLite prepared statement and provides iteration over rows
 pub const QueryResult = struct {
-    c_result: *c.E12Result,
+    stmt: *sqlite.sqlite3_stmt,
     allocator: std.mem.Allocator,
-    column_count: i32,
-    _column_map: ?std.StringHashMap(i32) = null,
+    column_count: c_int,
+    _column_map: ?std.StringHashMap(c_int) = null,
+    owns_stmt: bool = true, // Whether this result owns the statement (should finalize on deinit)
 
-    pub fn init(c_result: *c.E12Result, allocator: std.mem.Allocator) QueryResult {
+    pub fn init(stmt: *sqlite.sqlite3_stmt, allocator: std.mem.Allocator) QueryResult {
         return QueryResult{
-            .c_result = c_result,
+            .stmt = stmt,
             .allocator = allocator,
-            .column_count = c.e12_result_column_count(c_result),
+            .column_count = sqlite.column_count(stmt),
             ._column_map = null,
+            .owns_stmt = true,
         };
     }
 
     /// Build column name -> index mapping (lazy initialization)
-    fn buildColumnMap(self: *QueryResult) !std.StringHashMap(i32) {
+    fn buildColumnMap(self: *QueryResult) !std.StringHashMap(c_int) {
         if (self._column_map) |*map| {
             return map.*;
         }
 
-        var column_map = std.StringHashMap(i32).init(self.allocator);
+        var column_map = std.StringHashMap(c_int).init(self.allocator);
         errdefer column_map.deinit();
 
-        for (0..@as(usize, @intCast(self.column_count))) |i| {
-            const col_idx = @as(i32, @intCast(i));
-            if (self.columnName(col_idx)) |name| {
+        var i: c_int = 0;
+        while (i < self.column_count) : (i += 1) {
+            if (self.columnName(i)) |name| {
                 // Duplicate the column name string for the map key
                 const name_copy = try self.allocator.dupe(u8, name);
-                try column_map.put(name_copy, col_idx);
+                try column_map.put(name_copy, i);
             }
         }
 
@@ -77,27 +79,23 @@ pub const QueryResult = struct {
     }
 
     /// Get column index by name, building the map if necessary
-    fn getColumnIndex(self: *QueryResult, field_name: []const u8) !?i32 {
+    fn getColumnIndex(self: *QueryResult, field_name: []const u8) !?c_int {
         const column_map = try self.buildColumnMap();
         return column_map.get(field_name);
     }
 
-    pub fn columnCount(self: QueryResult) i32 {
+    pub fn columnCount(self: QueryResult) c_int {
         return self.column_count;
     }
 
-    pub fn columnName(self: QueryResult, col_index: i32) ?[]const u8 {
-        const name_ptr = c.e12_result_column_name(self.c_result, col_index);
-        if (name_ptr == null) return null;
-        return std.mem.sliceTo(name_ptr, 0);
+    pub fn columnName(self: QueryResult, col_index: c_int) ?[]const u8 {
+        return sqlite.getColumnName(self.stmt, col_index);
     }
 
     pub fn nextRow(self: *QueryResult) ?Row {
-        var c_row: ?*c.E12Row = null;
-        if (c.e12_result_next_row(self.c_result, &c_row)) {
-            if (c_row) |row| {
-                return Row{ .c_row = row };
-            }
+        const rc = sqlite.step(self.stmt);
+        if (rc == sqlite.SQLITE_ROW) {
+            return Row{ .stmt = self.stmt };
         }
         return null;
     }
@@ -111,7 +109,9 @@ pub const QueryResult = struct {
             }
             map.deinit();
         }
-        c.e12_result_free(self.c_result);
+        if (self.owns_stmt) {
+            _ = sqlite.finalize(self.stmt);
+        }
     }
 
     pub fn toArrayList(self: *QueryResult, comptime T: type) !std.ArrayListUnmanaged(T) {
@@ -391,7 +391,7 @@ test "QueryResult columnCount" {
     var result = try db.query("SELECT * FROM users");
     defer result.deinit();
 
-    try std.testing.expectEqual(@as(i32, 3), result.columnCount());
+    try std.testing.expectEqual(@as(c_int, 3), result.columnCount());
 }
 
 test "QueryResult columnName" {

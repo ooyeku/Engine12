@@ -149,6 +149,11 @@ fn csrfMiddleware(req: *Request) middleware_chain.MiddlewareResult {
 
 fn cleanupOldCompletedTodos() void {
     const logger = database.getLogger();
+
+    // Lock database mutex for thread-safe access
+    database.db_mutex.lock();
+    defer database.db_mutex.unlock();
+
     const orm = database.getORM() catch {
         if (logger) |l| l.errorMsg("Failed to get ORM for cleanup task");
         return;
@@ -174,6 +179,11 @@ fn cleanupOldCompletedTodos() void {
 
 fn checkOverdueTodos() void {
     const logger = database.getLogger();
+
+    // Lock database mutex for thread-safe access
+    database.db_mutex.lock();
+    defer database.db_mutex.unlock();
+
     const orm = database.getORM() catch {
         if (logger) |l| l.errorMsg("Failed to get ORM for overdue check");
         return;
@@ -202,11 +212,16 @@ fn checkOverdueTodos() void {
 fn generateStatistics() void {
     // Statistics are now user-specific, so this background task is not applicable
     // Stats are generated on-demand per user via handleGetStats
-    _ = database.getORM() catch return;
+    // No database access needed here
 }
 
 fn validateStoreHealth() void {
     const logger = database.getLogger();
+
+    // Lock database mutex for thread-safe access
+    database.db_mutex.lock();
+    defer database.db_mutex.unlock();
+
     const orm = database.getORM() catch {
         if (logger) |l| l.errorMsg("Failed to get ORM for health validation");
         return;
@@ -230,10 +245,15 @@ fn validateStoreHealth() void {
 // ============================================================================
 
 fn checkTodoStoreHealth() E12.HealthStatus {
+    // Lock database mutex for thread-safe access
+    database.db_mutex.lock();
+    defer database.db_mutex.unlock();
+
     const orm = database.getORM() catch return .unhealthy;
 
     // Simple health check - just verify database is accessible
-    _ = orm.db.query("SELECT 1") catch return .unhealthy;
+    var result = orm.db.query("SELECT 1") catch return .unhealthy;
+    result.deinit();
 
     return .healthy;
 }
