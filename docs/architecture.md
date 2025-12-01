@@ -170,27 +170,24 @@ try db.queryParams("SELECT * FROM users WHERE name = ?", &params);
 // var sql = try std.fmt.allocPrint(allocator, "SELECT * FROM users WHERE name = '{s}'", .{user_input});
 ```
 
-### Prepared Statement Caching
+### SQLite Integration
 
-The ORM supports optional prepared statement caching for improved performance:
+The ORM interfaces directly with SQLite through Zig's C interop capabilities:
 
-- **Statement Cache**: Caches compiled SQL statements for reuse
-- **Performance**: Avoids repeated SQL parsing overhead
-- **Integration**: Automatically used when enabled via `ORM.initWithCache()` or `ORM.enableStatementCache()`
-- **Statistics**: Cache hit/miss statistics available via `getStatementCacheStats()`
+- **Direct SQLite Calls**: Uses `sqlite3_*` functions directly via `@cImport`
+- **No FFI Overhead**: Direct function calls without wrapper layers
+- **SQLite Caching**: Leverages SQLite's built-in prepared statement caching
+- **WAL Mode**: Automatically enables Write-Ahead Logging for better concurrency
 
-**Usage:**
+**Performance Optimizations Applied:**
 ```zig
-// Enable caching at initialization
-var orm = try ORM.initWithCache(db, 512, allocator);
-
-// Or enable later
-try orm.enableStatementCache(512);
-
-// Check statistics
-if (orm.getStatementCacheStats()) |stats| {
-    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
-}
+// These optimizations are automatically applied when opening a database
+PRAGMA journal_mode = WAL;      // Concurrent reads during writes
+PRAGMA synchronous = NORMAL;    // Balanced safety and performance
+PRAGMA cache_size = -256000;    // 256MB cache
+PRAGMA busy_timeout = 10000;    // 10 second timeout
+PRAGMA temp_store = MEMORY;     // In-memory temp tables
+PRAGMA mmap_size = 268435456;   // 256MB memory-mapped I/O
 ```
 
 ### Query Builder

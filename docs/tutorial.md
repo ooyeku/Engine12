@@ -443,8 +443,8 @@ const ORM = Engine12.orm.ORM;
 
 pub fn initDatabase() !void {
     const db = try Database.open("todos.db", allocator);
-    // Enable statement caching for better performance (recommended: 512 statements)
-    const orm = try ORM.initWithCache(db, 512, allocator);
+    // Database automatically configures WAL mode and performance optimizations
+    const orm = ORM.init(db, allocator);
     // ... rest of initialization
 }
 ```
@@ -468,9 +468,8 @@ var global_orm: ?*ORM = null;
 
 pub fn init() !void {
     global_db = try Database.open("todos.db", std.heap.page_allocator);
-    // Initialize ORM with statement caching for better performance
+    // Initialize ORM (database auto-configures performance optimizations)
     global_orm = try ORM.initPtr(global_db.?, std.heap.page_allocator);
-    try global_orm.?.enableStatementCache(512);
 
     // Use migration auto-discovery
     const migration_discovery = @import("engine12").orm.migration_discovery;
@@ -1387,20 +1386,17 @@ fn handleFilterTodos(req: *Request) Response {
 - ❌ **Never interpolate user input** into SQL strings: `std.fmt.allocPrint(allocator, "SELECT * FROM users WHERE name = '{s}'", .{user_input})`
 - ❌ **Avoid `where()` with user input** - use `whereParams()` instead
 
-**Statement Caching:**
-Enable statement caching for better performance with repeated queries:
+**SQLite Optimizations:**
+The database automatically applies performance optimizations when opened:
 
 ```zig
-// At initialization
-var orm = try ORM.initWithCache(db, 512, allocator);
-
-// Or enable later
-try orm.enableStatementCache(512);
-
-// Check cache statistics
-if (orm.getStatementCacheStats()) |stats| {
-    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
-}
+// Database.open() automatically configures:
+// - WAL mode for concurrent reads/writes
+// - 256MB cache size
+// - Memory-mapped I/O
+// - 10 second busy timeout
+var db = try Database.open("app.db", allocator);
+var orm = ORM.init(db, allocator);
 ```
 
 ### 9.5 JSON Serialization

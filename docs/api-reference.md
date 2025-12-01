@@ -30,7 +30,6 @@ Complete reference for Engine12's public APIs.
 - [WebSocket API](#websocket-api)
 - [HTMX Integration](#htmx-integration)
 - [Error Handling](#error-handling)
-- [C API](#c-api)
 
 ## Engine12 Core
 
@@ -2393,20 +2392,6 @@ var db = try Database.open("app.db", allocator);
 var orm = ORM.init(db, allocator);
 ```
 
-#### `initWithCache(db: Database, max_statements: usize, allocator: Allocator) !ORM`
-Initialize ORM with prepared statement caching enabled. Recommended for production use to improve query performance.
-
-```zig
-var db = try Database.open("app.db", allocator);
-var orm = try ORM.initWithCache(db, 512, allocator);
-defer orm.deinit();
-```
-
-**Statement Caching Benefits:**
-- Reuses compiled SQL statements, avoiding repeated parsing
-- Significant performance improvement for repeated queries
-- Recommended cache size: 512 statements (default)
-
 #### `initPtr(db: Database, allocator: Allocator) !*ORM`
 Initialize ORM and return a heap-allocated pointer. Recommended for handler usage where you need to pass pointers.
 
@@ -2414,30 +2399,6 @@ Initialize ORM and return a heap-allocated pointer. Recommended for handler usag
 var db = try Database.open("app.db", allocator);
 var orm = try ORM.initPtr(db, allocator);
 defer orm.deinitPtr(allocator);
-```
-
-#### `enableStatementCache(self: *ORM, max_statements: usize) !void`
-Enable prepared statement caching for improved query performance. Can be called after initialization.
-
-```zig
-var orm = ORM.init(db, allocator);
-try orm.enableStatementCache(512); // Cache up to 512 statements
-```
-
-#### `disableStatementCache(self: *ORM) void`
-Disable and clear the statement cache.
-
-```zig
-orm.disableStatementCache();
-```
-
-#### `getStatementCacheStats(self: *ORM) ?CacheStats`
-Get statement cache statistics (hits and misses). Returns null if caching is not enabled.
-
-```zig
-if (orm.getStatementCacheStats()) |stats| {
-    std.debug.print("Cache hits: {}, misses: {}\n", .{ stats.hits, stats.misses });
-}
 ```
 
 **When to use `initPtr()`:**
@@ -5185,43 +5146,3 @@ fn handleRoot(req: *E12.Request) E12.Response {
     return E12.Response.text("Hello, World!");
 }
 ```
-
-## C API
-
-Engine12 provides a C API for use from other languages.
-
-### Initialization
-
-```c
-Engine12* app;
-E12ErrorCode err = e12_init(E12_ENV_DEVELOPMENT, &app);
-if (err != E12_OK) {
-    // Handle error
-}
-```
-
-### Route Registration
-
-```c
-E12Response* handler(E12Request* req, void* user_data) {
-    // Handle request
-    return e12_response_text("Hello, World!");
-}
-
-e12_get(app, "/", handler, NULL);
-```
-
-### Starting Server
-
-```c
-e12_start(app);
-```
-
-### Cleanup
-
-```c
-e12_free(app);
-```
-
-See `src/c_api/engine12.h` and `src/c_api/e12_orm.h` for complete C API documentation.
-
