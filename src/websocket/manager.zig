@@ -30,7 +30,7 @@ pub const WebSocketManager = struct {
     next_port: u16 = 9000,
 
     /// Built supervisor (stored after build)
-    built_supervisor: ?*anyopaque = null,
+    built_supervisor: ?vigil.Supervisor = null,
 
     /// Initialize WebSocket manager
     pub fn init(allocator: std.mem.Allocator) !WebSocketManager {
@@ -135,14 +135,19 @@ pub const WebSocketManager = struct {
         }
 
         // Build and start supervisor
-        // Note: The supervisor is consumed when started, we don't need to store it
-        var sup = supervisor.build();
-        try sup.start();
+        self.built_supervisor = supervisor.build();
+        try self.built_supervisor.?.start();
     }
 
     /// Stop all servers gracefully
     pub fn stop(self: *WebSocketManager) void {
-        // Vigil will handle graceful shutdown
+        // Stop and cleanup vigil supervisor
+        if (self.built_supervisor) |*sup| {
+            sup.stop();
+            sup.deinit();
+            self.built_supervisor = null;
+        }
+
         // Clean up server entries
         for (self.servers.items) |entry| {
             self.allocator.free(entry.path);

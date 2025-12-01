@@ -687,7 +687,7 @@ pub const Engine12 = struct {
     openapi_generator: ?openapi.OpenAPIGenerator = null,
 
     // Lifecycle
-    supervisor: ?*anyopaque = null,
+    supervisor: ?vigil.Supervisor = null,
     http_server: ?*anyopaque = null,
 
     // Graceful shutdown
@@ -2315,7 +2315,7 @@ pub const Engine12 = struct {
         self.stopHotReloadManager();
         self.stopWebSocketManager();
         try self.stopHttpServer();
-        try self.stopBackgroundTasks();
+        self.stopBackgroundTasks();
 
         const uptime = self.getUptimeMs();
         std.debug.print("[System] Shutdown complete. Uptime: {d}ms\n", .{uptime});
@@ -2425,14 +2425,16 @@ pub const Engine12 = struct {
         }
 
         // Build and start supervisor
-        // Note: The supervisor is consumed when started, we don't need to store it
-        var sup = supervisor.build();
-        try sup.start();
+        self.supervisor = supervisor.build();
+        try self.supervisor.?.start();
     }
 
-    fn stopBackgroundTasks(self: *Engine12) !void {
-        if (self.supervisor != null) {
+    fn stopBackgroundTasks(self: *Engine12) void {
+        if (self.supervisor) |*sup| {
             std.debug.print("[Tasks] Stopping all background tasks...\n", .{});
+            sup.stop();
+            sup.deinit();
+            self.supervisor = null;
         }
     }
 
