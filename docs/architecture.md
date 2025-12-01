@@ -138,36 +138,72 @@ This allows handlers to easily implement caching without direct cache access.
 
 ## ORM Architecture
 
+### Multi-Driver Design
+
+The ORM is designed with a **driver abstraction layer** that allows seamless switching between SQLite and PostgreSQL:
+
+```
+┌─────────────────────────────────────────────┐
+│              Application Code               │
+│         (Same API for both drivers)         │
+└─────────────────────────────────────────────┘
+                      │
+┌─────────────────────────────────────────────┐
+│                  ORM Layer                  │
+│   - CRUD operations (create, find, etc.)   │
+│   - Query Builder                           │
+│   - Migration Runner                        │
+└─────────────────────────────────────────────┘
+                      │
+┌─────────────────────────────────────────────┐
+│              Database Layer                 │
+│   - Driver-aware SQL generation            │
+│   - Type conversion (bool, int, etc.)      │
+│   - Connection management                   │
+└─────────────────────────────────────────────┘
+           │                    │
+    ┌──────┴──────┐      ┌──────┴──────┐
+    │   SQLite    │      │ PostgreSQL  │
+    │   Driver    │      │   Driver    │
+    │ (sqlite.zig)│      │(postgres.zig│
+    └─────────────┘      └─────────────┘
+```
+
 ### Database Layer
 
 The `Database` struct (`src/orm/database.zig`) provides:
 
-- SQLite connection management
+- **Multi-driver support**: SQLite and PostgreSQL with unified API
 - SQL execution (execute/query)
 - **Parameterized queries**: `executeParams()` and `queryParams()` for SQL injection prevention
 - Transaction support
-- Connection pooling
-- **Prepared statement caching**: Optional caching of compiled SQL statements for performance
+- Connection pooling (PostgreSQL uses pg.zig's built-in pooling)
+- **Thread-safe access**: SQLite opened with `SQLITE_OPEN_FULLMUTEX` for serialized mode
+- **Driver-aware SQL generation**: Automatic boolean conversion (`TRUE`/`FALSE` vs `0`/`1`)
 
 ### Parameter Binding
 
-The ORM uses SQLite's parameter binding API to prevent SQL injection:
+The ORM uses driver-specific parameter binding to prevent SQL injection:
 
-- **All CRUD operations use parameter binding**: `create()`, `update()`, `find()`, `delete()` all use `?` placeholders
+| Driver | Placeholder Style | Binding Method |
+|--------|-------------------|----------------|
+| SQLite | `?` | Direct SQLite bind API |
+| PostgreSQL | Literal embedding* | Escaped string literals |
+
+*Note: PostgreSQL uses literal embedding with proper escaping because pg.zig requires comptime-known parameter types.
+
+- **All CRUD operations use parameter binding**: `create()`, `update()`, `find()`, `delete()` all use parameterized queries
 - **ParamList**: Type-safe parameter list builder for complex queries
-- **Automatic type conversion**: `Param.from()` converts Zig types to SQLite parameters
-- **Zero SQL injection risk**: User input is always bound as parameters, never interpolated into SQL strings
+- **Automatic type conversion**: `Param.from()` converts Zig types to database parameters
+- **Zero SQL injection risk**: User input is always bound/escaped as parameters
 
 **Example:**
 ```zig
-// Safe - uses parameter binding
+// Safe - uses parameter binding (works with both drivers)
 var params = ParamList.init(allocator);
 defer params.deinit();
 try params.addString(user_input); // User input safely bound
 try db.queryParams("SELECT * FROM users WHERE name = ?", &params);
-
-// Unsafe - DO NOT DO THIS
-// var sql = try std.fmt.allocPrint(allocator, "SELECT * FROM users WHERE name = '{s}'", .{user_input});
 ```
 
 ### SQLite Integration
@@ -175,19 +211,62 @@ try db.queryParams("SELECT * FROM users WHERE name = ?", &params);
 The ORM interfaces directly with SQLite through Zig's C interop capabilities:
 
 - **Direct SQLite Calls**: Uses `sqlite3_*` functions directly via `@cImport`
-- **No FFI Overhead**: Direct function calls without wrapper layers
-- **SQLite Caching**: Leverages SQLite's built-in prepared statement caching
+- **Thread Safety**: Opens with `SQLITE_OPEN_FULLMUTEX` for serialized mode
 - **WAL Mode**: Automatically enables Write-Ahead Logging for better concurrency
 
 **Performance Optimizations Applied:**
 ```zig
-// These optimizations are automatically applied when opening a database
+// These optimizations are automatically applied when opening a SQLite database
 PRAGMA journal_mode = WAL;      // Concurrent reads during writes
 PRAGMA synchronous = NORMAL;    // Balanced safety and performance
 PRAGMA cache_size = -256000;    // 256MB cache
 PRAGMA busy_timeout = 10000;    // 10 second timeout
 PRAGMA temp_store = MEMORY;     // In-memory temp tables
 PRAGMA mmap_size = 268435456;   // 256MB memory-mapped I/O
+```
+
+### PostgreSQL Integration
+
+PostgreSQL support is provided through the `pg.zig` library:
+
+- **Connection Pooling**: Built-in connection pool (configurable size)
+- **Type Safety**: Strict OID-based type checking for query results
+- **Column Name Support**: Uses `column_names = true` for result set mapping
+
+**PostgreSQL-specific handling:**
+```zig
+// Type mapping from PostgreSQL OIDs
+// OID 21: int2 (smallint) -> i16 -> i64
+// OID 23: int4 (integer)  -> i32 -> i64
+// OID 20: int8 (bigint)   -> i64
+// OID 16: bool            -> bool
+// OID 700/701: float4/8   -> f32/f64
+// Others: text (varchar, text, etc.)
+```
+
+### Driver-Specific SQL Generation
+
+The ORM automatically generates driver-appropriate SQL:
+
+**Table Creation:**
+```sql
+-- SQLite
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  active INTEGER NOT NULL DEFAULT 0
+);
+
+-- PostgreSQL  
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  active BOOLEAN NOT NULL DEFAULT FALSE
+);
+```
+
+**Boolean Values:**
+```sql
+-- SQLite: completed = 1 / completed = 0
+-- PostgreSQL: completed = TRUE / completed = FALSE
 ```
 
 ### Query Builder

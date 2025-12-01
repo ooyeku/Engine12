@@ -8,6 +8,7 @@ const MigrationRunner = @import("migration_runner.zig").MigrationRunner;
 const Migration = @import("migration.zig").Migration;
 const MigrationRegistry = @import("migration.zig").MigrationRegistry;
 const params_mod = @import("params.zig");
+const driver_mod = @import("driver.zig");
 
 // Re-export comptime table name function
 pub const comptimeTableName = model.comptimeTableName;
@@ -39,6 +40,20 @@ pub const MigrationRegistryType = MigrationRegistry;
 pub const Model = @import("model_wrapper.zig").Model;
 pub const ModelWithORM = @import("model_wrapper.zig").ModelWithORM;
 pub const ModelStats = @import("model_wrapper.zig").ModelStats;
+
+// Re-export driver types for multi-database support
+pub const Driver = driver_mod.Driver;
+pub const DatabaseConfig = driver_mod.DatabaseConfig;
+pub const SqliteConfig = driver_mod.SqliteConfig;
+pub const PostgresConfig = driver_mod.PostgresConfig;
+pub const Dialect = driver_mod.Dialect;
+
+// Re-export PostgreSQL-specific types
+pub const postgres = @import("postgres.zig");
+pub const PostgresDatabase = postgres.PostgresDatabase;
+pub const PostgresQueryResult = postgres.PostgresQueryResult;
+pub const PostgresRow = postgres.PostgresRow;
+pub const convertPlaceholders = postgres.convertPlaceholders;
 
 /// Managed ORM result wrapper that automatically frees string fields on deinit
 pub fn Result(comptime T: type) type {
@@ -2111,7 +2126,7 @@ test "ORM initPtr and deinitPtr" {
     var orm = try ORM.initPtr(db, allocator);
     defer orm.deinitPtr(allocator);
 
-    try std.testing.expect(@intFromPtr(orm.db.db) != 0);
+    try std.testing.expect(orm.db.sqlite_db != null);
 }
 
 // Test deleted - failing column mismatch detection

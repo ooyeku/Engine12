@@ -5,7 +5,7 @@ Complete walkthrough of the Engine12 todo application example.
 ## Overview
 
 The todo app demonstrates:
-- Database setup and ORM usage
+- Database setup and ORM usage (**SQLite and PostgreSQL**)
 - CRUD operations (Create, Read, Update, Delete)
 - RESTful API endpoints
 - Template rendering
@@ -20,6 +20,7 @@ todo/
 ├── src/
 │   ├── app.zig          # Main application code
 │   ├── main.zig         # Entry point
+│   ├── database.zig     # Database configuration (multi-driver)
 │   └── templates/
 │       └── index.zt.html # HTML template
 ├── frontend/
@@ -28,6 +29,24 @@ todo/
 │   └── js/
 │       └── app.js       # Frontend JavaScript
 └── todo.db              # SQLite database (created at runtime)
+```
+
+## Running with Different Databases
+
+### SQLite (Default)
+
+```bash
+zig build todo-run
+```
+
+### PostgreSQL
+
+```bash
+# Create database first
+createdb todo_app
+
+# Run with PostgreSQL
+DB_DRIVER=postgresql PGUSER=$USER PGDATABASE=todo_app zig build todo-run
 ```
 
 ## Database Setup
@@ -58,7 +77,7 @@ const Todo = struct {
 
 ### Database Initialization
 
-**Recommended**: Use Engine12's built-in database management:
+**Recommended**: Use Engine12's built-in database management for SQLite:
 
 ```zig
 pub fn main() !void {
@@ -72,6 +91,53 @@ pub fn main() !void {
     const orm = try app.getORM();
     
     // ... rest of code
+}
+```
+
+**Multi-Driver Setup**: For SQLite/PostgreSQL support via environment variables:
+
+```zig
+const std = @import("std");
+const Engine12 = @import("engine12");
+const Database = Engine12.orm.Database;
+const DatabaseConfig = Engine12.orm.DatabaseConfig;
+const ORM = Engine12.orm.ORM;
+const Driver = Engine12.orm.Driver;
+
+var global_db: ?Database = null;
+var global_orm: ?ORM = null;
+var current_driver: Driver = .sqlite;
+
+pub fn initDatabase() !void {
+    // Check environment for driver selection
+    if (std.posix.getenv("DB_DRIVER")) |driver_env| {
+        if (std.mem.eql(u8, driver_env, "postgresql")) {
+            current_driver = .postgresql;
+        }
+    }
+
+    const config = switch (current_driver) {
+        .sqlite => DatabaseConfig.sqlite(
+            std.posix.getenv("SQLITE_PATH") orelse "todo.db"
+        ),
+        .postgresql => DatabaseConfig.postgresql(.{
+            .host = std.posix.getenv("PGHOST") orelse "localhost",
+            .port = 5432,
+            .database = std.posix.getenv("PGDATABASE") orelse "todo_app",
+            .username = std.posix.getenv("PGUSER") orelse "postgres",
+            .password = std.posix.getenv("PGPASSWORD"),
+        }),
+    };
+
+    global_db = try Database.openWithConfig(config, std.heap.page_allocator);
+    global_orm = ORM.init(global_db.?, std.heap.page_allocator);
+
+    // Run driver-specific migrations
+    try runMigrations();
+}
+
+pub fn getDriver() Driver {
+    return current_driver;
 }
 ```
 

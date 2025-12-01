@@ -170,7 +170,7 @@ try database.init();
 defer database.close();
 ```
 
-**Problem**: "Database is locked" error.
+**Problem**: "Database is locked" error (SQLite).
 
 **Solution**: 
 1. Ensure only one connection per database file (or use connection pooling)
@@ -180,13 +180,71 @@ defer database.close();
    ```
 3. Check for long-running transactions
 
-**Problem**: Database file permissions error.
+**Problem**: Database file permissions error (SQLite).
 
 **Solution**: Ensure the application has write permissions to the database directory:
 
 ```bash
 chmod 755 /path/to/database/directory
 ```
+
+### PostgreSQL Connection Errors
+
+**Problem**: "role does not exist" error.
+
+**Solution**: On macOS with Homebrew PostgreSQL, the default user is your macOS username, not "postgres":
+
+```bash
+# Check your PostgreSQL users
+psql -l
+
+# Use your macOS username
+DB_DRIVER=postgresql PGUSER=$USER PGDATABASE=myapp zig build run
+```
+
+**Problem**: "connection refused" error.
+
+**Solution**: 
+1. Ensure PostgreSQL is running:
+   ```bash
+   # macOS with Homebrew
+   brew services start postgresql
+   
+   # Linux
+   sudo systemctl start postgresql
+   ```
+2. Check the host and port settings
+3. Verify `pg_hba.conf` allows your connection
+
+**Problem**: "database does not exist" error.
+
+**Solution**: Create the database first:
+
+```bash
+createdb myapp
+# Or with specific user
+createdb -U myuser myapp
+```
+
+**Problem**: "type mismatch" panic with PostgreSQL.
+
+**Solution**: PostgreSQL has strict type checking. Ensure your schema uses correct types:
+
+| Purpose | SQLite | PostgreSQL |
+|---------|--------|------------|
+| Auto-increment ID | `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` |
+| Boolean | `INTEGER` (0/1) | `BOOLEAN` |
+| String | `TEXT` | `TEXT` or `VARCHAR(n)` |
+| Large Integer | `INTEGER` | `BIGINT` |
+| Timestamps | `INTEGER` | `BIGINT` |
+
+**Problem**: "WrongNumberOfParameters" error with PostgreSQL.
+
+**Solution**: This is handled automatically by the ORM. If you're using raw SQL, ensure placeholders match:
+- SQLite uses `?` placeholders
+- PostgreSQL uses `$1, $2, ...` placeholders
+
+The ORM's `buildSqlWithLiterals` function handles this conversion automatically.
 
 ### ORM Issues
 

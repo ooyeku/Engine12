@@ -103,6 +103,7 @@ pub const Param = union(ParamType) {
 
 /// A list of parameters for SQL prepared statements
 /// Manages an array of parameters that can be passed to parameterized queries
+/// Works with both SQLite and PostgreSQL
 pub const ParamList = struct {
     items: std.ArrayListUnmanaged(Param),
     allocator: std.mem.Allocator,
@@ -116,6 +117,19 @@ pub const ParamList = struct {
 
     pub fn deinit(self: *ParamList) void {
         self.items.deinit(self.allocator);
+    }
+
+    /// Get parameters as an array of values suitable for pg.zig
+    /// Returns an array of anytype values that can be used with pg.Pool.query()
+    /// Note: For PostgreSQL, you typically pass parameters directly to query() as a tuple
+    pub fn toPostgresValues(self: *const ParamList) []const Param {
+        return self.items.items;
+    }
+
+    /// Get a specific parameter value as a variant type for PostgreSQL
+    pub fn getParam(self: *const ParamList, index: usize) ?Param {
+        if (index >= self.items.items.len) return null;
+        return self.items.items[index];
     }
 
     /// Add a parameter or any supported value type to the list

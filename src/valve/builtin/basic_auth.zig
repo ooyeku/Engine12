@@ -140,25 +140,58 @@ pub const BasicAuthValve = struct {
 
     /// Run database migration to create users table
     fn runMigration(self: *Self, allocator: std.mem.Allocator) !void {
-        // Create table directly - simpler and more reliable for built-in valve
-        const create_table_sql = try std.fmt.allocPrint(allocator,
-            \\CREATE TABLE IF NOT EXISTS {s} (
-            \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
-            \\  username TEXT UNIQUE NOT NULL,
-            \\  email TEXT UNIQUE NOT NULL,
-            \\  password_hash TEXT NOT NULL,
-            \\  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-            \\  updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-            \\);
-            \\CREATE INDEX IF NOT EXISTS idx_users_username ON {s}(username);
-            \\CREATE INDEX IF NOT EXISTS idx_users_email ON {s}(email);
-        , .{ self.config.user_table_name, self.config.user_table_name, self.config.user_table_name });
-        defer allocator.free(create_table_sql);
+        // Check database driver and use appropriate SQL syntax
+        const driver = self.config.orm.db.getDriver();
 
-        // Execute the SQL directly
-        self.config.orm.db.execute(create_table_sql) catch |err| {
-            return err;
-        };
+        switch (driver) {
+            .sqlite => {
+                // SQLite-specific syntax
+                const create_table_sql = try std.fmt.allocPrint(allocator,
+                    \\CREATE TABLE IF NOT EXISTS {s} (
+                    \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    \\  username TEXT UNIQUE NOT NULL,
+                    \\  email TEXT UNIQUE NOT NULL,
+                    \\  password_hash TEXT NOT NULL,
+                    \\  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                    \\  updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+                    \\);
+                    \\CREATE INDEX IF NOT EXISTS idx_users_username ON {s}(username);
+                    \\CREATE INDEX IF NOT EXISTS idx_users_email ON {s}(email);
+                , .{ self.config.user_table_name, self.config.user_table_name, self.config.user_table_name });
+                defer allocator.free(create_table_sql);
+
+                self.config.orm.db.execute(create_table_sql) catch |err| {
+                    return err;
+                };
+            },
+            .postgresql => {
+                // PostgreSQL-specific syntax
+                const create_table_sql = try std.fmt.allocPrint(allocator,
+                    \\CREATE TABLE IF NOT EXISTS {s} (
+                    \\  id SERIAL PRIMARY KEY,
+                    \\  username VARCHAR(255) UNIQUE NOT NULL,
+                    \\  email VARCHAR(255) UNIQUE NOT NULL,
+                    \\  password_hash TEXT NOT NULL,
+                    \\  created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+                    \\  updated_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+                    \\)
+                , .{self.config.user_table_name});
+                defer allocator.free(create_table_sql);
+
+                self.config.orm.db.execute(create_table_sql) catch |err| {
+                    return err;
+                };
+
+                // Create indexes separately for PostgreSQL
+                const idx1 = try std.fmt.allocPrint(allocator, "CREATE INDEX IF NOT EXISTS idx_users_username ON {s}(username)", .{self.config.user_table_name});
+                defer allocator.free(idx1);
+                self.config.orm.db.execute(idx1) catch {};
+
+                const idx2 = try std.fmt.allocPrint(allocator, "CREATE INDEX IF NOT EXISTS idx_users_email ON {s}(email)", .{self.config.user_table_name});
+                defer allocator.free(idx2);
+                self.config.orm.db.execute(idx2) catch {};
+            },
+        }
     }
 
     /// Authentication middleware

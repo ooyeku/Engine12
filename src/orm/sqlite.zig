@@ -53,8 +53,18 @@ pub const SQLITE_NULL = c.SQLITE_NULL;
 // which is the case for our ORM since ParamList data must remain valid during query execution
 pub const SQLITE_STATIC: c.sqlite3_destructor_type = null;
 
+// Open flags for sqlite3_open_v2
+pub const SQLITE_OPEN_READONLY = c.SQLITE_OPEN_READONLY;
+pub const SQLITE_OPEN_READWRITE = c.SQLITE_OPEN_READWRITE;
+pub const SQLITE_OPEN_CREATE = c.SQLITE_OPEN_CREATE;
+pub const SQLITE_OPEN_NOMUTEX = c.SQLITE_OPEN_NOMUTEX;
+pub const SQLITE_OPEN_FULLMUTEX = c.SQLITE_OPEN_FULLMUTEX;
+pub const SQLITE_OPEN_SHAREDCACHE = c.SQLITE_OPEN_SHAREDCACHE;
+pub const SQLITE_OPEN_PRIVATECACHE = c.SQLITE_OPEN_PRIVATECACHE;
+
 // Database connection functions
 pub const open = c.sqlite3_open;
+pub const open_v2 = c.sqlite3_open_v2;
 pub const close = c.sqlite3_close;
 pub const errmsg = c.sqlite3_errmsg;
 pub const changes = c.sqlite3_changes;
@@ -114,4 +124,3 @@ pub fn getColumnText(stmt: ?*sqlite3_stmt, col: c_int) ?[]const u8 {
 pub fn isColumnNull(stmt: ?*sqlite3_stmt, col: c_int) bool {
     return column_type(stmt, col) == SQLITE_NULL;
 }
-

@@ -23,6 +23,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const pg_dep = b.dependency("pg", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create ziggurat module from its root source
     const ziggurat_mod = b.createModule(.{
         .root_source_file = ziggurat.path("src/root.zig"),
@@ -30,10 +35,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add vigil, ziggurat, and websocket to the engine12 module's imports
+    // Add vigil, ziggurat, websocket, and pg to the engine12 module's imports
     mod.addImport("vigil", vigil.module("vigil"));
     mod.addImport("ziggurat", ziggurat_mod);
     mod.addImport("websocket", websocket_dep.module("websocket"));
+    mod.addImport("pg", pg_dep.module("pg"));
 
     // Link system SQLite library for direct sqlite3 calls in ORM
     mod.linkSystemLibrary("sqlite3", .{});

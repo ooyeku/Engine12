@@ -160,10 +160,13 @@ fn cleanupOldCompletedTodos() void {
     };
     const now = std.time.milliTimestamp();
 
-    // Use raw SQL to delete old completed todos for all users
-    const sql = std.fmt.allocPrint(orm.allocator,
-        \\DELETE FROM todos WHERE completed = 1 AND ({} - updated_at) > {}
-    , .{ now, SEVEN_DAYS_MS }) catch {
+    // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+    const completed_val = if (database.getDriver() == .postgresql) "TRUE" else "1";
+    const sql = std.fmt.allocPrint(
+        orm.allocator,
+        "DELETE FROM todos WHERE completed = {s} AND ({} - updated_at) > {}",
+        .{ completed_val, now, SEVEN_DAYS_MS },
+    ) catch {
         if (logger) |l| l.errorMsg("Failed to build cleanup SQL");
         return;
     };
@@ -190,10 +193,13 @@ fn checkOverdueTodos() void {
     };
     const now = std.time.milliTimestamp();
 
-    // Use raw SQL to count overdue todos for all users
-    const sql = std.fmt.allocPrint(orm.allocator,
-        \\SELECT COUNT(*) as count FROM todos WHERE completed = 0 AND due_date IS NOT NULL AND due_date < {}
-    , .{now}) catch {
+    // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+    const completed_val = if (database.getDriver() == .postgresql) "FALSE" else "0";
+    const sql = std.fmt.allocPrint(
+        orm.allocator,
+        "SELECT COUNT(*) as count FROM todos WHERE completed = {s} AND due_date IS NOT NULL AND due_date < {}",
+        .{ completed_val, now },
+    ) catch {
         if (logger) |l| l.errorMsg("Failed to build overdue check SQL");
         return;
     };

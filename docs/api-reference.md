@@ -2382,13 +2382,36 @@ try app.usePreRequest(req_id_mw_fn);
 
 ## ORM API
 
+Engine12's ORM provides a unified interface for both SQLite and PostgreSQL databases. The same code works with both drivers - just change the database configuration.
+
+### Multi-Driver Support
+
+The ORM automatically handles driver-specific SQL differences:
+
+| Feature | SQLite | PostgreSQL |
+|---------|--------|------------|
+| Auto-increment | `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` |
+| Boolean literals | `0`, `1` | `FALSE`, `TRUE` |
+| Placeholders | `?` | `$1, $2, ...` |
+| Last insert ID | `sqlite3_last_insert_rowid()` | `RETURNING` clause |
+| Timestamps | `INTEGER` | `BIGINT` |
+
 ### Initialization
 
 #### `init(db: Database, allocator: Allocator) ORM`
 Initialize ORM with a database connection. Returns a value type.
 
 ```zig
+// SQLite
 var db = try Database.open("app.db", allocator);
+var orm = ORM.init(db, allocator);
+
+// PostgreSQL
+var db = try Database.openWithConfig(DatabaseConfig.postgresql(.{
+    .host = "localhost",
+    .database = "myapp",
+    .username = "myuser",
+}), allocator);
 var orm = ORM.init(db, allocator);
 ```
 
@@ -2876,10 +2899,91 @@ try orm.execute("DELETE FROM todos WHERE completed = 1");
 
 ## Database API
 
+Engine12's ORM supports both **SQLite** and **PostgreSQL** databases with a unified API. Switch between drivers with minimal code changes.
+
+### Database Drivers
+
+#### Supported Drivers
+
+| Driver | Type | Use Case |
+|--------|------|----------|
+| `sqlite` | Embedded | Development, single-server deployments |
+| `postgresql` | Client-server | Production, multi-server deployments |
+
+### Driver Configuration
+
+#### `DatabaseConfig` - Multi-Driver Configuration
+
+```zig
+const orm = @import("engine12").orm;
+const DatabaseConfig = orm.DatabaseConfig;
+
+// SQLite configuration
+const sqlite_config = DatabaseConfig.sqlite("app.db");
+
+// PostgreSQL configuration
+const pg_config = DatabaseConfig.postgresql(.{
+    .host = "localhost",
+    .port = 5432,
+    .database = "myapp",
+    .username = "myuser",
+    .password = "mypassword",
+    .pool_size = 10,
+});
+
+// Open with config
+var db = try Database.openWithConfig(pg_config, allocator);
+defer db.close();
+```
+
+#### `SqliteConfig` struct
+
+```zig
+pub const SqliteConfig = struct {
+    path: []const u8,           // Database file path
+    wal_mode: bool = true,      // Enable WAL mode (recommended)
+    cache_size_kb: u32 = 256000, // Cache size in KB
+    busy_timeout_ms: u32 = 10000, // Busy timeout in ms
+};
+```
+
+#### `PostgresConfig` struct
+
+```zig
+pub const PostgresConfig = struct {
+    host: []const u8 = "127.0.0.1",
+    port: u16 = 5432,
+    database: []const u8,
+    username: []const u8,
+    password: ?[]const u8 = null,
+    pool_size: u32 = 10,
+    auth_timeout_ms: u64 = 10_000,
+};
+```
+
+### Environment Variable Configuration
+
+For PostgreSQL, you can use standard PostgreSQL environment variables:
+
+```bash
+# Set database driver
+export DB_DRIVER=postgresql  # or sqlite (default)
+
+# PostgreSQL settings
+export PGHOST=localhost
+export PGPORT=5432
+export PGDATABASE=myapp
+export PGUSER=myuser
+export PGPASSWORD=mypassword
+
+# SQLite settings  
+export SQLITE_PATH=app.db
+```
+
 ### Engine12 Database Integration
 
 #### `initDatabase(db_path: []const u8) !void`
-Initialize database using singleton pattern. Opens database and creates ORM instance. Thread-safe and idempotent (can be called multiple times safely).
+Initialize SQLite database using singleton pattern. Opens database and creates ORM instance. Thread-safe and idempotent.
 
 ```zig
 try app.initDatabase("app.db");
@@ -2891,7 +2995,7 @@ try app.initDatabase("app.db");
 - Idempotent (safe to call multiple times)
 
 #### `initDatabaseWithMigrations(db_path: []const u8, migrations_dir: []const u8) !void`
-Initialize database and run migrations automatically. Discovers migrations from directory and runs them. Supports both `init.zig` convention and numbered migration files.
+Initialize database and run migrations automatically. Discovers migrations from directory and runs them.
 
 ```zig
 try app.initDatabaseWithMigrations("app.db", "src/migrations");
@@ -2915,11 +3019,38 @@ const items = try orm.findAll(Item);
 ### Connection
 
 #### `open(path: []const u8, allocator: Allocator) !Database`
-Open a SQLite database connection.
+Open a SQLite database connection. (Legacy API - use `openWithConfig` for multi-driver support)
 
 ```zig
 var db = try Database.open("app.db", allocator);
 defer db.close();
+```
+
+#### `openWithConfig(config: DatabaseConfig, allocator: Allocator) !Database`
+Open a database connection with driver-specific configuration. **Recommended for new projects.**
+
+```zig
+// SQLite
+var db = try Database.openWithConfig(DatabaseConfig.sqlite("app.db"), allocator);
+
+// PostgreSQL
+var db = try Database.openWithConfig(DatabaseConfig.postgresql(.{
+    .host = "localhost",
+    .database = "myapp",
+    .username = "myuser",
+}), allocator);
+
+defer db.close();
+```
+
+#### `getDriver() Driver`
+Get the current database driver type.
+
+```zig
+const driver = db.getDriver();
+if (driver == .postgresql) {
+    // PostgreSQL-specific logic
+}
 ```
 
 #### `close() void`

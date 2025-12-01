@@ -1,4 +1,6 @@
 const std = @import("std");
+const driver_mod = @import("driver.zig");
+const Driver = driver_mod.Driver;
 
 pub const QueryBuilder = struct {
     allocator: std.mem.Allocator,
@@ -10,11 +12,14 @@ pub const QueryBuilder = struct {
     order_by_field: ?[]const u8 = null,
     order_ascending: bool = true,
     join_clauses: std.ArrayListUnmanaged(JoinClause),
+    driver: Driver = .sqlite,
+    param_index: usize = 0,
     
     pub const WhereClause = struct {
         field: []const u8,
         operator: []const u8,
         value: []const u8,
+        is_param: bool = false,
     };
     
     pub const JoinClause = struct {
@@ -23,6 +28,7 @@ pub const QueryBuilder = struct {
         on: []const u8,
     };
     
+    /// Initialize a query builder for SQLite (default, backward compatible)
     pub fn init(allocator: std.mem.Allocator, table_name: []const u8) QueryBuilder {
         return QueryBuilder{
             .allocator = allocator,
@@ -30,7 +36,28 @@ pub const QueryBuilder = struct {
             .select_fields = .{},
             .where_clauses = .{},
             .join_clauses = .{},
+            .driver = .sqlite,
+            .param_index = 0,
         };
+    }
+
+    /// Initialize a query builder for a specific driver
+    pub fn initWithDriver(allocator: std.mem.Allocator, table_name: []const u8, driver: Driver) QueryBuilder {
+        return QueryBuilder{
+            .allocator = allocator,
+            .table_name = table_name,
+            .select_fields = .{},
+            .where_clauses = .{},
+            .join_clauses = .{},
+            .driver = driver,
+            .param_index = 0,
+        };
+    }
+
+    /// Set the target driver for SQL generation
+    pub fn forDriver(self: *QueryBuilder, driver: Driver) *QueryBuilder {
+        self.driver = driver;
+        return self;
     }
     
     pub fn deinit(self: *QueryBuilder) void {
@@ -77,6 +104,38 @@ pub const QueryBuilder = struct {
     
     pub fn whereLte(self: *QueryBuilder, field: []const u8, value: []const u8) *QueryBuilder {
         return self.where(field, "<=", value);
+    }
+
+    /// Add a parameterized WHERE clause (uses ? or $N placeholder)
+    pub fn whereParam(self: *QueryBuilder, field: []const u8, operator: []const u8) *QueryBuilder {
+        self.param_index += 1;
+        self.where_clauses.append(self.allocator, .{
+            .field = field,
+            .operator = operator,
+            .value = "",
+            .is_param = true,
+        }) catch {};
+        return self;
+    }
+
+    /// Add a parameterized WHERE = clause
+    pub fn whereEqParam(self: *QueryBuilder, field: []const u8) *QueryBuilder {
+        return self.whereParam(field, "=");
+    }
+
+    /// Add a parameterized WHERE > clause
+    pub fn whereGtParam(self: *QueryBuilder, field: []const u8) *QueryBuilder {
+        return self.whereParam(field, ">");
+    }
+
+    /// Add a parameterized WHERE < clause
+    pub fn whereLtParam(self: *QueryBuilder, field: []const u8) *QueryBuilder {
+        return self.whereParam(field, "<");
+    }
+
+    /// Get the current parameter count (useful for binding)
+    pub fn getParamCount(self: *const QueryBuilder) usize {
+        return self.param_index;
     }
     
     pub fn limit(self: *QueryBuilder, count: usize) *QueryBuilder {
@@ -130,20 +189,35 @@ pub const QueryBuilder = struct {
         // WHERE clause
         if (self.where_clauses.items.len > 0) {
             try sql.writer(self.allocator).print(" WHERE ", .{});
+            var param_counter: usize = 0;
             for (self.where_clauses.items, 0..) |clause, i| {
                 if (i > 0) try sql.writer(self.allocator).print(" AND ", .{});
-                // Escape single quotes in value
-                var escaped_value = std.ArrayListUnmanaged(u8){};
-                defer escaped_value.deinit(self.allocator);
-                for (clause.value) |char| {
-                    if (char == '\'') {
-                        try escaped_value.append(self.allocator, '\'');
-                        try escaped_value.append(self.allocator, '\'');
-                    } else {
-                        try escaped_value.append(self.allocator, char);
+                
+                if (clause.is_param) {
+                    // Use parameterized placeholder
+                    param_counter += 1;
+                    switch (self.driver) {
+                        .sqlite => {
+                            try sql.writer(self.allocator).print("{s} {s} ?", .{ clause.field, clause.operator });
+                        },
+                        .postgresql => {
+                            try sql.writer(self.allocator).print("{s} {s} ${d}", .{ clause.field, clause.operator, param_counter });
+                        },
                     }
+                } else {
+                    // Escape single quotes in literal value
+                    var escaped_value = std.ArrayListUnmanaged(u8){};
+                    defer escaped_value.deinit(self.allocator);
+                    for (clause.value) |char| {
+                        if (char == '\'') {
+                            try escaped_value.append(self.allocator, '\'');
+                            try escaped_value.append(self.allocator, '\'');
+                        } else {
+                            try escaped_value.append(self.allocator, char);
+                        }
+                    }
+                    try sql.writer(self.allocator).print("{s} {s} '{s}'", .{ clause.field, clause.operator, escaped_value.items });
                 }
-                try sql.writer(self.allocator).print("{s} {s} '{s}'", .{ clause.field, clause.operator, escaped_value.items });
             }
         }
         
@@ -354,4 +428,51 @@ test "QueryBuilder whereNe" {
     defer allocator.free(sql);
     
     try std.testing.expect(std.mem.indexOf(u8, sql, "name != 'Alice'") != null);
+}
+
+test "QueryBuilder parameterized WHERE SQLite" {
+    const allocator = std.testing.allocator;
+    var builder = QueryBuilder.init(allocator, "users");
+    defer builder.deinit();
+    
+    const sql = try builder.whereEqParam("id").whereGtParam("age").build();
+    defer allocator.free(sql);
+    
+    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = ? AND age > ?", sql);
+    try std.testing.expectEqual(@as(usize, 2), builder.getParamCount());
+}
+
+test "QueryBuilder parameterized WHERE PostgreSQL" {
+    const allocator = std.testing.allocator;
+    var builder = QueryBuilder.initWithDriver(allocator, "users", .postgresql);
+    defer builder.deinit();
+    
+    const sql = try builder.whereEqParam("id").whereGtParam("age").build();
+    defer allocator.free(sql);
+    
+    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = $1 AND age > $2", sql);
+}
+
+test "QueryBuilder forDriver switch" {
+    const allocator = std.testing.allocator;
+    var builder = QueryBuilder.init(allocator, "users");
+    defer builder.deinit();
+    
+    _ = builder.forDriver(.postgresql).whereEqParam("id");
+    const sql = try builder.build();
+    defer allocator.free(sql);
+    
+    try std.testing.expectEqualStrings("SELECT * FROM users WHERE id = $1", sql);
+}
+
+test "QueryBuilder mixed literal and param" {
+    const allocator = std.testing.allocator;
+    var builder = QueryBuilder.init(allocator, "users");
+    defer builder.deinit();
+    
+    const sql = try builder.whereEq("active", "1").whereEqParam("id").build();
+    defer allocator.free(sql);
+    
+    try std.testing.expect(std.mem.indexOf(u8, sql, "active = '1'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sql, "id = ?") != null);
 }

@@ -387,7 +387,7 @@ curl -X DELETE http://127.0.0.1:8080/todos/1
 
 ## Step 4: Database Integration
 
-Now let's add persistent storage with SQLite.
+Engine12's ORM supports both **SQLite** and **PostgreSQL** databases. You can easily switch between them with minimal code changes.
 
 **Note**: The ORM maps columns to struct fields by name, not by position. This means column order in your queries doesn't need to match struct field order - the ORM will automatically match columns by name.
 
@@ -407,6 +407,8 @@ const AppUser = struct {
 ```
 
 **New in this version**:
+- **PostgreSQL support** - Full PostgreSQL integration via pg.zig
+- **Multi-driver ORM** - Same API works with SQLite and PostgreSQL
 - `whereWithOptions()` - Query with ORDER BY support
 - `upsert()` / `upsertIgnore()` - Insert or replace records silently
 - `whereManaged()` - Automatic memory management for query results
@@ -418,42 +420,117 @@ const AppUser = struct {
 
 ### 4.1 Initialize Database
 
-**Recommended**: Use Engine12's built-in database initialization with statement caching:
+#### SQLite (Default)
+
+**Recommended**: Use Engine12's built-in database initialization:
 
 ```zig
 pub fn main() !void {
     var app = try Engine12.initDevelopment();
     defer app.deinit();
 
-    // Initialize database and run migrations automatically
+    // Initialize SQLite database and run migrations automatically
     try app.initDatabaseWithMigrations("todos.db", "src/migrations");
 
-    // Get ORM instance when needed (statement caching enabled automatically)
+    // Get ORM instance when needed
     const orm = try app.getORM();
     
     // ... rest of code
 }
 ```
 
-**Alternative**: If you need more control, initialize with explicit statement caching:
+#### PostgreSQL
+
+For PostgreSQL, use `DatabaseConfig` with environment variables or explicit configuration:
 
 ```zig
+const std = @import("std");
+const Engine12 = @import("engine12");
 const Database = Engine12.orm.Database;
+const DatabaseConfig = Engine12.orm.DatabaseConfig;
 const ORM = Engine12.orm.ORM;
 
+var global_db: ?Database = null;
+var global_orm: ?ORM = null;
+
 pub fn initDatabase() !void {
-    const db = try Database.open("todos.db", allocator);
-    // Database automatically configures WAL mode and performance optimizations
-    const orm = ORM.init(db, allocator);
-    // ... rest of initialization
+    // Option 1: Use environment variables
+    // Set: DB_DRIVER=postgresql PGHOST=localhost PGDATABASE=myapp PGUSER=myuser
+    
+    // Option 2: Explicit configuration
+    const config = DatabaseConfig.postgresql(.{
+        .host = std.posix.getenv("PGHOST") orelse "localhost",
+        .port = 5432,
+        .database = std.posix.getenv("PGDATABASE") orelse "todos",
+        .username = std.posix.getenv("PGUSER") orelse "postgres",
+        .password = std.posix.getenv("PGPASSWORD"),
+        .pool_size = 10,
+    });
+
+    global_db = try Database.openWithConfig(config, std.heap.page_allocator);
+    global_orm = ORM.init(global_db.?, std.heap.page_allocator);
+
+    // Run migrations (PostgreSQL-specific syntax is handled automatically)
+    try runMigrations();
+}
+
+pub fn getORM() !*ORM {
+    if (global_orm) |*orm| {
+        return orm;
+    }
+    return error.DatabaseNotInitialized;
+}
+```
+
+**Running with PostgreSQL:**
+```bash
+# Using environment variables
+DB_DRIVER=postgresql PGUSER=myuser PGDATABASE=myapp zig build run
+
+# Or with explicit password
+DB_DRIVER=postgresql PGUSER=myuser PGPASSWORD=secret PGDATABASE=myapp zig build run
+```
+
+#### Driver-Specific Migrations
+
+When using PostgreSQL, your migrations should handle driver differences:
+
+```zig
+// src/migrations/1_create_todos.zig
+const std = @import("std");
+const Migration = @import("engine12").orm.Migration;
+
+pub fn getMigration(driver: anytype) Migration {
+    const is_postgres = driver == .postgresql;
+    
+    return Migration.init(
+        1,
+        "create_todos",
+        if (is_postgres)
+            \\CREATE TABLE IF NOT EXISTS todos (
+            \\  id SERIAL PRIMARY KEY,
+            \\  title VARCHAR(255) NOT NULL,
+            \\  completed BOOLEAN NOT NULL DEFAULT FALSE,
+            \\  created_at BIGINT NOT NULL
+            \\)
+        else
+            \\CREATE TABLE IF NOT EXISTS todos (
+            \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+            \\  title TEXT NOT NULL,
+            \\  completed INTEGER NOT NULL DEFAULT 0,
+            \\  created_at INTEGER NOT NULL
+            \\)
+        ,
+        "DROP TABLE IF EXISTS todos"
+    );
 }
 ```
 
 **Benefits**:
-- No need for a separate `database.zig` file
-- Automatic migration discovery and execution
-- Thread-safe singleton pattern
-- Idempotent (safe to call multiple times)
+- Same ORM API for both databases
+- Automatic type conversion (boolean, integers, etc.)
+- Connection pooling for PostgreSQL
+- Thread-safe SQLite access
 
 **Alternative**: If you need more control, you can still create a `database.zig` file:
 
