@@ -2,6 +2,8 @@ const std = @import("std");
 const Database = @import("database.zig").Database;
 const ConnectionPool = @import("database.zig").ConnectionPool;
 const ConnectionPoolConfig = @import("database.zig").ConnectionPoolConfig;
+const DatabaseConfig = @import("driver.zig").DatabaseConfig;
+const Driver = @import("driver.zig").Driver;
 const ORM = @import("orm.zig").ORM;
 
 /// Configuration for DatabaseSingleton with connection pooling
@@ -15,6 +17,50 @@ pub const DatabasePoolConfig = struct {
     /// Acquire timeout in milliseconds (default: 10 seconds)
     acquire_timeout_ms: u64 = 10000,
 };
+
+/// Load database configuration from environment variables
+/// Checks DB_DRIVER to determine driver (sqlite or postgresql)
+/// For PostgreSQL, reads PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
+/// For SQLite, uses provided path or SQLITE_PATH env var
+/// Returns a DatabaseConfig ready to use with initWithConfig()
+pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) !DatabaseConfig {
+    // Check for driver selection
+    const driver_env = std.posix.getenv("DB_DRIVER");
+    const driver: Driver = if (driver_env) |d| blk: {
+        if (std.mem.eql(u8, d, "postgresql") or std.mem.eql(u8, d, "postgres")) {
+            break :blk .postgresql;
+        }
+        break :blk .sqlite;
+    } else .sqlite;
+
+    if (driver == .postgresql) {
+        // Load PostgreSQL configuration from environment
+        const host = std.posix.getenv("PGHOST") orelse "127.0.0.1";
+        const port_str = std.posix.getenv("PGPORT");
+        const port: u16 = if (port_str) |p| std.fmt.parseInt(u16, p, 10) catch 5432 else 5432;
+        const database = std.posix.getenv("PGDATABASE") orelse {
+            std.debug.print("[Database] Error: PGDATABASE environment variable is required for PostgreSQL\n", .{});
+            return error.MissingDatabaseConfig;
+        };
+        const username = std.posix.getenv("PGUSER") orelse {
+            std.debug.print("[Database] Error: PGUSER environment variable is required for PostgreSQL\n", .{});
+            return error.MissingDatabaseConfig;
+        };
+        const password = std.posix.getenv("PGPASSWORD");
+
+        return DatabaseConfig.postgresql(.{
+            .host = host,
+            .port = port,
+            .database = database,
+            .username = username,
+            .password = password,
+        });
+    } else {
+        // SQLite - use provided path or SQLITE_PATH env var
+        const sqlite_path = std.posix.getenv("SQLITE_PATH") orelse default_sqlite_path;
+        return DatabaseConfig.sqlite(sqlite_path);
+    }
+}
 
 /// Thread-safe database singleton pattern with lock-free access
 /// Provides a global database/ORM instance that can be safely accessed from multiple threads
@@ -65,6 +111,50 @@ pub const DatabaseSingleton = struct {
         }
 
         global_db = try Database.open(db_path, allocator);
+        global_orm = ORM.init(global_db.?, allocator);
+        global_allocator = allocator;
+        use_pool = false;
+
+        // Release barrier ensures all writes are visible before setting initialized
+        initialized.store(true, .release);
+    }
+
+    /// Initialize the database singleton with explicit configuration
+    /// Supports both SQLite and PostgreSQL drivers
+    /// Thread-safe: can be called multiple times safely (idempotent)
+    ///
+    /// Example:
+    /// ```zig
+    /// // SQLite
+    /// const sqlite_config = DatabaseConfig.sqlite("myapp.db");
+    /// try DatabaseSingleton.initWithConfig(sqlite_config, allocator);
+    ///
+    /// // PostgreSQL
+    /// const pg_config = DatabaseConfig.postgresql(.{
+    ///     .host = "localhost",
+    ///     .port = 5432,
+    ///     .database = "myapp",
+    ///     .username = "myuser",
+    ///     .password = "mypassword",
+    /// });
+    /// try DatabaseSingleton.initWithConfig(pg_config, allocator);
+    /// ```
+    pub fn initWithConfig(config: DatabaseConfig, allocator: std.mem.Allocator) !void {
+        // Fast path: already initialized (lock-free check)
+        if (initialized.load(.acquire)) {
+            return;
+        }
+
+        // Slow path: need to initialize
+        init_mutex.lock();
+        defer init_mutex.unlock();
+
+        // Double-check after acquiring lock
+        if (initialized.load(.acquire)) {
+            return;
+        }
+
+        global_db = try Database.openWithConfig(config, allocator);
         global_orm = ORM.init(global_db.?, allocator);
         global_allocator = allocator;
         use_pool = false;
@@ -280,4 +370,39 @@ test "DatabaseSingleton error when not initialized" {
 
     const result = DatabaseSingleton.get();
     try std.testing.expectError(error.DatabaseNotInitialized, result);
+}
+
+test "DatabaseSingleton initWithConfig - SQLite" {
+    const allocator = std.testing.allocator;
+    const test_db_path = ":memory:";
+    const config = DatabaseConfig.sqlite(test_db_path);
+
+    try DatabaseSingleton.initWithConfig(config, allocator);
+    defer DatabaseSingleton.deinit();
+
+    try std.testing.expect(DatabaseSingleton.isInitialized());
+
+    const orm = try DatabaseSingleton.get();
+    _ = orm; // Use ORM
+
+    const db = try DatabaseSingleton.getDatabase();
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+}
+
+test "loadConfigFromEnv - SQLite default" {
+    const allocator = std.testing.allocator;
+    const config = try loadConfigFromEnv(allocator, "test.db");
+    try std.testing.expectEqual(Driver.sqlite, config.driver);
+    try std.testing.expectEqualStrings("test.db", config.connection.sqlite.path);
+}
+
+test "loadConfigFromEnv - SQLite from env" {
+    const allocator = std.testing.allocator;
+    // Set SQLITE_PATH env var
+    try std.posix.setenv("SQLITE_PATH", "custom.db", true);
+    defer std.posix.unsetenv("SQLITE_PATH");
+
+    const config = try loadConfigFromEnv(allocator, "default.db");
+    try std.testing.expectEqual(Driver.sqlite, config.driver);
+    try std.testing.expectEqualStrings("custom.db", config.connection.sqlite.path);
 }

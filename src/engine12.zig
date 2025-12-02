@@ -2150,21 +2150,43 @@ pub const Engine12 = struct {
     /// Opens database and creates ORM instance
     /// Thread-safe and idempotent (can be called multiple times safely)
     ///
+    /// Supports both SQLite and PostgreSQL:
+    /// - SQLite (default): Uses provided db_path
+    /// - PostgreSQL: Set DB_DRIVER=postgresql and PGDATABASE, PGUSER, etc.
+    ///
     /// Example:
     /// ```zig
+    /// // SQLite (default)
     /// try app.initDatabase("app.db");
+    ///
+    /// // PostgreSQL (via environment variables)
+    /// // Set: DB_DRIVER=postgresql PGDATABASE=myapp PGUSER=myuser
+    /// try app.initDatabase("app.db"); // db_path ignored for PostgreSQL
     /// ```
     pub fn initDatabase(self: *Engine12, db_path: []const u8) !void {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
-        try DatabaseSingleton.init(db_path, self.allocator);
+        const loadConfigFromEnv = @import("orm/singleton.zig").loadConfigFromEnv;
+
+        // Check if PostgreSQL is configured via environment variables
+        const config = try loadConfigFromEnv(self.allocator, db_path);
+        try DatabaseSingleton.initWithConfig(config, self.allocator);
     }
 
     /// Initialize database and run migrations automatically
     /// Discovers migrations from directory and runs them
     /// Supports both init.zig convention and numbered migration files
     ///
+    /// Supports both SQLite and PostgreSQL:
+    /// - SQLite (default): Uses provided db_path
+    /// - PostgreSQL: Set DB_DRIVER=postgresql and PGDATABASE, PGUSER, etc.
+    ///
     /// Example:
     /// ```zig
+    /// // SQLite (default)
+    /// try app.initDatabaseWithMigrations("app.db", "src/migrations");
+    ///
+    /// // PostgreSQL (via environment variables)
+    /// // Set: DB_DRIVER=postgresql PGDATABASE=myapp PGUSER=myuser
     /// try app.initDatabaseWithMigrations("app.db", "src/migrations");
     /// ```
     pub fn initDatabaseWithMigrations(
