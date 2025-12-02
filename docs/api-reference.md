@@ -4906,6 +4906,316 @@ Create an error fragment with a specific status code.
 return htmx.errors.errorFragmentWithStatus("Database error", 500);
 ```
 
+#### `fieldErrorFragment(field: []const u8, message: []const u8) Response`
+
+Create a field-specific error that can be swapped into a form field container.
+
+```zig
+return htmx.errors.fieldErrorFragment("title", "Title is required");
+// Returns: <div class="field-error" data-field="title">Title is required</div>
+```
+
+#### `multipleValidationErrors(errors: []const ValidationError) Response`
+
+Create a response with multiple validation errors listed.
+
+```zig
+const errors = [_]htmx.ValidationError{
+    .{ .field = "title", .message = "Title is required" },
+    .{ .field = "email", .message = "Invalid email format" },
+};
+return htmx.errors.multipleValidationErrors(&errors);
+```
+
+#### `errorWithRetry(message: []const u8, retry_url: []const u8) Response`
+
+Create an error fragment with a retry button that triggers an HTMX request.
+
+```zig
+return htmx.errors.errorWithRetry("Failed to save", "/todos");
+```
+
+#### `toastError(message: []const u8) Response`
+
+Create a toast notification error (for non-blocking errors).
+
+```zig
+return htmx.errors.toastError("Item deleted successfully");
+```
+
+#### `inlineFieldError(field: []const u8, message: []const u8) Response`
+
+Create an inline field error that can be inserted after a form field.
+
+```zig
+return htmx.errors.inlineFieldError("email", "Invalid email format");
+// Returns: <span class="inline-error" data-field="email">Invalid email format</span>
+```
+
+### Type-Safe Form Parsing
+
+#### `FormValidator`
+
+Type-safe form validator that parses form data directly into structs with automatic type conversion, validation, and error collection.
+
+```zig
+const TodoForm = struct {
+    title: []const u8,
+    priority: []const u8 = "medium",
+    completed: bool = false,
+};
+
+var form_parser = req.getFormParser();
+var validator = htmx.FormValidator.init(form_parser, req.allocator());
+defer validator.deinit();
+
+const todo = validator.parseInto(TodoForm) catch |err| {
+    if (validator.hasErrors()) {
+        return htmx.errors.multipleValidationErrors(validator.getErrors());
+    }
+    return htmx.errors.errorFragment("Failed to parse form");
+};
+```
+
+#### `FormValidator.parseInto(comptime T: type) !T`
+
+Parse form data directly into a struct. Automatically handles type conversion, required fields, and validation.
+
+**Supported field types:**
+- `[]const u8` - Required string field
+- `?[]const u8` - Optional string field
+- `bool` - Required boolean field
+- `?bool` - Optional boolean field
+- `i64` - Required integer field
+- `?i64` - Optional integer field
+
+**Example:**
+
+```zig
+const UserForm = struct {
+    username: []const u8,
+    email: ?[]const u8 = null,
+    age: ?i64 = null,
+    active: bool = true,
+};
+
+var validator = htmx.FormValidator.init(form_parser, allocator);
+defer validator.deinit();
+
+const user = validator.parseInto(UserForm) catch |err| {
+    if (validator.hasErrors()) {
+        return htmx.errors.multipleValidationErrors(validator.getErrors());
+    }
+    return htmx.errors.errorFragment("Failed to parse form");
+};
+```
+
+#### `FormValidator.validate(field: []const u8, validator_fn: fn([]const u8) bool, message: []const u8) void`
+
+Add a custom validator for a field. The validator function should return `true` if the value is valid.
+
+```zig
+validator.validate("email", isValidEmail, "Invalid email format");
+
+fn isValidEmail(value: []const u8) bool {
+    return std.mem.indexOf(u8, value, "@") != null;
+}
+```
+
+#### `FormValidator.hasErrors() bool`
+
+Check if validation has errors.
+
+```zig
+if (validator.hasErrors()) {
+    return htmx.errors.multipleValidationErrors(validator.getErrors());
+}
+```
+
+#### `FormValidator.getErrors() []const ValidationError`
+
+Get all validation errors.
+
+```zig
+const errors = validator.getErrors();
+for (errors) |err| {
+    std.debug.print("Field {s}: {s}\n", .{ err.field, err.message });
+}
+```
+
+### Security Utilities
+
+#### `Security.validateRequest(req: *Request) !void`
+
+Validate HTMX request headers for security. Checks for suspicious patterns, validates target/trigger IDs, and ensures safe CSS selectors.
+
+```zig
+htmx.Security.validateRequest(req) catch |err| {
+    return htmx.errors.errorFragment("Invalid request");
+};
+```
+
+#### `Security.sanitizeHtml(html: []const u8, allocator: std.mem.Allocator) ![]const u8`
+
+Sanitize HTML output to prevent XSS. Removes dangerous tags and attributes while preserving safe HTML.
+
+```zig
+const safe_html = try htmx.Security.sanitizeHtml(user_input, allocator);
+defer allocator.free(safe_html);
+return Response.fragment(safe_html);
+```
+
+#### `Security.escapeHtml(input: []const u8, allocator: std.mem.Allocator) ![]const u8`
+
+Escape HTML entities in user input. Converts `<`, `>`, `&`, `"`, `'` to HTML entities.
+
+```zig
+const escaped = try htmx.Security.escapeHtml(user_input, allocator);
+defer allocator.free(escaped);
+return Response.fragment(escaped);
+```
+
+#### `Security.validateSelector(selector: []const u8) bool`
+
+Validate that a CSS selector is safe (doesn't contain script injection).
+
+```zig
+if (!htmx.Security.validateSelector(selector)) {
+    return htmx.errors.errorFragment("Invalid selector");
+}
+```
+
+### Fluent Response Builder
+
+#### `HtmxResponseBuilder`
+
+Fluent API for chaining HTMX response methods for cleaner, more readable code.
+
+```zig
+// Old way (still works):
+return Response.fragment(html)
+    .htmxTrigger("todoCreated")
+    .htmxTarget("#todo-list")
+    .htmxSwap("beforeend");
+
+// New fluent way:
+return htmx.HtmxResponseBuilder.init(html)
+    .trigger("todoCreated")
+    .target("#todo-list")
+    .swap("beforeend")
+    .build();
+```
+
+#### `HtmxResponseBuilder.init(html: []const u8) HtmxResponseBuilder`
+
+Initialize builder with HTML fragment.
+
+```zig
+var builder = htmx.HtmxResponseBuilder.init("<div>Content</div>");
+```
+
+#### `HtmxResponseBuilder.fromResponse(resp: Response) HtmxResponseBuilder`
+
+Initialize builder from existing response.
+
+```zig
+var builder = htmx.HtmxResponseBuilder.fromResponse(existing_response);
+```
+
+#### Builder Methods
+
+All builder methods return `HtmxResponseBuilder` for chaining:
+
+- `.trigger(event: []const u8)` - Add trigger event
+- `.triggerData(event_json: []const u8)` - Add trigger event with JSON data
+- `.triggerAfterSwap(event: []const u8)` - Trigger after swap
+- `.triggerAfterSettle(event: []const u8)` - Trigger after settle
+- `.redirect(url: []const u8)` - Perform client-side redirect
+- `.refresh()` - Trigger full page refresh
+- `.pushUrl(url: []const u8)` - Push URL to history
+- `.noPushUrl()` - Prevent URL push
+- `.replaceUrl(url: []const u8)` - Replace URL in history
+- `.noReplaceUrl()` - Prevent URL replace
+- `.retarget(selector: []const u8)` - Change target element
+- `.swap(style: []const u8)` - Change swap method
+- `.reselect(selector: []const u8)` - Change reselect selector
+- `.location(location_json: []const u8)` - Set location header
+- `.stopPolling()` - Stop polling
+- `.withStatus(code: u16)` - Set status code
+
+#### `HtmxResponseBuilder.build() Response`
+
+Build final response.
+
+```zig
+return builder
+    .trigger("todoCreated")
+    .target("#todo-list")
+    .swap("beforeend")
+    .build();
+```
+
+### Testing Utilities
+
+#### `Testing.mockHtmxRequest(allocator: std.mem.Allocator, options: MockOptions) !Request`
+
+Create a mock HTMX request for testing.
+
+```zig
+const mock_req = try htmx.Testing.mockHtmxRequest(allocator, .{
+    .method = "POST",
+    .path = "/todos",
+    .body = "title=Test&priority=high",
+    .target = "#todo-list",
+    .trigger = "button",
+    .is_htmx = true,
+    .is_boosted = false,
+});
+```
+
+#### `Testing.MockOptions` struct
+
+```zig
+pub const MockOptions = struct {
+    method: []const u8 = "GET",
+    path: []const u8 = "/",
+    body: []const u8 = "",
+    headers: ?std.StringHashMap([]const u8) = null,
+    is_htmx: bool = true,
+    is_boosted: bool = false,
+    is_history_restore: bool = false,
+    target: ?[]const u8 = null,
+    trigger: ?[]const u8 = null,
+    trigger_name: ?[]const u8 = null,
+    current_url: ?[]const u8 = null,
+    prompt: ?[]const u8 = null,
+};
+```
+
+#### `Testing.assertHtmxHeader(resp: Response, header: []const u8, expected: []const u8) !void`
+
+Assert response has expected HTMX header value.
+
+```zig
+try htmx.Testing.assertHtmxHeader(resp, "HX-Trigger", "todoCreated");
+```
+
+#### `Testing.assertStatus(resp: Response, expected: u16) !void`
+
+Assert response has expected status code.
+
+```zig
+try htmx.Testing.assertStatus(resp, 200);
+```
+
+#### `Testing.assertFragment(resp: Response) !void`
+
+Assert response is a fragment (has `X-HTMX-Fragment` header).
+
+```zig
+try htmx.Testing.assertFragment(resp);
+```
+
 ### Example: Todo List with HTMX
 
 Handler:

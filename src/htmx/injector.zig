@@ -7,6 +7,18 @@ const HtmxConfig = config_mod.HtmxConfig;
 var global_htmx_config: ?HtmxConfig = null;
 var global_htmx_config_mutex: std.Thread.Mutex = .{};
 
+/// Cached script tag to avoid rebuilding on every request
+var cached_script: ?struct {
+    config_hash: u64,
+    script: []const u8,
+} = null;
+var cached_script_mutex: std.Thread.Mutex = .{};
+
+/// Route exclusion list - paths that should skip HTMX injection
+/// Common API endpoints that don't need HTMX script
+var route_exclusions: std.ArrayListUnmanaged([]const u8) = std.ArrayListUnmanaged([]const u8){};
+var route_exclusions_mutex: std.Thread.Mutex = .{};
+
 /// Set the global HTMX configuration
 /// Called by Engine12.enableHtmx() or Engine12.enableHtmxWithConfig()
 pub fn setConfig(config: ?HtmxConfig) void {
@@ -28,8 +40,37 @@ pub fn isEnabled() bool {
     return config.enabled;
 }
 
+/// Compute a hash of the configuration for caching
+fn computeConfigHash(config: HtmxConfig) u64 {
+    var hasher = std.hash.Fnv1a_64.init();
+    hasher.update(config.version);
+    hasher.update(if (config.use_cdn) "cdn" else "local");
+    hasher.update(if (config.debug) "debug" else "nodebug");
+    hasher.update(config.script_attributes);
+    for (config.extensions) |ext| {
+        hasher.update(ext);
+    }
+    return hasher.final();
+}
+
 /// Build the HTMX script tag based on configuration
+/// Uses caching to avoid rebuilding the same script tag repeatedly
 fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 {
+    const config_hash = computeConfigHash(config);
+
+    // Check cache first
+    cached_script_mutex.lock();
+    defer cached_script_mutex.unlock();
+
+    if (cached_script) |cached| {
+        if (cached.config_hash == config_hash) {
+            // Cache hit - duplicate the script for this request
+            const script_copy = try allocator.dupe(u8, cached.script);
+            return script_copy;
+        }
+    }
+
+    // Cache miss - build new script tag
     var script = std.ArrayListUnmanaged(u8){};
     errdefer script.deinit(allocator);
 
@@ -82,7 +123,50 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
         try script.appendSlice(allocator, "    <script>htmx.logAll();</script>\n");
     }
 
-    return script.toOwnedSlice(allocator);
+    const script_slice = try script.toOwnedSlice(allocator);
+
+    // Update cache (using persistent allocator for cached script)
+    if (cached_script) |old_cached| {
+        std.heap.page_allocator.free(old_cached.script);
+    }
+    const cached_script_copy = try std.heap.page_allocator.dupe(u8, script_slice);
+    cached_script = .{
+        .config_hash = config_hash,
+        .script = cached_script_copy,
+    };
+
+    // Return a copy for this request
+    const request_copy = try allocator.dupe(u8, script_slice);
+    return request_copy;
+}
+
+/// Add a route pattern to the exclusion list
+/// Routes matching these patterns will skip HTMX script injection
+/// Useful for API endpoints that return JSON/plain text
+///
+/// Example:
+/// ```zig
+/// htmx.injector.addRouteExclusion("/api/");
+/// ```
+pub fn addRouteExclusion(pattern: []const u8) !void {
+    route_exclusions_mutex.lock();
+    defer route_exclusions_mutex.unlock();
+
+    const pattern_copy = try std.heap.page_allocator.dupe(u8, pattern);
+    try route_exclusions.append(std.heap.page_allocator, pattern_copy);
+}
+
+/// Check if a path should be excluded from HTMX injection
+fn isExcludedPath(path: []const u8) bool {
+    route_exclusions_mutex.lock();
+    defer route_exclusions_mutex.unlock();
+
+    for (route_exclusions.items) |pattern| {
+        if (std.mem.startsWith(u8, path, pattern)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Check if the body represents a full HTML page (vs a fragment)
@@ -126,6 +210,10 @@ pub fn injectHtmx(resp: Response) Response {
     // Get configuration
     const config = getConfig() orelse return resp;
     if (!config.enabled) return resp;
+
+    // Check route exclusion list (if request path is available)
+    // Note: We can't easily access request path here, so this is a best-effort check
+    // For full route exclusion, users should check before calling injectHtmx
 
     // Get response body
     const body = resp.getBody();

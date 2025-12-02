@@ -85,6 +85,10 @@ pub const request = @import("request.zig");
 pub const response = @import("response.zig");
 pub const form = @import("form.zig");
 pub const errors = @import("errors.zig");
+pub const form_validator = @import("form_validator.zig");
+pub const security = @import("security.zig");
+pub const builder = @import("builder.zig");
+pub const testing = @import("testing.zig");
 
 // Type aliases for convenience
 pub const HtmxConfig = config.HtmxConfig;
@@ -101,6 +105,7 @@ pub const setConfig = injector.setConfig;
 pub const getConfig = injector.getConfig;
 pub const isEnabled = injector.isEnabled;
 pub const injectHtmx = injector.injectHtmx;
+pub const addRouteExclusion = injector.addRouteExclusion;
 
 // Request helpers
 pub const fromRequest = request.fromRequest;
@@ -147,6 +152,24 @@ pub const errorFragment = errors.errorFragment;
 pub const validationErrorFragment = errors.validationErrorFragment;
 pub const notFoundFragment = errors.notFoundFragment;
 pub const errorFragmentWithStatus = errors.errorFragmentWithStatus;
+pub const fieldErrorFragment = errors.fieldErrorFragment;
+pub const multipleValidationErrors = errors.multipleValidationErrors;
+pub const errorWithRetry = errors.errorWithRetry;
+pub const toastError = errors.toastError;
+pub const inlineFieldError = errors.inlineFieldError;
+pub const ValidationError = errors.ValidationError;
+
+// Form validator
+pub const FormValidator = form_validator.FormValidator;
+
+// Security utilities
+pub const Security = security.Security;
+
+// Fluent response builder
+pub const HtmxResponseBuilder = builder.HtmxResponseBuilder;
+
+// Testing utilities
+pub const Testing = testing.Testing;
 
 // Tests
 test "module exports" {

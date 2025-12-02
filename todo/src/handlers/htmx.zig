@@ -3,6 +3,7 @@ const E12 = @import("engine12");
 const Request = E12.Request;
 const Response = E12.Response;
 const htmx = E12.htmx;
+const FormValidator = htmx.FormValidator;
 const ParamList = E12.orm.ParamList;
 const database = @import("../database.zig");
 const models = @import("../models.zig");
@@ -343,31 +344,41 @@ pub fn handleSearchTodos(req: *Request) Response {
 
 /// Handle creating a new todo (returns HTML fragment for the new item)
 pub fn handleCreateTodo(req: *Request) Response {
-    var form_parser = req.getFormParser();
-
-    // Parse title (required)
-    const title = form_parser.getRequired("title") catch {
-        return htmx.errors.validationErrorFragment("title", "Title is required");
+    // Use type-safe form validator for cleaner code
+    const TodoForm = struct {
+        title: []const u8,
+        description: ?[]const u8,
+        priority: ?[]const u8,
+        tags: ?[]const u8,
     };
-    defer req.allocator().free(title);
 
-    if (title.len == 0) {
-        return htmx.errors.validationErrorFragment("title", "Title cannot be empty");
+    var form_parser = req.getFormParser();
+    var validator = htmx.FormValidator.init(form_parser, req.allocator());
+    defer validator.deinit();
+
+    const form = validator.parseInto(TodoForm) catch {
+        if (validator.hasErrors()) {
+            return htmx.errors.multipleValidationErrors(validator.getErrors());
+        }
+        return htmx.errors.errorFragment("Failed to parse form");
+    };
+
+    // Validate title length
+    if (form.title.len == 0) {
+        return htmx.errors.fieldErrorFragment("title", "Title cannot be empty");
     }
 
-    // Parse optional fields
-    const description = form_parser.get("description") catch null;
-    defer if (description) |d| req.allocator().free(d);
+    // Handle optional fields with defaults
+    defer req.allocator().free(form.title);
+    defer if (form.description) |d| req.allocator().free(d);
+    defer if (form.priority) |p| req.allocator().free(p);
+    defer if (form.tags) |t| req.allocator().free(t);
 
-    const priority_raw = form_parser.get("priority") catch null;
-    defer if (priority_raw) |p| req.allocator().free(p);
-    const priority = if (priority_raw) |p| p else "medium";
+    const description = form.description orelse "";
+    const priority = form.priority orelse "medium";
+    const tags = form.tags orelse "";
 
-    const tags_raw = form_parser.get("tags") catch null;
-    defer if (tags_raw) |t| req.allocator().free(t);
-    const tags = if (tags_raw) |t| t else "";
-
-    // Parse due date
+    // Parse due date manually (FormValidator doesn't support custom date parsing yet)
     const due_date = form_parser.getDate("due_date") catch null;
 
     const orm = database.getORM() catch {
@@ -375,11 +386,11 @@ pub fn handleCreateTodo(req: *Request) Response {
     };
 
     // Allocate strings for Todo struct (using page allocator since they persist)
-    const title_copy = allocator.dupe(u8, title) catch {
+    const title_copy = allocator.dupe(u8, form.title) catch {
         return htmx.errors.errorFragmentWithStatus("Memory error", 500);
     };
-    const desc_copy = if (description) |d|
-        allocator.dupe(u8, d) catch {
+    const desc_copy = if (description.len > 0)
+        allocator.dupe(u8, description) catch {
             allocator.free(title_copy);
             return htmx.errors.errorFragmentWithStatus("Memory error", 500);
         }
@@ -423,8 +434,11 @@ pub fn handleCreateTodo(req: *Request) Response {
         return htmx.errors.errorFragment("Failed to render todo");
     };
 
-    return Response.fragment(buf.toOwnedSlice(allocator) catch "")
-        .htmxTrigger("todoCreated");
+    // Use fluent builder for cleaner code
+    return htmx.builder.HtmxResponseBuilder.init(buf.toOwnedSlice(allocator) catch "")
+        .trigger("todoCreated")
+        .status(201)
+        .build();
 }
 
 /// Parse date string (YYYY-MM-DD) to timestamp
@@ -753,11 +767,13 @@ pub fn handleDeleteTodo(req: *Request) Response {
     };
 
     orm.delete(Todo, id) catch {
-        return htmx.errors.errorFragmentWithStatus("Failed to delete todo", 500);
+        return htmx.errors.toastError("Failed to delete todo");
     };
 
-    return Response.fragment("")
-        .htmxTrigger("todoDeleted");
+    // Use fluent builder for cleaner code
+    return htmx.builder.HtmxResponseBuilder.init("")
+        .trigger("todoDeleted")
+        .build();
 }
 
 /// Handle getting todo stats
