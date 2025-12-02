@@ -3,6 +3,7 @@ const sqlite = @import("sqlite.zig");
 const params_mod = @import("params.zig");
 const row_mod = @import("row.zig");
 const driver_mod = @import("driver.zig");
+const sql_splitter = @import("sql_splitter.zig");
 const Driver = driver_mod.Driver;
 const DatabaseConfig = driver_mod.DatabaseConfig;
 const SqliteConfig = driver_mod.SqliteConfig;
@@ -326,17 +327,28 @@ pub const Database = struct {
         const pg = @import("pg");
         const pool: *pg.Pool = @ptrCast(@alignCast(self.pg_pool.?));
 
-        var result = pool.query(sql, .{}) catch |err| {
-            std.debug.print("[PostgreSQL Error] Failed to execute: {s}\n", .{sql});
-            std.debug.print("  Error: {}\n", .{err});
+        // Check if SQL contains multiple statements (has semicolons)
+        // Split and execute each statement separately for PostgreSQL
+        const statements = sql_splitter.splitStatements(sql, self.allocator) catch |err| {
+            std.debug.print("[PostgreSQL Error] Failed to split SQL statements: {}\n", .{err});
             return error.QueryFailed;
         };
-        defer result.deinit();
+        defer self.allocator.free(statements);
 
-        // Drain results - pg.zig returns error union from next()
-        while (true) {
-            const row = result.next() catch break;
-            if (row == null) break;
+        // Execute each statement separately
+        for (statements) |statement| {
+            var result = pool.query(statement, .{}) catch |err| {
+                std.debug.print("[PostgreSQL Error] Failed to execute statement: {s}\n", .{statement});
+                std.debug.print("  Error: {}\n", .{err});
+                return error.QueryFailed;
+            };
+            defer result.deinit();
+
+            // Drain results - pg.zig returns error union from next()
+            while (true) {
+                const row = result.next() catch break;
+                if (row == null) break;
+            }
         }
     }
 

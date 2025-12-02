@@ -332,8 +332,21 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
 
         // Process middleware
         if (server.inner.middleware.process(&request)) |mw_response| {
-            const formatted = mw_response.format() catch return;
-            defer std.heap.page_allocator.free(formatted);
+            // Check if there's a pre-formatted response with custom headers
+            const formatted = if (response_mod.Response.getFormattedResponse(&mw_response)) |pre_formatted|
+                pre_formatted
+            else
+                mw_response.format() catch return;
+
+            defer {
+                // Free formatted response if it was pre-formatted
+                if (response_mod.Response.getFormattedResponse(&mw_response) != null) {
+                    response_mod.Response.clearFormattedResponse(&mw_response);
+                } else {
+                    std.heap.page_allocator.free(formatted);
+                }
+            }
+
             // Release any pending response buffers back to the pool after formatting
             response_mod.releasePendingBuffer();
             _ = posix.write(socket, formatted) catch {};
@@ -348,8 +361,21 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             ziggurat.response.Response.init(.not_found, "text/plain", "Not Found");
 
         // Format and send response
-        const formatted_response = response.format() catch return;
-        defer std.heap.page_allocator.free(formatted_response);
+        // Check if there's a pre-formatted response with custom headers
+        const formatted_response = if (response_mod.Response.getFormattedResponse(&response)) |pre_formatted|
+            pre_formatted
+        else
+            response.format() catch return;
+
+        defer {
+            // Free formatted response if it was pre-formatted
+            if (response_mod.Response.getFormattedResponse(&response) != null) {
+                response_mod.Response.clearFormattedResponse(&response);
+            } else {
+                std.heap.page_allocator.free(formatted_response);
+            }
+        }
+
         // Release any pending response buffers back to the pool after formatting
         // This is safe because format() has already copied the body data
         response_mod.releasePendingBuffer();

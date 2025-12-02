@@ -120,6 +120,11 @@ var global_buffer_pool_initialized: std.atomic.Value(bool) = std.atomic.Value(bo
 /// Each worker thread tracks its own pending buffer
 threadlocal var pending_buffer_release: ?[]u8 = null;
 
+/// Thread-local storage for formatted responses with custom headers
+/// Maps ziggurat response pointers to their formatted HTTP strings
+threadlocal var formatted_responses: ?std.AutoHashMap(*const anyopaque, []const u8) = null;
+threadlocal var formatted_responses_mutex: std.Thread.Mutex = .{};
+
 /// Mark a buffer for release after the response is sent
 /// Called internally by toZiggurat() before returning
 fn markBufferForRelease(buffer: ?[]const u8) void {
@@ -1117,15 +1122,192 @@ pub const Response = struct {
 
     /// Convert to ziggurat response (internal use)
     /// The response data is already in persistent memory
+    /// Serialize custom headers into HTTP header format
+    /// Returns a string with headers formatted as "Header-Name: value\r\n"
+    /// Handles multiple Set-Cookie headers correctly
+    fn serializeHeaders(headers: std.StringHashMap([]const u8), allocator: std.mem.Allocator) ![]const u8 {
+        var result = std.ArrayListUnmanaged(u8){};
+        errdefer result.deinit(allocator);
+
+        var iterator = headers.iterator();
+        while (iterator.next()) |entry| {
+            const name = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
+
+            // Validate header name (no newlines, no colons except in value)
+            if (std.mem.indexOf(u8, name, "\r") != null or std.mem.indexOf(u8, name, "\n") != null) {
+                return error.InvalidHeader;
+            }
+
+            // Format header line: "Header-Name: value\r\n"
+            const header_line = try std.fmt.allocPrint(allocator, "{s}: {s}\r\n", .{ name, value });
+            defer allocator.free(header_line);
+            try result.appendSlice(allocator, header_line);
+        }
+
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Format HTTP response with custom headers and status code injected
+    /// This method intercepts the formatted HTTP response from ziggurat and injects
+    /// custom headers before the body. Also handles status code modification.
+    /// Returns a complete HTTP response string ready to send to the client.
+    pub fn formatWithHeaders(self: Response, allocator: std.mem.Allocator) ![]const u8 {
+        // Get base formatted response from ziggurat
+        // Note: ziggurat's format() uses page_allocator internally
+        const base_response = self.inner.format() catch |err| {
+            return err;
+        };
+        defer std.heap.page_allocator.free(base_response);
+
+        // If no custom headers and no status code override, return base response
+        const has_custom_headers = if (self._custom_headers) |headers| headers.count() > 0 else false;
+        if (!has_custom_headers and self._status_code == null) {
+            return try allocator.dupe(u8, base_response);
+        }
+
+        // Find the end of headers (double CRLF)
+        const header_end = std.mem.indexOf(u8, base_response, "\r\n\r\n") orelse {
+            // No header-body separator found, return base response
+            return try allocator.dupe(u8, base_response);
+        };
+
+        var result = std.ArrayListUnmanaged(u8){};
+        errdefer result.deinit(allocator);
+
+        // Handle status code modification
+        if (self._status_code) |status_code| {
+            // Find status line (first line)
+            const status_line_end = std.mem.indexOf(u8, base_response, "\r\n") orelse {
+                return try allocator.dupe(u8, base_response);
+            };
+
+            // Get reason phrase for status code
+            const reason_phrase = getReasonPhrase(status_code);
+
+            // Write modified status line
+            const status_line = try std.fmt.allocPrint(allocator, "HTTP/1.1 {d} {s}\r\n", .{ status_code, reason_phrase });
+            defer allocator.free(status_line);
+            try result.appendSlice(allocator, status_line);
+
+            // Copy headers from base response (skip original status line)
+            const headers_start = status_line_end + 2; // Skip "\r\n"
+            try result.appendSlice(allocator, base_response[headers_start..header_end]);
+        } else {
+            // Copy status line and headers from base response
+            try result.appendSlice(allocator, base_response[0..header_end]);
+        }
+
+        // Inject custom headers
+        if (has_custom_headers) {
+            const custom_headers_str = try serializeHeaders(self._custom_headers.?, allocator);
+            defer allocator.free(custom_headers_str);
+            try result.appendSlice(allocator, custom_headers_str);
+        }
+
+        // Add header-body separator
+        try result.appendSlice(allocator, "\r\n");
+
+        // Copy body from base response
+        const body_start = header_end + 4; // Skip "\r\n\r\n"
+        if (body_start < base_response.len) {
+            try result.appendSlice(allocator, base_response[body_start..]);
+        }
+
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Get HTTP reason phrase for a status code
+    fn getReasonPhrase(status_code: u16) []const u8 {
+        return switch (status_code) {
+            200 => "OK",
+            201 => "Created",
+            202 => "Accepted",
+            204 => "No Content",
+            301 => "Moved Permanently",
+            302 => "Found",
+            304 => "Not Modified",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            409 => "Conflict",
+            422 => "Unprocessable Entity",
+            429 => "Too Many Requests",
+            500 => "Internal Server Error",
+            502 => "Bad Gateway",
+            503 => "Service Unavailable",
+            504 => "Gateway Timeout",
+            else => "Unknown",
+        };
+    }
+
     /// Note: Custom headers stored in _custom_headers are stored but ziggurat's Response
     /// type doesn't support arbitrary headers. Common headers like Content-Type work via
     /// withContentType(). Custom headers are preserved for potential future ziggurat updates.
     /// The persistent buffer is marked for release after the response is sent.
+    /// If custom headers or status code are present, formats the response with headers
+    /// and stores it in thread-local storage for retrieval during formatting.
     pub fn toZiggurat(self: Response) ziggurat.response.Response {
         // Mark the buffer for release after response is sent
         // This is safe because format() copies the body data before sending
         markBufferForRelease(self._persistent_body);
+
+        // If we have custom headers or status code, format with headers and store
+        const has_custom_headers = if (self._custom_headers) |headers| headers.count() > 0 else false;
+        if (has_custom_headers or self._status_code != null) {
+            // Format response with headers using page allocator (will be freed after sending)
+            const formatted = self.formatWithHeaders(std.heap.page_allocator) catch {
+                // If formatting fails, return base response without custom headers
+                return self.inner;
+            };
+
+            // Store formatted response in thread-local storage keyed by ziggurat response pointer
+            formatted_responses_mutex.lock();
+            defer formatted_responses_mutex.unlock();
+
+            if (formatted_responses == null) {
+                formatted_responses = std.AutoHashMap(*const anyopaque, []const u8).init(std.heap.page_allocator);
+            }
+
+            const response_ptr: *const anyopaque = @ptrCast(&self.inner);
+            formatted_responses.?.put(response_ptr, formatted) catch {
+                // If storage fails, free formatted response and return base
+                std.heap.page_allocator.free(formatted);
+                return self.inner;
+            };
+        }
+
         return self.inner;
+    }
+
+    /// Get formatted response with custom headers if stored
+    /// Returns null if no custom formatting was applied
+    pub fn getFormattedResponse(ziggurat_resp: *const ziggurat.response.Response) ?[]const u8 {
+        formatted_responses_mutex.lock();
+        defer formatted_responses_mutex.unlock();
+
+        if (formatted_responses) |*map| {
+            const response_ptr: *const anyopaque = @ptrCast(ziggurat_resp);
+            return map.get(response_ptr);
+        }
+
+        return null;
+    }
+
+    /// Clear formatted response after sending
+    /// Call this after the formatted response has been sent to free memory
+    pub fn clearFormattedResponse(ziggurat_resp: *const ziggurat.response.Response) void {
+        formatted_responses_mutex.lock();
+        defer formatted_responses_mutex.unlock();
+
+        if (formatted_responses) |*map| {
+            const response_ptr: *const anyopaque = @ptrCast(ziggurat_resp);
+            if (map.fetchRemove(response_ptr)) |entry| {
+                std.heap.page_allocator.free(entry.value);
+            }
+        }
     }
 
     /// Check if this response has custom headers stored
@@ -1178,6 +1360,105 @@ test "Response text" {
 test "Response html" {
     const resp = Response.html("<html><body>Test</body></html>");
     _ = resp;
+}
+
+test "Response formatWithHeaders - no custom headers" {
+    const allocator = std.testing.allocator;
+    // Create a simple response - use text instead of json to avoid potential issues
+    const resp = Response.text("test data");
+    const formatted = resp.formatWithHeaders(allocator) catch |err| {
+        // If format fails (e.g., ziggurat not available in test), skip test
+        if (err == error.OutOfMemory) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(formatted);
+
+    // Should return base formatted response
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "HTTP/1.1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "test data") != null);
+}
+
+test "Response formatWithHeaders - single custom header" {
+    const allocator = std.testing.allocator;
+    var resp = Response.text("test data");
+    resp = resp.withHeader("X-Custom-Header", "custom-value");
+    const formatted = resp.formatWithHeaders(allocator) catch |err| {
+        if (err == error.OutOfMemory) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(formatted);
+
+    // Should include custom header
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "X-Custom-Header: custom-value") != null);
+}
+
+test "Response formatWithHeaders - multiple custom headers" {
+    const allocator = std.testing.allocator;
+    var resp = Response.text("test data");
+    resp = resp.withHeader("X-Header-1", "value1");
+    resp = resp.withHeader("X-Header-2", "value2");
+    const formatted = resp.formatWithHeaders(allocator) catch |err| {
+        if (err == error.OutOfMemory) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(formatted);
+
+    // Should include both headers
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "X-Header-1: value1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "X-Header-2: value2") != null);
+}
+
+test "Response formatWithHeaders - status code modification" {
+    const allocator = std.testing.allocator;
+    var resp = Response.text("not found");
+    resp = resp.withStatus(404);
+    const formatted = resp.formatWithHeaders(allocator) catch |err| {
+        if (err == error.OutOfMemory) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(formatted);
+
+    // Should have modified status line
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "HTTP/1.1 404 Not Found") != null);
+}
+
+test "Response formatWithHeaders - status code and custom headers" {
+    const allocator = std.testing.allocator;
+    var resp = Response.text("unauthorized");
+    resp = resp.withStatus(401);
+    resp = resp.withHeader("WWW-Authenticate", "Basic realm=\"test\"");
+    const formatted = resp.formatWithHeaders(allocator) catch |err| {
+        if (err == error.OutOfMemory) return error.SkipZigTest;
+        return err;
+    };
+    defer allocator.free(formatted);
+
+    // Should have modified status line and custom header
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "HTTP/1.1 401 Unauthorized") != null);
+    try std.testing.expect(std.mem.indexOf(u8, formatted, "WWW-Authenticate: Basic realm=\"test\"") != null);
+}
+
+test "Response serializeHeaders - multiple headers" {
+    const allocator = std.testing.allocator;
+    var headers = std.StringHashMap([]const u8).init(allocator);
+    defer headers.deinit();
+
+    try headers.put("Header1", "value1");
+    try headers.put("Header2", "value2");
+
+    const serialized = try Response.serializeHeaders(headers, allocator);
+    defer allocator.free(serialized);
+
+    try std.testing.expect(std.mem.indexOf(u8, serialized, "Header1: value1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, serialized, "Header2: value2\r\n") != null);
+}
+
+test "Response getReasonPhrase - various status codes" {
+    try std.testing.expectEqualStrings("OK", Response.getReasonPhrase(200));
+    try std.testing.expectEqualStrings("Created", Response.getReasonPhrase(201));
+    try std.testing.expectEqualStrings("Not Found", Response.getReasonPhrase(404));
+    try std.testing.expectEqualStrings("Internal Server Error", Response.getReasonPhrase(500));
+    try std.testing.expectEqualStrings("Unknown", Response.getReasonPhrase(999));
 }
 
 test "Response withContentType" {
