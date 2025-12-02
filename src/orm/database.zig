@@ -1036,3 +1036,798 @@ test "Database openWithConfig SQLite" {
     try std.testing.expectEqual(Driver.sqlite, db.getDriver());
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
 }
+
+// Comprehensive edge case tests
+
+test "Database openWithConfig SQLite with custom config" {
+    const allocator = std.testing.allocator;
+    const config = DatabaseConfig{
+        .driver = .sqlite,
+        .connection = .{ .sqlite = .{
+            .path = ":memory:",
+            .wal_mode = false,
+            .cache_size_kb = 128000,
+            .busy_timeout_ms = 5000,
+        } },
+    };
+    var db = try Database.openWithConfig(config, allocator);
+    defer db.close();
+
+    try std.testing.expectEqual(Driver.sqlite, db.getDriver());
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+}
+
+test "Database double close safety" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    db.close();
+    // Second close should not panic
+    db.close();
+}
+
+test "Database close after error" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    // Cause an error
+    _ = db.execute("INVALID SQL") catch {};
+
+    // Close should still work
+    db.close();
+}
+
+test "Database execute empty SQL" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    // Empty SQL should be handled gracefully
+    try db.execute("");
+}
+
+test "Database execute multiple statements" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+    try db.execute("INSERT INTO posts (user_id, title) VALUES (1, 'Post 1')");
+    try db.execute("INSERT INTO posts (user_id, title) VALUES (1, 'Post 2')");
+
+    var result = try db.query("SELECT COUNT(*) FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 2), row.getInt64(0));
+    }
+
+    var result2 = try db.query("SELECT COUNT(*) FROM posts");
+    defer result2.deinit();
+    if (result2.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 2), row.getInt64(0));
+    }
+}
+
+test "Database execute UPDATE with WHERE" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Alice', 25)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Bob', 30)");
+
+    const rows = try db.executeWithRowsAffected("UPDATE users SET age = 26 WHERE name = 'Alice'");
+    try std.testing.expectEqual(@as(i64, 1), rows);
+
+    var result = try db.query("SELECT age FROM users WHERE name = 'Alice'");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 26), row.getInt64(0));
+    }
+}
+
+test "Database execute DELETE" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+
+    const rows = try db.executeWithRowsAffected("DELETE FROM users WHERE name = 'Alice'");
+    try std.testing.expectEqual(@as(i64, 1), rows);
+
+    var result = try db.query("SELECT COUNT(*) FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    }
+}
+
+test "Database execute DELETE with no matches" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+
+    const rows = try db.executeWithRowsAffected("DELETE FROM users WHERE name = 'Nonexistent'");
+    try std.testing.expectEqual(@as(i64, 0), rows);
+}
+
+test "Database query with WHERE clause" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Alice', 25)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Bob', 30)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Charlie', 25)");
+
+    var result = try db.query("SELECT name FROM users WHERE age = 25");
+    defer result.deinit();
+
+    var names = std.ArrayListUnmanaged([]const u8){};
+    defer names.deinit(allocator);
+
+    while (result.nextRow()) |row| {
+        if (row.getText(0)) |name| {
+            try names.append(allocator, name);
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), names.items.len);
+}
+
+test "Database query with ORDER BY" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test_order (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO test_order (name) VALUES ('Charlie')");
+    try db.execute("INSERT INTO test_order (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO test_order (name) VALUES ('Bob')");
+
+    var result = try db.query("SELECT name FROM test_order ORDER BY name");
+    defer result.deinit();
+
+    // Collect names - must dupe since row data is invalidated on next iteration
+    var names = std.ArrayListUnmanaged([]const u8){};
+    defer {
+        for (names.items) |name| {
+            allocator.free(name);
+        }
+        names.deinit(allocator);
+    }
+
+    while (result.nextRow()) |row| {
+        if (row.getText(0)) |name| {
+            // Dupe the string since SQLite row data is transient
+            const duped = try allocator.dupe(u8, name);
+            try names.append(allocator, duped);
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), names.items.len);
+    try std.testing.expectEqualStrings("Alice", names.items[0]);
+    try std.testing.expectEqualStrings("Bob", names.items[1]);
+    try std.testing.expectEqualStrings("Charlie", names.items[2]);
+}
+
+test "Database query with LIMIT" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+    try db.execute("INSERT INTO users (name) VALUES ('Charlie')");
+
+    var result = try db.query("SELECT name FROM users ORDER BY id LIMIT 2");
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |_| {
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "Database query with JOIN" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO posts (user_id, title) VALUES (1, 'Post 1')");
+    try db.execute("INSERT INTO posts (user_id, title) VALUES (1, 'Post 2')");
+
+    var result = try db.query("SELECT u.name, p.title FROM users u JOIN posts p ON u.id = p.user_id");
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |row| {
+        count += 1;
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+        try std.testing.expect(row.getText(1) != null);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "Database transaction nested operations" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+
+    var trans = try db.beginTransaction();
+    defer trans.deinit();
+
+    try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
+
+    var result = try trans.query("SELECT id FROM users WHERE name = 'Alice'");
+    defer result.deinit();
+
+    var user_id: i64 = 0;
+    if (result.nextRow()) |row| {
+        user_id = row.getInt64(0);
+    }
+
+    var id_buf: [64]u8 = undefined;
+    const insert_sql = try std.fmt.bufPrint(&id_buf, "INSERT INTO posts (user_id, title) VALUES ({d}, 'Post 1')", .{user_id});
+    try trans.execute(insert_sql);
+
+    try trans.commit();
+
+    var final_result = try db.query("SELECT COUNT(*) FROM posts");
+    defer final_result.deinit();
+    if (final_result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    }
+}
+
+test "Database transaction rollback on error" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var trans = try db.beginTransaction();
+    defer trans.deinit();
+
+    try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
+
+    // Cause an error
+    _ = trans.execute("INVALID SQL") catch {
+        // Error occurred, transaction should rollback on deinit
+    };
+
+    // Transaction deinit will rollback
+    trans.deinit();
+
+    var result = try db.query("SELECT COUNT(*) FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 0), row.getInt64(0));
+    }
+}
+
+test "Database transaction commit after rollback" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var trans = try db.beginTransaction();
+    defer trans.deinit();
+
+    try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try trans.rollback();
+
+    // Commit after rollback should return error (transaction already rolled back)
+    try std.testing.expectError(error.TransactionFailed, trans.commit());
+
+    var result = try db.query("SELECT COUNT(*) FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 0), row.getInt64(0));
+    }
+}
+
+test "Database executeParams with all parameter types" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, text_val TEXT, int_val INTEGER, float_val REAL, blob_val BLOB)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("test string");
+    try params.addInt(42);
+    try params.addFloat(3.14);
+    try params.addString("binary data");
+
+    try db.executeParams("INSERT INTO test (text_val, int_val, float_val, blob_val) VALUES (?, ?, ?, ?)", &params);
+
+    var result = try db.query("SELECT text_val, int_val, float_val, blob_val FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("test string", row.getText(0).?);
+        try std.testing.expectEqual(@as(i64, 42), row.getInt64(1));
+        const float_val = row.getDouble(2);
+        try std.testing.expect(float_val > 3.13 and float_val < 3.15);
+        try std.testing.expectEqualStrings("binary data", row.getText(3).?);
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database executeParams with boolean" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, active INTEGER)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addBool(true);
+
+    try db.executeParams("INSERT INTO test (active) VALUES (?)", &params);
+
+    var result = try db.query("SELECT active FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database executeParams with empty ParamList" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+
+    try db.executeParams("INSERT INTO test DEFAULT VALUES", &params);
+
+    var result = try db.query("SELECT COUNT(*) FROM test");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    }
+}
+
+test "Database queryParams with multiple parameters" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, active INTEGER)");
+    try db.execute("INSERT INTO users (name, age, active) VALUES ('Alice', 25, 1)");
+    try db.execute("INSERT INTO users (name, age, active) VALUES ('Bob', 30, 1)");
+    try db.execute("INSERT INTO users (name, age, active) VALUES ('Charlie', 25, 0)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addInt(25);
+    try params.addBool(true);
+
+    var result = try db.queryParams("SELECT name FROM users WHERE age = ? AND active = ?", &params);
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |row| {
+        count += 1;
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "Database queryParams with LIKE pattern" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+    try db.execute("INSERT INTO users (name) VALUES ('Charlie')");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("A%");
+
+    var result = try db.queryParams("SELECT name FROM users WHERE name LIKE ?", &params);
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |row| {
+        count += 1;
+        try std.testing.expect(std.mem.startsWith(u8, row.getText(0).?, "A"));
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "Database queryParams parameter count mismatch" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Alice");
+    // Missing second parameter - SQLite will use NULL for missing parameters
+    // This is valid SQL behavior, so the query should succeed
+    try db.executeParams("INSERT INTO users (name, age) VALUES (?, ?)", &params);
+
+    // Verify the insert worked with NULL for age
+    var result = try db.query("SELECT name, age FROM users");
+    defer result.deinit();
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+        try std.testing.expect(row.isNull(1)); // age should be NULL
+    }
+}
+
+test "Database queryParams with IN clause" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Alice', 25)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Bob', 30)");
+    try db.execute("INSERT INTO users (name, age) VALUES ('Charlie', 35)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addInt(25);
+    try params.addInt(35);
+
+    // Note: SQLite doesn't support parameterized IN clauses directly
+    // This test verifies the behavior with manual SQL construction
+    var result = try db.query("SELECT name FROM users WHERE age IN (25, 35)");
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |row| {
+        count += 1;
+        const name = row.getText(0).?;
+        try std.testing.expect(std.mem.eql(u8, name, "Alice") or std.mem.eql(u8, name, "Charlie"));
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "Database lastInsertRowId" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+    try db.execute("INSERT INTO users (name) VALUES ('Bob')");
+
+    const last_id = try db.lastInsertRowId();
+    try std.testing.expectEqual(@as(i64, 2), last_id);
+}
+
+test "Database lastInsertRowId with no inserts" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+
+    const last_id = try db.lastInsertRowId();
+    // Should return 0 if no inserts have occurred
+    try std.testing.expectEqual(@as(i64, 0), last_id);
+}
+
+test "ConnectionPool acquire and release cycle" {
+    const allocator = std.testing.allocator;
+    const config = ConnectionPoolConfig{
+        .max_connections = 2,
+    };
+
+    var pool = ConnectionPool.init(":memory:", config, allocator);
+    defer pool.deinit();
+
+    const db1 = try pool.acquire();
+    try std.testing.expect(db1.sqlite_db != null);
+    pool.release(db1);
+
+    const db2 = try pool.acquire();
+    try std.testing.expect(db2.sqlite_db != null);
+    pool.release(db2);
+
+    // Should reuse connection
+    const db3 = try pool.acquire();
+    try std.testing.expect(db3.sqlite_db != null);
+    pool.release(db3);
+}
+
+test "ConnectionPool max connections limit" {
+    const allocator = std.testing.allocator;
+    const config = ConnectionPoolConfig{
+        .max_connections = 2,
+        .acquire_timeout_ms = 1, // Very short timeout
+    };
+
+    var pool = ConnectionPool.init(":memory:", config, allocator);
+    defer pool.deinit();
+
+    // Acquire two connections (the max)
+    const db1 = try pool.acquire();
+    const db2 = try pool.acquire();
+
+    // Verify we have max connections
+    try std.testing.expectEqual(@as(usize, 2), pool.created);
+
+    // Release both before cleanup
+    pool.release(db1);
+    pool.release(db2);
+
+    // Verify connections are available again
+    try std.testing.expectEqual(@as(usize, 2), pool.available.items.len);
+}
+
+test "ConnectionPool config validation" {
+    var config = ConnectionPoolConfig{
+        .max_connections = 0,
+    };
+    try std.testing.expectError(error.InvalidArgument, config.validate());
+
+    config.max_connections = 1001;
+    try std.testing.expectError(error.InvalidArgument, config.validate());
+
+    config.max_connections = 10;
+    try config.validate();
+}
+
+test "Database query with very long result set" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+
+    // Insert 1000 rows
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        var buf: [64]u8 = undefined;
+        const sql = std.fmt.bufPrint(&buf, "INSERT INTO test (value) VALUES ('row {d}')", .{i}) catch break;
+        try db.execute(sql);
+    }
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    var count: usize = 0;
+    while (result.nextRow()) |_| {
+        count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 1000), count);
+}
+
+test "Database query with very long text values" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+
+    // Create a very long string (10KB)
+    var long_string = std.ArrayListUnmanaged(u8){};
+    defer long_string.deinit(allocator);
+    var i: usize = 0;
+    try long_string.append(allocator, 'A');
+    while (i < 10000) : (i += 1) {
+        try long_string.append(allocator, 'A');
+    }
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText(long_string.items);
+
+    try db.executeParams("INSERT INTO test (value) VALUES (?)", &params);
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        const retrieved = row.getText(0).?;
+        try std.testing.expectEqual(@as(usize, 10001), retrieved.len);
+        try std.testing.expectEqualStrings(long_string.items, retrieved);
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database executeParams with special characters" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Test with 'quotes' and \"double quotes\" and `backticks`");
+
+    try db.executeParams("INSERT INTO test (value) VALUES (?)", &params);
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Test with 'quotes' and \"double quotes\" and `backticks`", row.getText(0).?);
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database query with NULL handling" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT, num INTEGER)");
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("test");
+    try params.addNull();
+
+    try db.executeParams("INSERT INTO test (value, num) VALUES (?, ?)", &params);
+
+    var result = try db.query("SELECT value, num FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("test", row.getText(0).?);
+        try std.testing.expect(row.isNull(1));
+        try std.testing.expect(row.getText(1) == null);
+    } else {
+        try std.testing.expect(false);
+    }
+}
+
+test "Database query column names case sensitivity" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, \"Name\" TEXT)");
+    try db.execute("INSERT INTO test (\"Name\") VALUES ('Alice')");
+
+    var result = try db.query("SELECT \"Name\" FROM test");
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(c_int, 1), result.columnCount());
+    try std.testing.expectEqualStrings("Name", result.columnName(0).?);
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+    }
+}
+
+test "Database query with aggregate functions" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+    try db.execute("INSERT INTO test (value) VALUES (10)");
+    try db.execute("INSERT INTO test (value) VALUES (20)");
+    try db.execute("INSERT INTO test (value) VALUES (30)");
+
+    var result = try db.query("SELECT COUNT(*), SUM(value), AVG(value), MIN(value), MAX(value) FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 3), row.getInt64(0)); // COUNT
+        try std.testing.expectEqual(@as(i64, 60), row.getInt64(1)); // SUM
+        const avg = row.getDouble(2);
+        try std.testing.expect(avg > 19.9 and avg < 20.1); // AVG
+        try std.testing.expectEqual(@as(i64, 10), row.getInt64(3)); // MIN
+        try std.testing.expectEqual(@as(i64, 30), row.getInt64(4)); // MAX
+    }
+}
+
+test "Database transaction queryParams" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var trans = try db.beginTransaction();
+    defer trans.deinit();
+
+    var params = ParamList.init(allocator);
+    defer params.deinit();
+    try params.addText("Alice");
+
+    try trans.executeParams("INSERT INTO users (name) VALUES (?)", &params);
+
+    var query_params = ParamList.init(allocator);
+    defer query_params.deinit();
+    try query_params.addText("Alice");
+
+    var result = try trans.queryParams("SELECT name FROM users WHERE name = ?", &query_params);
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqualStrings("Alice", row.getText(0).?);
+    }
+
+    try trans.commit();
+}
+
+test "Database execute with DDL statements" {
+    const allocator = std.testing.allocator;
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE ddl_test1 (id INTEGER PRIMARY KEY)");
+    try db.execute("CREATE TABLE ddl_test2 (id INTEGER PRIMARY KEY)");
+    try db.execute("CREATE INDEX idx_ddl_test1 ON ddl_test1(id)");
+    try db.execute("ALTER TABLE ddl_test1 ADD COLUMN name TEXT");
+    try db.execute("DROP INDEX idx_ddl_test1");
+    try db.execute("DROP TABLE ddl_test2");
+
+    // Verify tables exist
+    var result = try db.query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ddl_%' ORDER BY name");
+    defer result.deinit();
+
+    var tables = std.ArrayListUnmanaged([]const u8){};
+    defer {
+        for (tables.items) |name| {
+            allocator.free(name);
+        }
+        tables.deinit(allocator);
+    }
+
+    while (result.nextRow()) |row| {
+        if (row.getText(0)) |name| {
+            // Dupe the string since SQLite row data is transient
+            const duped = try allocator.dupe(u8, name);
+            try tables.append(allocator, duped);
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), tables.items.len);
+    try std.testing.expectEqualStrings("ddl_test1", tables.items[0]);
+}

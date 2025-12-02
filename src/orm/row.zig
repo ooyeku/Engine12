@@ -855,3 +855,697 @@ test "QueryResult toArrayList with reordered columns in SELECT" {
         try std.testing.expectEqualStrings("Description", desc);
     }
 }
+
+// Comprehensive edge case tests
+
+test "Row getText with NULL value" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    try db.execute("INSERT INTO test (value) VALUES (NULL)");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expect(row.getText(0) == null);
+        try std.testing.expect(row.isNull(0));
+    }
+}
+
+test "Row getInt64 with NULL value" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+    try db.execute("INSERT INTO test (value) VALUES (NULL)");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expect(row.isNull(0));
+        // getInt64 should return 0 for NULL
+        try std.testing.expectEqual(@as(i64, 0), row.getInt64(0));
+    }
+}
+
+test "Row getDouble with NULL value" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value REAL)");
+    try db.execute("INSERT INTO test (value) VALUES (NULL)");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expect(row.isNull(0));
+        // getDouble should return 0.0 for NULL
+        try std.testing.expectEqual(@as(f64, 0.0), row.getDouble(0));
+    }
+}
+
+test "Row getInt64 with text column" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    try db.execute("INSERT INTO test (value) VALUES ('123')");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        // getInt64 should parse text as integer
+        try std.testing.expectEqual(@as(i64, 123), row.getInt64(0));
+    }
+}
+
+test "Row getDouble with integer column" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+    try db.execute("INSERT INTO test (value) VALUES (42)");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        // getDouble should convert integer to float
+        const float_val = row.getDouble(0);
+        try std.testing.expect(float_val > 41.9 and float_val < 42.1);
+    }
+}
+
+test "Row getText with empty string" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+    try db.execute("INSERT INTO test (value) VALUES ('')");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        const text = row.getText(0);
+        try std.testing.expect(text != null);
+        try std.testing.expectEqualStrings("", text.?);
+    }
+}
+
+test "Row getInt64 with large values" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+    try db.execute("INSERT INTO test (value) VALUES (9223372036854775807)");
+    try db.execute("INSERT INTO test (value) VALUES (-9223372036854775808)");
+
+    var result = try db.query("SELECT value FROM test ORDER BY id");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, 9223372036854775807), row.getInt64(0));
+    }
+    if (result.nextRow()) |row| {
+        try std.testing.expectEqual(@as(i64, -9223372036854775808), row.getInt64(0));
+    }
+}
+
+test "Row getDouble with precision" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value REAL)");
+    try db.execute("INSERT INTO test (value) VALUES (3.141592653589793)");
+
+    var result = try db.query("SELECT value FROM test");
+    defer result.deinit();
+
+    if (result.nextRow()) |row| {
+        const pi = row.getDouble(0);
+        try std.testing.expect(pi > 3.14159 and pi < 3.14160);
+    }
+}
+
+test "QueryResult nextRow with empty result" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+    var result = try db.query("SELECT * FROM test");
+    defer result.deinit();
+
+    try std.testing.expect(result.nextRow() == null);
+    // Calling nextRow again should still return null
+    try std.testing.expect(result.nextRow() == null);
+}
+
+test "QueryResult nextRow returns null after exhaustion" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test_exhaust (id INTEGER PRIMARY KEY, value TEXT)");
+    try db.execute("INSERT INTO test_exhaust (value) VALUES ('test')");
+
+    var result = try db.query("SELECT value FROM test_exhaust");
+    defer result.deinit();
+
+    // First call should return a row
+    const row1 = result.nextRow();
+    try std.testing.expect(row1 != null);
+
+    // Second call should return null (no more rows)
+    const row2 = result.nextRow();
+    try std.testing.expect(row2 == null);
+
+    // Further calls should also return null
+    const row3 = result.nextRow();
+    try std.testing.expect(row3 == null);
+}
+
+test "QueryResult columnCount with different column types" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL, active INTEGER)");
+
+    var result = try db.query("SELECT * FROM test");
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(c_int, 5), result.columnCount());
+}
+
+test "QueryResult columnName with invalid index" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+    var result = try db.query("SELECT id FROM test");
+    defer result.deinit();
+
+    // Valid index
+    try std.testing.expect(result.columnName(0) != null);
+    // Invalid index (out of bounds)
+    try std.testing.expect(result.columnName(999) == null);
+    try std.testing.expect(result.columnName(-1) == null);
+}
+
+test "QueryResult toArrayList with empty result" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        name: []u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var result = try db.query("SELECT id, name FROM users");
+    defer result.deinit();
+
+    var users = try result.toArrayList(User);
+    defer {
+        for (users.items) |user| {
+            allocator.free(user.name);
+        }
+        users.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 0), users.items.len);
+}
+
+test "QueryResult toArrayList with many rows" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        name: []u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    // Insert 100 rows
+    var i: usize = 0;
+    while (i < 100) : (i += 1) {
+        var buf: [64]u8 = undefined;
+        const sql = std.fmt.bufPrint(&buf, "INSERT INTO users (name) VALUES ('User {d}')", .{i}) catch break;
+        try db.execute(sql);
+    }
+
+    var result = try db.query("SELECT id, name FROM users ORDER BY id");
+    defer result.deinit();
+
+    var users = try result.toArrayList(User);
+    defer {
+        for (users.items) |user| {
+            allocator.free(user.name);
+        }
+        users.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 100), users.items.len);
+    try std.testing.expectEqual(@as(i64, 1), users.items[0].id);
+    try std.testing.expectEqual(@as(i64, 100), users.items[99].id);
+}
+
+test "QueryResult toArrayList with all NULL values" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        name: ?[]u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES (NULL)");
+
+    var result = try db.query("SELECT id, name FROM users");
+    defer result.deinit();
+
+    var users = try result.toArrayList(User);
+    defer {
+        for (users.items) |user| {
+            if (user.name) |n| allocator.free(n);
+        }
+        users.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), users.items.len);
+    try std.testing.expect(users.items[0].name == null);
+}
+
+test "QueryResult toArrayList with boolean false" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        active: bool,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, active INTEGER)");
+    try db.execute("INSERT INTO users (active) VALUES (0)");
+
+    var result = try db.query("SELECT id, active FROM users");
+    defer result.deinit();
+
+    var users = try result.toArrayList(User);
+    defer users.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), users.items.len);
+    try std.testing.expect(users.items[0].active == false);
+}
+
+test "QueryResult toArrayList with mixed types" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        name: []u8,
+        age: i64,
+        score: f64,
+        active: bool,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL, active INTEGER)");
+    try db.execute("INSERT INTO users (name, age, score, active) VALUES ('Alice', 25, 95.5, 1)");
+
+    var result = try db.query("SELECT id, name, age, score, active FROM users");
+    defer result.deinit();
+
+    var users = try result.toArrayList(User);
+    defer {
+        for (users.items) |user| {
+            allocator.free(user.name);
+        }
+        users.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), users.items.len);
+    try std.testing.expectEqualStrings("Alice", users.items[0].name);
+    try std.testing.expectEqual(@as(i64, 25), users.items[0].age);
+    try std.testing.expect(users.items[0].score > 95.4 and users.items[0].score < 95.6);
+    try std.testing.expect(users.items[0].active == true);
+}
+
+test "QueryResult toArrayList with enum field" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const Status = enum(u8) {
+        pending = 0,
+        active = 1,
+        completed = 2,
+    };
+
+    const Task = struct {
+        id: i64,
+        status: Status,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, status INTEGER)");
+    try db.execute("INSERT INTO tasks (status) VALUES (1)");
+
+    var result = try db.query("SELECT id, status FROM tasks");
+    defer result.deinit();
+
+    var tasks = try result.toArrayList(Task);
+    defer tasks.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), tasks.items.len);
+    try std.testing.expectEqual(Status.active, tasks.items[0].status);
+}
+
+test "PostgresStoredRow copy deep copy" {
+    const allocator = std.testing.allocator;
+
+    var original_values = try allocator.alloc(PostgresStoredRow.StoredValue, 2);
+    original_values[0] = .{ .text = try allocator.dupe(u8, "test") };
+    original_values[1] = .{ .int = 42 };
+
+    var original = PostgresStoredRow{
+        .values = original_values,
+        .allocator = allocator,
+    };
+    defer original.deinit();
+
+    // Copy the row
+    var copied = try original.copy(allocator);
+    defer copied.deinit();
+
+    // Copied should have same values as original
+    try std.testing.expectEqualStrings("test", copied.values[0].text);
+    try std.testing.expectEqual(@as(i64, 42), copied.values[1].int);
+
+    // Verify they are independent copies (different pointers)
+    try std.testing.expect(original.values[0].text.ptr != copied.values[0].text.ptr);
+}
+
+test "PostgresStoredRow getText with int value" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .int = 42 };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    // getText should return null for int value
+    try std.testing.expect(row.getText(0) == null);
+}
+
+test "PostgresStoredRow getInt64 with text value" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .text = try allocator.dupe(u8, "123") };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    // getInt64 should parse text as integer
+    try std.testing.expectEqual(@as(i64, 123), row.getInt64(0));
+}
+
+test "PostgresStoredRow getInt64 with bool value" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 2);
+    values[0] = .{ .bool_val = true };
+    values[1] = .{ .bool_val = false };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
+    try std.testing.expectEqual(@as(i64, 0), row.getInt64(1));
+}
+
+test "PostgresStoredRow getDouble with int value" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .int = 42 };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    const float_val = row.getDouble(0);
+    try std.testing.expect(float_val > 41.9 and float_val < 42.1);
+}
+
+test "PostgresStoredRow isNull with null value" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .null_val = {} };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    try std.testing.expect(row.isNull(0));
+}
+
+test "PostgresStoredRow isNull with out of bounds" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .text = try allocator.dupe(u8, "test") };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    // Out of bounds should return true (null)
+    try std.testing.expect(row.isNull(999));
+}
+
+test "PostgresStoredRow getText with out of bounds" {
+    const allocator = std.testing.allocator;
+
+    var values = try allocator.alloc(PostgresStoredRow.StoredValue, 1);
+    values[0] = .{ .text = try allocator.dupe(u8, "test") };
+
+    var row = PostgresStoredRow{
+        .values = values,
+        .allocator = allocator,
+    };
+    defer row.deinit();
+
+    // Out of bounds should return null
+    try std.testing.expect(row.getText(999) == null);
+}
+
+test "QueryResult columnName case sensitivity" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, \"Name\" TEXT)");
+    try db.execute("INSERT INTO test (\"Name\") VALUES ('test')");
+
+    var result = try db.query("SELECT \"Name\" FROM test");
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings("Name", result.columnName(0).?);
+}
+
+test "QueryResult toArrayList with wrong column count" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+        name: []u8,
+        email: []u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var result = try db.query("SELECT id, name FROM users");
+    defer result.deinit();
+
+    // Should error because struct has 3 fields but query returns 2
+    try std.testing.expectError(error.ColumnMismatch, result.toArrayList(User));
+}
+
+test "QueryResult toArrayList with extra columns" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: i64,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var result = try db.query("SELECT id, name FROM users");
+    defer result.deinit();
+
+    // Should error because query returns 2 columns but struct has 1
+    try std.testing.expectError(error.ColumnMismatch, result.toArrayList(User));
+}
+
+test "QueryResult toArrayList with mismatched types" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    const User = struct {
+        id: []u8, // Wrong type - should be i64
+        name: []u8,
+    };
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    try db.execute("INSERT INTO users (name) VALUES ('Alice')");
+
+    var result = try db.query("SELECT id, name FROM users");
+    defer result.deinit();
+
+    // This should work - id will be converted to string
+    var users = try result.toArrayList(User);
+    defer {
+        for (users.items) |user| {
+            allocator.free(user.id);
+            allocator.free(user.name);
+        }
+        users.deinit(allocator);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), users.items.len);
+    // ID should be converted to string
+    try std.testing.expect(users.items[0].id.len > 0);
+}
+
+test "QueryResult multiple iterations" {
+    const allocator = std.testing.allocator;
+    const Database = @import("database.zig").Database;
+
+    var db = try Database.open(":memory:", allocator);
+    defer db.close();
+
+    try db.execute("CREATE TABLE test_multi_iter (id INTEGER PRIMARY KEY, value TEXT)");
+    try db.execute("INSERT INTO test_multi_iter (value) VALUES ('A')");
+    try db.execute("INSERT INTO test_multi_iter (value) VALUES ('B')");
+    try db.execute("INSERT INTO test_multi_iter (value) VALUES ('C')");
+
+    var result = try db.query("SELECT value FROM test_multi_iter ORDER BY id");
+    defer result.deinit();
+
+    var values = std.ArrayListUnmanaged([]const u8){};
+    defer {
+        for (values.items) |val| {
+            allocator.free(val);
+        }
+        values.deinit(allocator);
+    }
+
+    // First iteration - must dupe strings since SQLite row data is transient
+    while (result.nextRow()) |row| {
+        if (row.getText(0)) |val| {
+            const duped = try allocator.dupe(u8, val);
+            try values.append(allocator, duped);
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), values.items.len);
+    try std.testing.expectEqualStrings("A", values.items[0]);
+    try std.testing.expectEqualStrings("B", values.items[1]);
+    try std.testing.expectEqualStrings("C", values.items[2]);
+}
+
+// Note: Zero-width types (void) are not supported by toArrayList
+// This test is removed as void fields cause compile errors in the ORM

@@ -102,24 +102,43 @@ pub const FormValidator = struct {
                 };
                 @field(result, field_name) = value;
             } else if (field_type == ?bool) {
-                // Optional boolean field
-                const value = self.parser.getBool(field_name) catch false;
-                @field(result, field_name) = value;
+                // Optional boolean field - return null if field not provided
+                // First check if field exists using get()
+                if (self.parser.get(field_name)) |maybe_value| {
+                    if (maybe_value) |value| {
+                        self.allocator.free(value);
+                        // Field exists, parse as bool
+                        const bool_val = self.parser.getBool(field_name) catch false;
+                        @field(result, field_name) = bool_val;
+                    } else {
+                        // Field not in form data
+                        @field(result, field_name) = null;
+                    }
+                } else |_| {
+                    // Error getting field
+                    @field(result, field_name) = null;
+                }
             } else if (field_type == i64) {
                 // Required integer field
-                const value = self.parser.getInt(field_name) catch |err| {
+                if (self.parser.getInt(field_name)) |value_opt| {
+                    if (value_opt) |v| {
+                        @field(result, field_name) = v;
+                    } else {
+                        // Value was null - field is required
+                        try self.addError(field_name, "Field is required");
+                        @field(result, field_name) = 0;
+                    }
+                } else |err| {
+                    // Handle MissingFormField error
                     if (err == error.MissingFormField) {
                         try self.addError(field_name, "Field is required");
-                        // Skip this field - error already added
                     } else {
+                        // Other errors (like parse errors)
                         try self.addError(field_name, "Invalid integer format");
                         return err;
                     }
-                };
-                if (value) |v| {
-                    @field(result, field_name) = v;
-                } else {
-                    // Value was null - error already added above
+                    // Set default value when field is missing
+                    @field(result, field_name) = 0;
                 }
             } else if (field_type == ?i64) {
                 // Optional integer field
@@ -149,7 +168,7 @@ pub const FormValidator = struct {
 
     /// Add a custom validator for a field
     /// The validator function should return true if the value is valid
-    pub fn validate(self: *FormValidator, field: []const u8, validator: fn([]const u8) bool, message: []const u8) void {
+    pub fn validate(self: *FormValidator, field: []const u8, validator: fn ([]const u8) bool, message: []const u8) void {
         const value = self.parser.get(field) catch |err| {
             if (err == error.MissingFormField) {
                 // Field is missing, skip validation (handled by required check)
@@ -204,7 +223,7 @@ test "FormValidator.parseInto - simple struct" {
     try std.testing.expect(!validator.hasErrors());
 }
 
-test "FormValidator.parseInto - with defaults" {
+test "FormValidator.parseInto - with optional fields" {
     const allocator = std.testing.allocator;
     const body = "title=Test";
     const parser = FormParser.init(body, allocator);
@@ -213,29 +232,31 @@ test "FormValidator.parseInto - with defaults" {
 
     const TodoForm = struct {
         title: []const u8,
-        priority: []const u8 = "medium",
-        completed: bool = false,
+        priority: ?[]const u8,
+        completed: ?bool,
     };
 
     const form = try validator.parseInto(TodoForm);
     defer allocator.free(form.title);
+    defer if (form.priority) |p| allocator.free(p);
 
     try std.testing.expectEqualStrings("Test", form.title);
-    try std.testing.expectEqualStrings("medium", form.priority);
-    try std.testing.expect(!form.completed);
+    try std.testing.expect(form.priority == null); // Not provided
+    try std.testing.expect(form.completed == null); // Not provided
     try std.testing.expect(!validator.hasErrors());
 }
 
 test "FormValidator.parseInto - missing required field" {
     const allocator = std.testing.allocator;
-    const body = "priority=high";
+    // Body is empty - missing the required title field
+    const body = "";
     const parser = FormParser.init(body, allocator);
     var validator = FormValidator.init(parser, allocator);
     defer validator.deinit();
 
+    // Simple struct with just one required field
     const TodoForm = struct {
         title: []const u8,
-        priority: []const u8,
     };
 
     const result = validator.parseInto(TodoForm);
@@ -303,4 +324,3 @@ test "FormValidator.parseInto - integer fields" {
     try std.testing.expect(form.count != null);
     try std.testing.expectEqual(@as(i64, 42), form.count.?);
 }
-

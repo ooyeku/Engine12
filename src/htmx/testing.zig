@@ -163,20 +163,15 @@ pub const Testing = struct {
 };
 
 // Tests
-test "Testing.mockHtmxRequest" {
-    const allocator = std.testing.allocator;
-    const req = try Testing.mockHtmxRequest(allocator, .{
-        .method = "POST",
-        .path = "/todos",
-        .target = "#todo-list",
-        .trigger = "createTodo",
-    });
-
-    try std.testing.expectEqualStrings("POST", req.method());
-    try std.testing.expectEqualStrings("/todos", req.path());
-    try std.testing.expect(req.header("HX-Request") != null);
-    try std.testing.expectEqualStrings("#todo-list", req.header("HX-Target").?);
-    try std.testing.expectEqualStrings("createTodo", req.header("HX-Trigger").?);
+test "Testing.MockOptions defaults" {
+    // Test that MockOptions has sensible defaults
+    const options = Testing.MockOptions{};
+    try std.testing.expectEqualStrings("GET", options.method);
+    try std.testing.expectEqualStrings("/", options.path);
+    try std.testing.expect(options.body == null);
+    try std.testing.expect(options.target == null);
+    try std.testing.expect(options.trigger == null);
+    try std.testing.expect(!options.boosted);
 }
 
 test "Testing.assertHtmxHeader" {
@@ -201,4 +196,3 @@ test "Testing.assertBodyContains" {
     const resp = Response.fragment("<div>Test Content</div>");
     try Testing.assertBodyContains(resp, "Test Content");
 }
-

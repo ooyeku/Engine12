@@ -54,21 +54,21 @@ pub const Security = struct {
     pub fn sanitizeHtml(html: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         // List of safe HTML tags
         const safe_tags = [_][]const u8{
-            "div", "span", "p", "a", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
-            "strong", "em", "b", "i", "u", "br", "hr", "img", "table", "tr", "td", "th",
-            "thead", "tbody", "tfoot", "form", "input", "button", "select", "option",
-            "textarea", "label", "article", "section", "header", "footer", "nav", "aside",
+            "div",    "span",  "p",    "a",     "ul",     "ol",     "li",     "h1",       "h2",    "h3",      "h4",      "h5",     "h6",
+            "strong", "em",    "b",    "i",     "u",      "br",     "hr",     "img",      "table", "tr",      "td",      "th",     "thead",
+            "tbody",  "tfoot", "form", "input", "button", "select", "option", "textarea", "label", "article", "section", "header", "footer",
+            "nav",    "aside",
         };
 
         // List of safe attributes
         const safe_attrs = [_][]const u8{
-            "class", "id", "href", "src", "alt", "title", "type", "name", "value",
+            "class",       "id",       "href",     "src",      "alt",     "title",    "type", "name", "value",
             "placeholder", "required", "disabled", "readonly", "checked", "selected",
             "data-", "hx-", "style", // Allow data-* and hx-* attributes
         };
 
-        var result = std.ArrayList(u8).init(allocator);
-        errdefer result.deinit();
+        var result = std.ArrayListUnmanaged(u8){};
+        errdefer result.deinit(allocator);
 
         var i: usize = 0;
         while (i < html.len) {
@@ -105,7 +105,7 @@ pub const Security = struct {
 
                     // Copy tag to result (with basic attribute sanitization)
                     const tag_content = html[tag_start..i];
-                    try sanitizeTagAttributes(&result, tag_content, safe_attrs[0..]);
+                    try sanitizeTagAttributes(&result, tag_content, safe_attrs[0..], allocator);
                 } else {
                     // Skip unsafe tag
                     while (i < html.len and html[i] != '>') {
@@ -117,20 +117,20 @@ pub const Security = struct {
                 }
             } else {
                 // Regular text, copy it
-                try result.append(html[i]);
+                try result.append(allocator, html[i]);
                 i += 1;
             }
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(allocator);
     }
 
     /// Sanitize tag attributes
-    fn sanitizeTagAttributes(result: *std.ArrayList(u8), tag: []const u8, _safe_attrs: []const []const u8) !void {
+    fn sanitizeTagAttributes(result: *std.ArrayListUnmanaged(u8), tag: []const u8, _safe_attrs: []const []const u8, allocator: std.mem.Allocator) !void {
         // Simple approach: just copy the tag as-is if it's safe
         // More sophisticated sanitization can be added later
         _ = _safe_attrs; // Suppress unused parameter warning
-        try result.appendSlice(tag);
+        try result.appendSlice(allocator, tag);
     }
 
     /// Escape HTML entities in user input
@@ -146,9 +146,10 @@ pub const Security = struct {
         var required_size: usize = 0;
         for (input) |c| {
             switch (c) {
-                '<', '>', '&' => required_size += 4, // &lt; &gt; &amp;
+                '<', '>' => required_size += 4, // &lt; &gt;
+                '&' => required_size += 5, // &amp;
                 '"' => required_size += 6, // &quot;
-                '\'' => required_size += 6, // &#39;
+                '\'' => required_size += 5, // &#39;
                 else => required_size += 1,
             }
         }
@@ -160,24 +161,24 @@ pub const Security = struct {
         for (input) |c| {
             switch (c) {
                 '<' => {
-                    result[i..i+4].* = "&lt;".*;
+                    @memcpy(result[i .. i + 4], "&lt;");
                     i += 4;
                 },
                 '>' => {
-                    result[i..i+4].* = "&gt;".*;
+                    @memcpy(result[i .. i + 4], "&gt;");
                     i += 4;
                 },
                 '&' => {
-                    result[i..i+5].* = "&amp;".*;
+                    @memcpy(result[i .. i + 5], "&amp;");
                     i += 5;
                 },
                 '"' => {
-                    result[i..i+6].* = "&quot;".*;
+                    @memcpy(result[i .. i + 6], "&quot;");
                     i += 6;
                 },
                 '\'' => {
-                    result[i..i+6].* = "&#39;".*;
-                    i += 6;
+                    @memcpy(result[i .. i + 5], "&#39;");
+                    i += 5;
                 },
                 else => {
                     result[i] = c;
@@ -212,7 +213,7 @@ pub const Security = struct {
         var i: usize = 0;
         while (i < selector.len) {
             const c = selector[i];
-            if (std.ascii.isAlNum(c) or
+            if (std.ascii.isAlphanumeric(c) or
                 c == '#' or c == '.' or c == '[' or c == ']' or
                 c == ':' or c == '-' or c == '_' or c == ' ' or
                 c == '>' or c == '+' or c == '~' or c == ',')
@@ -256,4 +257,3 @@ test "Security.sanitizeHtml" {
     try std.testing.expect(std.mem.indexOf(u8, sanitized, "<script>") == null);
     try std.testing.expect(std.mem.indexOf(u8, sanitized, "<p>More safe</p>") != null);
 }
-
