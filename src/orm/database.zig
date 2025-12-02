@@ -195,9 +195,9 @@ pub const Database = struct {
 
         // Apply SQLite performance optimizations
         if (config.wal_mode) {
-        db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
-            std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
-        };
+            db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
+                std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
+            };
         }
         db.execute("PRAGMA synchronous = NORMAL") catch |pragma_err| {
             std.debug.print("[Database] Warning: Failed to set synchronous mode: {}\n", .{pragma_err});
@@ -233,6 +233,8 @@ pub const Database = struct {
         // Import pg.zig at runtime to create pool
         const pg = @import("pg");
 
+        // pg.Pool.init() returns a heap-allocated pointer, so we can use it directly
+        // No need to allocate ourselves - pg.zig handles the allocation
         const pool = pg.Pool.init(allocator, .{
             .size = config.pool_size,
             .connect = .{
@@ -274,6 +276,8 @@ pub const Database = struct {
                 if (self.pg_pool) |pool_ptr| {
                     const pg = @import("pg");
                     const pool: *pg.Pool = @ptrCast(@alignCast(pool_ptr));
+                    // pg.Pool.deinit() handles freeing the pool's internal memory
+                    // The pool itself is allocated by pg.zig's internal allocator, not ours
                     pool.deinit();
                     self.pg_pool = null;
                 }

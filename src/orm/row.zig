@@ -94,6 +94,28 @@ pub const PostgresStoredRow = struct {
         }
         self.allocator.free(self.values);
     }
+
+    /// Deep copy this row so it owns its own memory
+    /// This is needed when returning rows from QueryResult.nextRow() to prevent use-after-free
+    pub fn copy(self: PostgresStoredRow, allocator: std.mem.Allocator) !PostgresStoredRow {
+        const copied_values = try allocator.alloc(StoredValue, self.values.len);
+        errdefer allocator.free(copied_values);
+
+        for (self.values, 0..) |val, i| {
+            copied_values[i] = switch (val) {
+                .text => |t| .{ .text = try allocator.dupe(u8, t) },
+                .int => |i_val| .{ .int = i_val },
+                .float => |f| .{ .float = f },
+                .bool_val => |b| .{ .bool_val = b },
+                .null_val => .null_val,
+            };
+        }
+
+        return PostgresStoredRow{
+            .values = copied_values,
+            .allocator = allocator,
+        };
+    }
 };
 
 /// Unified row representation that works with any database driver
@@ -285,7 +307,7 @@ pub const QueryResult = struct {
             .sqlite => {
                 if (self.sqlite_stmt) |stmt| {
                     const rc = sqlite.step(stmt);
-        if (rc == sqlite.SQLITE_ROW) {
+                    if (rc == sqlite.SQLITE_ROW) {
                         return Row.fromSqlite(SqliteRow{ .stmt = stmt });
                     }
                 }
@@ -294,12 +316,18 @@ pub const QueryResult = struct {
             .postgresql => {
                 if (self.pg_rows) |rows| {
                     if (self.pg_row_index < rows.items.len) {
-                        const row = rows.items[self.pg_row_index];
+                        const source_row = rows.items[self.pg_row_index];
                         self.pg_row_index += 1;
-                        return Row.fromPostgres(row);
+                        // Deep copy the row so it owns its own memory
+                        // This prevents use-after-free if QueryResult is deinited while Row is still in use
+                        const copied_row = source_row.copy(self.allocator) catch {
+                            // If allocation fails, return null
+                            return null;
+                        };
+                        return Row.fromPostgres(copied_row);
                     }
-        }
-        return null;
+                }
+                return null;
             },
         };
     }
@@ -316,11 +344,11 @@ pub const QueryResult = struct {
 
         switch (self.driver) {
             .sqlite => {
-        if (self.owns_stmt) {
+                if (self.owns_stmt) {
                     if (self.sqlite_stmt) |stmt| {
                         _ = sqlite.finalize(stmt);
-        }
-    }
+                    }
+                }
             },
             .postgresql => {
                 // Free PostgreSQL stored rows

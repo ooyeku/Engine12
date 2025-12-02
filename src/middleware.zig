@@ -19,7 +19,7 @@ pub const ResponseMiddlewareFn = *const fn (Response) Response;
 
 /// Middleware chain for managing multiple middleware functions
 pub const MiddlewareChain = struct {
-    const MAX_MIDDLEWARE = 16;
+    pub const MAX_MIDDLEWARE = 16;
 
     /// Pre-request middleware functions (executed before handler)
     pre_request_middleware: [MAX_MIDDLEWARE]?PreRequestMiddlewareFn = [_]?PreRequestMiddlewareFn{null} ** MAX_MIDDLEWARE,

@@ -282,12 +282,14 @@ pub const Response = struct {
     pub fn json(body: []const u8) Response {
         // Copy body to pooled memory since ziggurat stores references
         const persistent_body = dupePersistent(body) catch {
-            // If allocation fails, fall back to original (may be a string literal)
+            // Critical: Cannot safely use original body if it's from request arena
+            // Use static error message that doesn't require allocation
+            const error_msg = "{\"error\":\"Internal server error: Failed to allocate response memory\"}";
             return Response{
-                .inner = ziggurat.response.Response.json(body),
+                .inner = ziggurat.response.Response.json(error_msg),
                 ._persistent_body = null,
                 ._custom_headers = null,
-                ._status_code = null,
+                ._status_code = 500,
             };
         };
 
@@ -309,11 +311,14 @@ pub const Response = struct {
     /// ```
     pub fn text(body: []const u8) Response {
         const persistent_body = dupePersistent(body) catch {
+            // Critical: Cannot safely use original body if it's from request arena
+            // Use static error message that doesn't require allocation
+            const error_msg = "Internal server error: Failed to allocate response memory";
             return Response{
-                .inner = ziggurat.response.Response.text(body),
+                .inner = ziggurat.response.Response.text(error_msg),
                 ._persistent_body = null,
                 ._custom_headers = null,
-                ._status_code = null,
+                ._status_code = 500,
             };
         };
 
@@ -335,11 +340,14 @@ pub const Response = struct {
     /// ```
     pub fn html(body: []const u8) Response {
         const persistent_body = dupePersistent(body) catch {
+            // Critical: Cannot safely use original body if it's from request arena
+            // Use static error message that doesn't require allocation
+            const error_msg = "Internal server error: Failed to allocate response memory";
             return Response{
-                .inner = ziggurat.response.Response.html(body),
+                .inner = ziggurat.response.Response.html(error_msg),
                 ._persistent_body = null,
                 ._custom_headers = null,
-                ._status_code = null,
+                ._status_code = 500,
             };
         };
 
@@ -682,14 +690,21 @@ pub const Response = struct {
     /// ```
     pub fn withJson(self: Response, body: []const u8) Response {
         const persistent_body = dupePersistent(body) catch {
+            // Critical: Cannot safely use original body if it's from request arena
+            // Use static error message that doesn't require allocation
+            // Preserve existing status code and headers (builder pattern)
+            const error_msg = "{\"error\":\"Internal server error: Failed to allocate response memory\"}";
+            const status_code = self._status_code orelse 500;
             return Response{
-                .inner = ziggurat.response.Response.json(body),
-                ._persistent_body = self._persistent_body,
+                .inner = ziggurat.response.Response.json(error_msg),
+                ._persistent_body = null,
                 ._custom_headers = self._custom_headers,
-                ._status_code = self._status_code,
+                ._status_code = status_code,
             };
         };
 
+        // Preserve existing status code if set, otherwise keep null (defaults to 200)
+        // This maintains consistency with error path which always sets a status code
         return Response{
             .inner = ziggurat.response.Response.json(persistent_body),
             ._persistent_body = persistent_body,
@@ -1030,11 +1045,14 @@ pub const Response = struct {
     /// ```
     pub fn download(filename: []const u8, data: []const u8) Response {
         const persistent_data = dupePersistent(data) catch {
+            // Critical: Cannot safely use original data if it's from request arena
+            // Use static error message that doesn't require allocation
+            const error_msg = "Internal server error: Failed to allocate response memory";
             return Response{
-                .inner = ziggurat.response.Response.text(data),
+                .inner = ziggurat.response.Response.text(error_msg),
                 ._persistent_body = null,
                 ._custom_headers = null,
-                ._status_code = null,
+                ._status_code = 500,
             };
         };
 
@@ -1059,11 +1077,14 @@ pub const Response = struct {
     /// ```
     pub fn stream(content_type: []const u8, data: []const u8) Response {
         const persistent_data = dupePersistent(data) catch {
+            // Critical: Cannot safely use original data if it's from request arena
+            // Use static error message that doesn't require allocation
+            const error_msg = "Internal server error: Failed to allocate response memory";
             return Response{
-                .inner = ziggurat.response.Response.text(data),
+                .inner = ziggurat.response.Response.text(error_msg),
                 ._persistent_body = null,
                 ._custom_headers = null,
-                ._status_code = null,
+                ._status_code = 500,
             };
         };
 

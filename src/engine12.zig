@@ -682,6 +682,7 @@ pub const Engine12 = struct {
 
     // HTMX Configuration (auto-enabled in development mode)
     htmx_config: ?htmx_mod.HtmxConfig = null,
+    htmx_registration_failed: bool = false, // Track if HTMX middleware registration failed
 
     // OpenAPI Generator
     openapi_generator: ?openapi.OpenAPIGenerator = null,
@@ -783,22 +784,30 @@ pub const Engine12 = struct {
     pub fn enableHtmxWithConfig(self: *Engine12, config: htmx_mod.HtmxConfig) void {
         self.htmx_config = config;
         htmx_mod.setConfig(config);
+        self.htmx_registration_failed = false; // Reset flag
 
         // Register HTMX injector as response middleware
-        self.useResponse(htmx_mod.injectHtmx) catch {
-            std.debug.print("[Engine12] Warning: Failed to register HTMX injector middleware\n", .{});
+        self.useResponse(htmx_mod.injectHtmx) catch |err| {
+            self.htmx_registration_failed = true;
+            std.debug.print("[Engine12] Error: Failed to register HTMX injector middleware: {}\n", .{err});
+            std.debug.print("[Engine12] This usually means too many middleware are registered (max: {d})\n", .{middleware_chain.MiddlewareChain.MAX_MIDDLEWARE});
+            std.debug.print("[Engine12] HTMX will not be injected into responses. Consider removing unused middleware.\n", .{});
+            // Don't clear config - user might fix middleware count and retry
+            return;
         };
     }
 
     /// Disable HTMX injection
     pub fn disableHtmx(self: *Engine12) void {
         self.htmx_config = null;
+        self.htmx_registration_failed = false;
         htmx_mod.setConfig(null);
     }
 
-    /// Check if HTMX is enabled
+    /// Check if HTMX is enabled and successfully registered
+    /// Returns true only if HTMX config is set, enabled, and middleware registration succeeded
     pub fn isHtmxEnabled(self: *const Engine12) bool {
-        return self.htmx_config != null and self.htmx_config.?.enabled;
+        return self.htmx_config != null and self.htmx_config.?.enabled and !self.htmx_registration_failed;
     }
 
     // =========================================================================
@@ -1641,6 +1650,11 @@ pub const Engine12 = struct {
         if (self.hot_reload_manager) |manager| {
             return try manager.watchTemplate(template_path);
         }
+        std.debug.print("[Engine12] Error: loadTemplate() requires development mode (initDevelopment()).\n", .{});
+        std.debug.print("[Engine12] Template path: {s}\n", .{template_path});
+        std.debug.print("[Engine12] In production, use @embedFile with comptime templates:\n", .{});
+        std.debug.print("[Engine12]   const TemplateType = Template.compileFile(\"{s}\");\n", .{template_path});
+        std.debug.print("[Engine12]   const html = try TemplateType.render(Context, context, allocator);\n", .{});
         return error.HotReloadNotEnabled;
     }
 
@@ -1700,7 +1714,10 @@ pub const Engine12 = struct {
         var registry = TemplateRegistry.init(self.allocator);
 
         if (self.hot_reload_manager == null) {
-            std.debug.print("[Engine12] Warning: Template discovery requires hot reload (development mode). Skipping.\n", .{});
+            std.debug.print("[Engine12] Error: discoverTemplates() requires development mode (initDevelopment()).\n", .{});
+            std.debug.print("[Engine12] Templates directory: {s}\n", .{templates_dir});
+            std.debug.print("[Engine12] In production, use @embedFile with comptime templates instead.\n", .{});
+            std.debug.print("[Engine12] Returning empty registry - templates will not be available.\n", .{});
             return registry;
         }
 
@@ -2495,6 +2512,37 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Check if a route exists at the given path (for any HTTP method)
+    fn hasRoute(self: *Engine12, path: []const u8) bool {
+        // Check http_routes
+        var i: usize = 0;
+        while (i < self.routes_count) : (i += 1) {
+            if (self.http_routes[i]) |route| {
+                if (std.mem.eql(u8, route.path, path)) {
+                    return true;
+                }
+            }
+        }
+
+        // Check runtime routes (valve-registered routes)
+        // Check if any route matches the path pattern
+        self.runtime_routes.mutex.lock();
+        defer self.runtime_routes.mutex.unlock();
+
+        var iterator = self.runtime_routes.routes.iterator();
+        while (iterator.next()) |*entry| {
+            const route = entry.value_ptr;
+            // Check exact path match
+            if (std.mem.eql(u8, route.path_pattern, path)) {
+                return true;
+            }
+            // Check if path matches pattern (e.g., "/api/todos/:id" matches "/api/todos/123")
+            // For exact matches like "/" and "/api/todos", we only need exact match
+        }
+
+        return false;
+    }
+
     /// Print streamlined server status
     pub fn printStatus(self: *Engine12) void {
         std.debug.print("\nServer ready\n", .{});
@@ -2504,8 +2552,20 @@ pub const Engine12 = struct {
             self.routes_count,
             self.workers_count,
         });
-        std.debug.print("\nFrontend: http://{s}:{d}/\n", .{ self.server_config.host, self.server_config.port });
-        std.debug.print("API: http://{s}:{d}/api/todos\n\n", .{ self.server_config.host, self.server_config.port });
+
+        // Only print URLs if routes exist
+        var printed_any = false;
+        if (self.hasRoute("/")) {
+            std.debug.print("\nFrontend: http://{s}:{d}/\n", .{ self.server_config.host, self.server_config.port });
+            printed_any = true;
+        }
+        if (self.hasRoute("/api/todos")) {
+            std.debug.print("API: http://{s}:{d}/api/todos\n", .{ self.server_config.host, self.server_config.port });
+            printed_any = true;
+        }
+        if (printed_any) {
+            std.debug.print("\n", .{});
+        }
     }
 };
 
