@@ -2,6 +2,7 @@ const std = @import("std");
 const Database = @import("database.zig").Database;
 const Migration = @import("migration.zig").Migration;
 const Schema = @import("schema.zig").Schema;
+const Driver = @import("driver.zig").Driver;
 
 pub const MigrationRunner = struct {
     db: *Database,
@@ -15,12 +16,20 @@ pub const MigrationRunner = struct {
     }
 
     pub fn createMigrationsTable(self: *MigrationRunner) !void {
-        const sql =
+        const driver = self.db.getDriver();
+
+        const sql = if (driver == .postgresql)
+            \\CREATE TABLE IF NOT EXISTS schema_migrations (
+            \\  version INTEGER PRIMARY KEY,
+            \\  name VARCHAR(255) NOT NULL,
+            \\  applied_at BIGINT NOT NULL
+            \\)
+        else
             \\CREATE TABLE IF NOT EXISTS schema_migrations (
             \\  version INTEGER PRIMARY KEY,
             \\  name TEXT NOT NULL,
             \\  applied_at INTEGER NOT NULL
-            \\);
+            \\)
         ;
         try self.db.execute(sql);
     }
@@ -148,11 +157,19 @@ pub const MigrationRunner = struct {
                                     try escaped_name.append(self.allocator, char);
                                 }
                             }
-                            const insert_sql = try std.fmt.allocPrint(
-                                self.allocator,
-                                "INSERT OR IGNORE INTO schema_migrations (version, name, applied_at) VALUES ({d}, '{s}', {d})",
-                                .{ migration.version, escaped_name.items, timestamp },
-                            );
+                            const driver = self.db.getDriver();
+                            const insert_sql = if (driver == .postgresql)
+                                try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES ({d}, '{s}', {d}) ON CONFLICT DO NOTHING",
+                                    .{ migration.version, escaped_name.items, timestamp },
+                                )
+                            else
+                                try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "INSERT OR IGNORE INTO schema_migrations (version, name, applied_at) VALUES ({d}, '{s}', {d})",
+                                    .{ migration.version, escaped_name.items, timestamp },
+                                );
                             defer self.allocator.free(insert_sql);
                             self.db.execute(insert_sql) catch {
                                 // If we can't record it, just continue - migration is already applied

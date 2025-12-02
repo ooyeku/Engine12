@@ -206,17 +206,17 @@ pub const QueryBuilder = struct {
                     }
                 } else {
                     // Escape single quotes in literal value
-                    var escaped_value = std.ArrayListUnmanaged(u8){};
-                    defer escaped_value.deinit(self.allocator);
-                    for (clause.value) |char| {
-                        if (char == '\'') {
-                            try escaped_value.append(self.allocator, '\'');
-                            try escaped_value.append(self.allocator, '\'');
-                        } else {
-                            try escaped_value.append(self.allocator, char);
-                        }
+                var escaped_value = std.ArrayListUnmanaged(u8){};
+                defer escaped_value.deinit(self.allocator);
+                for (clause.value) |char| {
+                    if (char == '\'') {
+                        try escaped_value.append(self.allocator, '\'');
+                        try escaped_value.append(self.allocator, '\'');
+                    } else {
+                        try escaped_value.append(self.allocator, char);
                     }
-                    try sql.writer(self.allocator).print("{s} {s} '{s}'", .{ clause.field, clause.operator, escaped_value.items });
+                }
+                try sql.writer(self.allocator).print("{s} {s} '{s}'", .{ clause.field, clause.operator, escaped_value.items });
                 }
             }
         }

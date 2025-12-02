@@ -1,6 +1,7 @@
 const std = @import("std");
 const Database = @import("database.zig").Database;
 const QueryResult = @import("row.zig").QueryResult;
+const Driver = @import("driver.zig").Driver;
 
 /// Information about a database column
 pub const ColumnInfo = struct {
@@ -29,27 +30,45 @@ pub const Schema = struct {
     /// }
     /// ```
     pub fn columnExists(db: *Database, table: []const u8, column: []const u8) !bool {
-        const sql = try std.fmt.allocPrint(
-            std.heap.page_allocator,
-            "PRAGMA table_info({s})",
-            .{table},
-        );
-        defer std.heap.page_allocator.free(sql);
+        const driver = db.getDriver();
 
-        var result = try db.query(sql);
-        defer result.deinit();
+        if (driver == .postgresql) {
+            // PostgreSQL: use information_schema.columns
+            const sql = try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '{s}' AND column_name = '{s}'",
+                .{ table, column },
+            );
+            defer std.heap.page_allocator.free(sql);
 
-        while (result.nextRow()) |row| {
-            // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
-            // Column name is at index 1
-            if (row.getText(1)) |col_name| {
-                if (std.mem.eql(u8, col_name, column)) {
-                    return true;
+            var result = try db.query(sql);
+            defer result.deinit();
+
+            return (result.nextRow() != null);
+        } else {
+            // SQLite: use PRAGMA table_info
+            const sql = try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "PRAGMA table_info({s})",
+                .{table},
+            );
+            defer std.heap.page_allocator.free(sql);
+
+            var result = try db.query(sql);
+            defer result.deinit();
+
+            while (result.nextRow()) |row| {
+                // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+                // Column name is at index 1
+                if (row.getText(1)) |col_name| {
+                    if (std.mem.eql(u8, col_name, column)) {
+                        return true;
+                    }
                 }
             }
-        }
 
-        return false;
+            return false;
+        }
     }
 
     /// Get all columns for a table
@@ -68,41 +87,97 @@ pub const Schema = struct {
     /// }
     /// ```
     pub fn getColumns(db: *Database, table: []const u8, allocator: std.mem.Allocator) ![]ColumnInfo {
-        const sql = try std.fmt.allocPrint(
-            allocator,
-            "PRAGMA table_info({s})",
-            .{table},
-        );
-        defer allocator.free(sql);
-
-        var result = try db.query(sql);
-        defer result.deinit();
+        const driver = db.getDriver();
 
         var columns = std.ArrayListUnmanaged(ColumnInfo){};
         defer columns.deinit(allocator);
 
-        while (result.nextRow()) |row| {
-            // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
-            const name = row.getText(1) orelse continue;
-            const type_str = row.getText(2) orelse continue;
-            const notnull = row.getInt64(3);
-            const default_val = row.getText(4);
-            const pk = row.getInt64(5);
+        if (driver == .postgresql) {
+            // PostgreSQL: use information_schema.columns
+            // Also need to check for primary key constraint
+            const sql = try std.fmt.allocPrint(
+                allocator,
+                \\SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
+                \\       CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END as is_pk
+                \\FROM information_schema.columns c
+                \\LEFT JOIN (
+                \\    SELECT kcu.column_name
+                \\    FROM information_schema.table_constraints tc
+                \\    JOIN information_schema.key_column_usage kcu
+                \\        ON tc.constraint_name = kcu.constraint_name
+                \\        AND tc.table_schema = kcu.table_schema
+                \\    WHERE tc.constraint_type = 'PRIMARY KEY'
+                \\        AND tc.table_schema = 'public'
+                \\        AND tc.table_name = '{s}'
+                \\) pk ON c.column_name = pk.column_name
+                \\WHERE c.table_schema = 'public' AND c.table_name = '{s}'
+                \\ORDER BY c.ordinal_position
+            ,
+                .{ table, table },
+            );
+            defer allocator.free(sql);
 
-            const name_copy = try allocator.dupe(u8, name);
-            errdefer allocator.free(name_copy);
-            const type_copy = try allocator.dupe(u8, type_str);
-            errdefer allocator.free(type_copy);
-            const default_copy = if (default_val) |dv| try allocator.dupe(u8, dv) else null;
-            errdefer if (default_copy) |dv| allocator.free(dv);
+            var result = try db.query(sql);
+            defer result.deinit();
 
-            try columns.append(allocator, ColumnInfo{
-                .name = name_copy,
-                .type = type_copy,
-                .not_null = (notnull != 0),
-                .default_value = default_copy,
-                .primary_key = (pk != 0),
-            });
+            while (result.nextRow()) |row| {
+                // PostgreSQL returns: column_name, data_type, is_nullable, column_default, is_pk
+                const name = row.getText(0) orelse continue;
+                const type_str = row.getText(1) orelse continue;
+                const is_nullable_str = row.getText(2) orelse "YES";
+                const default_val = row.getText(3);
+                const pk = row.getInt64(4);
+
+                const name_copy = try allocator.dupe(u8, name);
+                errdefer allocator.free(name_copy);
+                const type_copy = try allocator.dupe(u8, type_str);
+                errdefer allocator.free(type_copy);
+                const default_copy = if (default_val) |dv| try allocator.dupe(u8, dv) else null;
+                errdefer if (default_copy) |dv| allocator.free(dv);
+
+                try columns.append(allocator, ColumnInfo{
+                    .name = name_copy,
+                    .type = type_copy,
+                    .not_null = std.mem.eql(u8, is_nullable_str, "NO"),
+                    .default_value = default_copy,
+                    .primary_key = (pk != 0),
+                });
+            }
+        } else {
+            // SQLite: use PRAGMA table_info
+            const sql = try std.fmt.allocPrint(
+                allocator,
+                "PRAGMA table_info({s})",
+                .{table},
+            );
+            defer allocator.free(sql);
+
+            var result = try db.query(sql);
+            defer result.deinit();
+
+            while (result.nextRow()) |row| {
+                // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+                const name = row.getText(1) orelse continue;
+                const type_str = row.getText(2) orelse continue;
+                const notnull = row.getInt64(3);
+                const default_val = row.getText(4);
+                const pk = row.getInt64(5);
+
+                const name_copy = try allocator.dupe(u8, name);
+                errdefer allocator.free(name_copy);
+                const type_copy = try allocator.dupe(u8, type_str);
+                errdefer allocator.free(type_copy);
+                const default_copy = if (default_val) |dv| try allocator.dupe(u8, dv) else null;
+                errdefer if (default_copy) |dv| allocator.free(dv);
+
+                try columns.append(allocator, ColumnInfo{
+                    .name = name_copy,
+                    .type = type_copy,
+                    .not_null = (notnull != 0),
+                    .default_value = default_copy,
+                    .primary_key = (pk != 0),
+                });
+            }
         }
 
         return columns.toOwnedSlice(allocator);
@@ -118,11 +193,20 @@ pub const Schema = struct {
     /// }
     /// ```
     pub fn tableExists(db: *Database, table: []const u8) !bool {
-        const sql = try std.fmt.allocPrint(
-            std.heap.page_allocator,
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='{s}'",
-            .{table},
-        );
+        const driver = db.getDriver();
+
+        const sql = if (driver == .postgresql)
+            try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{s}'",
+                .{table},
+            )
+        else
+            try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='{s}'",
+                .{table},
+            );
         defer std.heap.page_allocator.free(sql);
 
         var result = try db.query(sql);
@@ -247,7 +331,12 @@ pub const Schema = struct {
 
     /// Get a list of all tables in the database.
     pub fn getTables(db: *Database, allocator: std.mem.Allocator) ![][]const u8 {
-        const sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
+        const driver = db.getDriver();
+
+        const sql: []const u8 = if (driver == .postgresql)
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        else
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
 
         var result = try db.query(sql);
         defer result.deinit();
@@ -269,11 +358,20 @@ pub const Schema = struct {
 
     /// Check if an index exists.
     pub fn indexExists(db: *Database, index_name: []const u8) !bool {
-        const sql = try std.fmt.allocPrint(
-            std.heap.page_allocator,
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='{s}'",
-            .{index_name},
-        );
+        const driver = db.getDriver();
+
+        const sql = if (driver == .postgresql)
+            try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = '{s}'",
+                .{index_name},
+            )
+        else
+            try std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='{s}'",
+                .{index_name},
+            );
         defer std.heap.page_allocator.free(sql);
 
         var result = try db.query(sql);

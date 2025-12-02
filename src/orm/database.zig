@@ -195,9 +195,9 @@ pub const Database = struct {
 
         // Apply SQLite performance optimizations
         if (config.wal_mode) {
-            db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
-                std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
-            };
+        db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
+            std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
+        };
         }
         db.execute("PRAGMA synchronous = NORMAL") catch |pragma_err| {
             std.debug.print("[Database] Warning: Failed to set synchronous mode: {}\n", .{pragma_err});
@@ -539,63 +539,21 @@ pub const Database = struct {
         var result = std.ArrayListUnmanaged(u8){};
         errdefer result.deinit(allocator);
 
-        // Detect if this is a boolean column context (for 'completed' field)
-        // We track column names to know when to use TRUE/FALSE vs 0/1
         var param_index: usize = 0;
         var i: usize = 0;
-
-        // Extract column names if this is an INSERT statement
-        var is_completed_param = std.ArrayListUnmanaged(bool){};
-        defer is_completed_param.deinit(allocator);
-
-        // Check if SQL contains 'completed' to mark boolean parameters
-        if (std.mem.indexOf(u8, sql, "completed")) |_| {
-            // Find the VALUES section and count parameters
-            if (std.mem.indexOf(u8, sql, "VALUES")) |values_pos| {
-                // Count columns before VALUES
-                var paren_count: usize = 0;
-                var col_start: ?usize = null;
-                var col_idx: usize = 0;
-
-                for (sql[0..values_pos], 0..) |c, idx| {
-                    if (c == '(') {
-                        paren_count += 1;
-                        if (paren_count == 1) col_start = idx + 1;
-                    } else if (c == ')' and paren_count > 0) {
-                        paren_count -= 1;
-                    } else if (c == ',' and paren_count == 1) {
-                        if (col_start) |start| {
-                            const col_name = std.mem.trim(u8, sql[start..idx], " ");
-                            try is_completed_param.append(allocator, std.mem.eql(u8, col_name, "completed"));
-                            col_start = idx + 1;
-                            col_idx += 1;
-                        }
-                    } else if (c == ')' and paren_count == 0 and col_start != null) {
-                        const col_name = std.mem.trim(u8, sql[col_start.?..idx], " ");
-                        try is_completed_param.append(allocator, std.mem.eql(u8, col_name, "completed"));
-                    }
-                }
-            }
-        }
 
         while (i < sql.len) {
             if (sql[i] == '?') {
                 // Replace ? with the literal value
                 if (param_index < params.items.items.len) {
                     const param = params.items.items[param_index];
-                    const is_bool_col = param_index < is_completed_param.items.len and is_completed_param.items[param_index];
 
                     switch (param) {
                         .null => try result.appendSlice(allocator, "NULL"),
                         .int64 => |v| {
-                            if (is_bool_col) {
-                                // PostgreSQL boolean column - use TRUE/FALSE
-                                try result.appendSlice(allocator, if (v != 0) "TRUE" else "FALSE");
-                            } else {
-                                var buf: [32]u8 = undefined;
-                                const num_str = std.fmt.bufPrint(&buf, "{d}", .{v}) catch "0";
-                                try result.appendSlice(allocator, num_str);
-                            }
+                            var buf: [32]u8 = undefined;
+                            const num_str = std.fmt.bufPrint(&buf, "{d}", .{v}) catch "0";
+                            try result.appendSlice(allocator, num_str);
                         },
                         .float64 => |v| {
                             var buf: [64]u8 = undefined;

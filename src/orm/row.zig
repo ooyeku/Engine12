@@ -285,7 +285,7 @@ pub const QueryResult = struct {
             .sqlite => {
                 if (self.sqlite_stmt) |stmt| {
                     const rc = sqlite.step(stmt);
-                    if (rc == sqlite.SQLITE_ROW) {
+        if (rc == sqlite.SQLITE_ROW) {
                         return Row.fromSqlite(SqliteRow{ .stmt = stmt });
                     }
                 }
@@ -298,8 +298,8 @@ pub const QueryResult = struct {
                         self.pg_row_index += 1;
                         return Row.fromPostgres(row);
                     }
-                }
-                return null;
+        }
+        return null;
             },
         };
     }
@@ -316,11 +316,11 @@ pub const QueryResult = struct {
 
         switch (self.driver) {
             .sqlite => {
-                if (self.owns_stmt) {
+        if (self.owns_stmt) {
                     if (self.sqlite_stmt) |stmt| {
                         _ = sqlite.finalize(stmt);
-                    }
-                }
+        }
+    }
             },
             .postgresql => {
                 // Free PostgreSQL stored rows
