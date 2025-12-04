@@ -81,42 +81,6 @@ pub const SqlEscape = struct {
         
         return result.toOwnedSlice(allocator);
     }
-
-    /// Escape a SQL identifier (table name, column name) for safe use
-    /// SQLite uses double quotes for identifiers
-    /// 
-    /// Example:
-    /// ```zig
-    /// const table_name = "my-table";
-    /// const safe = try SqlEscape.escapeIdentifier(allocator, table_name);
-    /// defer allocator.free(safe);
-    /// // safe == "\"my-table\""
-    /// ```
-    pub fn escapeIdentifier(allocator: std.mem.Allocator, identifier: []const u8) ![]const u8 {
-        var result = std.ArrayListUnmanaged(u8){};
-        defer result.deinit(allocator);
-        
-        // Pre-allocate capacity for quotes and potential doubling
-        try result.ensureTotalCapacity(allocator, identifier.len * 2 + 2);
-        
-        // Opening quote
-        try result.append(allocator, '"');
-        
-        for (identifier) |char| {
-            if (char == '"') {
-                // SQLite escapes double quotes by doubling them
-                try result.append(allocator, '"');
-                try result.append(allocator, '"');
-            } else {
-                try result.append(allocator, char);
-            }
-        }
-        
-        // Closing quote
-        try result.append(allocator, '"');
-        
-        return result.toOwnedSlice(allocator);
-    }
 };
 
 // Tests
@@ -172,32 +136,5 @@ test "SqlEscape.escapeLikePattern with quotes and wildcards" {
     defer allocator.free(escaped);
     
     try std.testing.expectEqualStrings("test''\\%\\_data", escaped);
-}
-
-test "SqlEscape.escapeIdentifier basic" {
-    const allocator = std.testing.allocator;
-    const input = "mytable";
-    const escaped = try SqlEscape.escapeIdentifier(allocator, input);
-    defer allocator.free(escaped);
-    
-    try std.testing.expectEqualStrings("\"mytable\"", escaped);
-}
-
-test "SqlEscape.escapeIdentifier with special chars" {
-    const allocator = std.testing.allocator;
-    const input = "my-table";
-    const escaped = try SqlEscape.escapeIdentifier(allocator, input);
-    defer allocator.free(escaped);
-    
-    try std.testing.expectEqualStrings("\"my-table\"", escaped);
-}
-
-test "SqlEscape.escapeIdentifier with quotes" {
-    const allocator = std.testing.allocator;
-    const input = "my\"table";
-    const escaped = try SqlEscape.escapeIdentifier(allocator, input);
-    defer allocator.free(escaped);
-    
-    try std.testing.expectEqualStrings("\"my\"\"table\"", escaped);
 }
 

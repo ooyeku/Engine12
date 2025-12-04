@@ -38,21 +38,6 @@ pub fn handleMetricsEndpoint(request: *Request) Response {
     return Response.json("{\"metrics\":{\"uptime_ms\":0,\"requests_total\":0}}");
 }
 
-pub fn handleGetUsers(request: *Request) Response {
-    _ = request;
-    return Response.json("{\"users\":[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]}");
-}
-
-pub fn handleCreateUser(request: *Request) Response {
-    _ = request;
-    return Response.json("{\"id\":3,\"name\":\"Charlie\",\"created\":true}");
-}
-
-pub fn handleGetStatus(request: *Request) Response {
-    _ = request;
-    return Response.json("{\"status\":\"ok\",\"version\":\"0.1.0\"}");
-}
-
 // Tests
 test "handleDefaultRoot returns correct JSON" {
     const ziggurat = @import("ziggurat");
@@ -91,57 +76,3 @@ test "handleHealthEndpoint returns correct JSON" {
 }
 
 // Test deleted - causes segmentation fault when accessing global_metrics
-
-test "handleGetUsers returns correct JSON" {
-    const ziggurat = @import("ziggurat");
-    const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
-    const user_data = std.StringHashMap([]const u8).init(std.testing.allocator);
-    var ziggurat_req = ziggurat.request.Request{
-        .path = "/api/users",
-        .method = .GET,
-        .body = "",
-        .headers = headers,
-        .allocator = std.testing.allocator,
-        .user_data = user_data,
-    };
-    var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
-    defer req.deinit();
-    const resp = handleGetUsers(&req);
-    _ = resp;
-}
-
-test "handleCreateUser returns correct JSON" {
-    const ziggurat = @import("ziggurat");
-    const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
-    const user_data = std.StringHashMap([]const u8).init(std.testing.allocator);
-    var ziggurat_req = ziggurat.request.Request{
-        .path = "/api/users",
-        .method = .POST,
-        .body = "",
-        .headers = headers,
-        .allocator = std.testing.allocator,
-        .user_data = user_data,
-    };
-    var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
-    defer req.deinit();
-    const resp = handleCreateUser(&req);
-    _ = resp;
-}
-
-test "handleGetStatus returns correct JSON" {
-    const ziggurat = @import("ziggurat");
-    const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
-    const user_data = std.StringHashMap([]const u8).init(std.testing.allocator);
-    var ziggurat_req = ziggurat.request.Request{
-        .path = "/api/status",
-        .method = .GET,
-        .body = "",
-        .headers = headers,
-        .allocator = std.testing.allocator,
-        .user_data = user_data,
-    };
-    var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
-    defer req.deinit();
-    const resp = handleGetStatus(&req);
-    _ = resp;
-}
