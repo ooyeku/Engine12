@@ -9,20 +9,22 @@ pub const Parser = struct {
         // Increase branch quota for parsing large templates
         @setEvalBranchQuota(1000000);
         // Use a comptime helper to build nodes
-        var end_pos: usize = 0;
-        const nodes = try parseNodes(template, 0, &end_pos);
-        return ast.TemplateAST.init(nodes);
+        const parse_result = try parseNodes(template, 0);
+        return ast.TemplateAST.init(parse_result.nodes);
     }
     
     /// Parse nodes recursively at comptime
+    /// Returns both nodes and end position
     fn parseNodes(
         comptime template: []const u8,
         comptime start: usize,
-        comptime end_pos: *usize,
-    ) ![]const ast.TemplateAST.Node {
+    ) !struct {
+        nodes: []const ast.TemplateAST.Node,
+        end_pos: usize,
+    } {
         var result: []const ast.TemplateAST.Node = &[_]ast.TemplateAST.Node{};
         var i: usize = start;
-        end_pos.* = start;
+        var end_pos: usize = start;
         
         while (i < template.len) {
             // Look for {{ or {%
@@ -42,11 +44,13 @@ pub const Parser = struct {
             }
             
             if (next_token) |token| {
-                // Add text before token
+                // Add text before token - use comptime evaluation
                 if (token.start > i) {
-                    const text = template[i..token.start];
+                    const text_start = i;
+                    const text_end = token.start;
+                    const text = template[text_start..text_end];
                     if (text.len > 0) {
-                        result = appendNode(result, ast.TemplateAST.Node{ .text = text });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .text = text }};
                     }
                 }
                 
@@ -63,28 +67,28 @@ pub const Parser = struct {
                     if (std.mem.startsWith(u8, trimmed, "if")) {
                         // Parse if block
                         const if_result = try parseIfBlock(template, block_end_pos);
-                        result = appendNode(result, ast.TemplateAST.Node{ .if_block = if_result.block });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .if_block = if_result.block }};
                         i = if_result.end_pos;
-                        end_pos.* = i;
+                        end_pos = i;
                     } else if (std.mem.startsWith(u8, trimmed, "for")) {
                         // Parse for block
                         const for_result = try parseForBlock(template, block_end_pos);
-                        result = appendNode(result, ast.TemplateAST.Node{ .for_block = for_result.block });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .for_block = for_result.block }};
                         i = for_result.end_pos;
-                        end_pos.* = i;
+                        end_pos = i;
                     } else if (std.mem.startsWith(u8, trimmed, "include")) {
                         // Parse include
                         const include_node = try parseInclude(block_content);
-                        result = appendNode(result, ast.TemplateAST.Node{ .include = include_node });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .include = include_node }};
                         i = block_end_pos;
-                        end_pos.* = i;
+                        end_pos = i;
                     } else if (std.mem.startsWith(u8, trimmed, "endif") or std.mem.startsWith(u8, trimmed, "endfor")) {
                         // End tag - return what we have
-                        end_pos.* = i;
+                        end_pos = i;
                         break;
                     } else if (std.mem.startsWith(u8, trimmed, "else")) {
                         // Else tag - return what we have (handled by parseIfBlock)
-                        end_pos.* = i;
+                        end_pos = i;
                         break;
                     } else {
                         return error.InvalidIfSyntax;
@@ -101,28 +105,31 @@ pub const Parser = struct {
                     
                     const var_node = try parseVariable(std.mem.trim(u8, var_str, " \t\n"));
                     if (is_raw) {
-                        result = appendNode(result, ast.TemplateAST.Node{ .raw_variable = var_node });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .raw_variable = var_node }};
                     } else {
-                        result = appendNode(result, ast.TemplateAST.Node{ .variable = var_node });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .variable = var_node }};
                     }
                     
                     i = token.start + 2 + var_end + 2;
-                    end_pos.* = i;
+                    end_pos = i;
                 }
             } else {
                 // No more tokens - add remaining text
                 if (i < template.len) {
                     const text = template[i..];
                     if (text.len > 0) {
-                        result = appendNode(result, ast.TemplateAST.Node{ .text = text });
+                        result = result ++ &[_]ast.TemplateAST.Node{.{ .text = text }};
                     }
                 }
-                end_pos.* = template.len;
+                end_pos = template.len;
                 break;
             }
         }
         
-        return result;
+        return .{
+            .nodes = result,
+            .end_pos = end_pos,
+        };
     }
     
     /// Parse if block
@@ -146,9 +153,9 @@ pub const Parser = struct {
         const condition = try parseVariable(condition_str);
         
         // Parse content until {% else %} or {% endif %}
-        var content_end: usize = 0;
-        const true_block_nodes = try parseNodes(template, if_tag_start + 5 + if_tag_end + 2, &content_end);
-        const true_block = ast.TemplateAST.init(true_block_nodes);
+        const true_block_result = try parseNodes(template, if_tag_start + 5 + if_tag_end + 2);
+        const content_end = true_block_result.end_pos;
+        const true_block = ast.TemplateAST.init(true_block_result.nodes);
         
         // Check if there's an else block
         var false_block: ?ast.TemplateAST = null;
@@ -168,9 +175,9 @@ pub const Parser = struct {
                 const else_content_start = else_tag_start + 7 + else_tag_end + 2;
                 
                 // Parse false block content
-                var false_end_pos: usize = 0;
-                const false_block_nodes = try parseNodes(template, else_content_start, &false_end_pos);
-                false_block = ast.TemplateAST.init(false_block_nodes);
+                const false_block_result = try parseNodes(template, else_content_start);
+                const false_end_pos = false_block_result.end_pos;
+                false_block = ast.TemplateAST.init(false_block_result.nodes);
                 
                 // Find endif
                 const endif_pos_after_else = std.mem.indexOf(u8, template[false_end_pos..], "{% endif") orelse {
@@ -245,9 +252,9 @@ pub const Parser = struct {
         const item_name = std.mem.trim(u8, after_pipe[0..item_pipe_pos], " \t\n");
         
         // Parse content until {% endfor %}
-        var content_end: usize = 0;
-        const block_nodes = try parseNodes(template, for_tag_start + 6 + for_tag_end + 2, &content_end);
-        const block = ast.TemplateAST.init(block_nodes);
+        const block_result = try parseNodes(template, for_tag_start + 6 + for_tag_end + 2);
+        const content_end = block_result.end_pos;
+        const block = ast.TemplateAST.init(block_result.nodes);
         
         // Find {% endfor %}
         const endfor_pos = std.mem.indexOf(u8, template[content_end..], "{% endfor") orelse {
@@ -270,8 +277,16 @@ pub const Parser = struct {
     }
     
     /// Append a node to a comptime array
-    fn appendNode(comptime existing: []const ast.TemplateAST.Node, comptime new_node: ast.TemplateAST.Node) []const ast.TemplateAST.Node {
-        return existing ++ &[_]ast.TemplateAST.Node{new_node};
+    /// Called from comptime context - parameters are inferred as comptime
+    fn appendNode(
+        existing: []const ast.TemplateAST.Node,
+        new_node: ast.TemplateAST.Node,
+    ) []const ast.TemplateAST.Node {
+        // Array concatenation requires comptime slices, but since this function
+        // is only called from comptime context, Zig should infer comptime
+        comptime {
+            return existing ++ &[_]ast.TemplateAST.Node{new_node};
+        }
     }
     
     /// Parse a variable expression (e.g., ".user.name | uppercase")
@@ -365,6 +380,7 @@ pub const Parser = struct {
     }
     
     /// Parse filter pipeline (e.g., "uppercase | trim")
+    /// Note: Filter arguments are not yet fully supported - basic parsing only
     fn parseFilters(comptime filter_str: []const u8) ![]const ast.TemplateAST.Filter {
         var filters: []const ast.TemplateAST.Filter = &[_]ast.TemplateAST.Filter{};
         var i: usize = 0;
@@ -372,11 +388,26 @@ pub const Parser = struct {
         
         while (i < filter_str.len) {
             if (filter_str[i] == '|') {
-                const filter_name = std.mem.trim(u8, filter_str[start..i], " \t\n");
-                if (filter_name.len > 0) {
+                const filter_with_args = std.mem.trim(u8, filter_str[start..i], " \t\n");
+                if (filter_with_args.len > 0) {
+                    // Parse filter name (basic - arguments not fully supported yet)
+                    const filter_name = blk: {
+                        // Find first space to separate name from args
+                        var name_end = filter_with_args.len;
+                        var j: usize = 0;
+                        while (j < filter_with_args.len) {
+                            if (filter_with_args[j] == ' ') {
+                                name_end = j;
+                                break;
+                            }
+                            j += 1;
+                        }
+                        break :blk std.mem.trim(u8, filter_with_args[0..name_end], " \t\n");
+                    };
+                    
                     filters = filters ++ &[_]ast.TemplateAST.Filter{.{
                         .name = filter_name,
-                        .args = &[_][]const u8{},
+                        .args = &[_][]const u8{}, // Args parsing TODO
                     }};
                 }
                 start = i + 1;
@@ -385,11 +416,25 @@ pub const Parser = struct {
         }
         
         // Add final filter
-        const final_filter = std.mem.trim(u8, filter_str[start..], " \t\n");
-        if (final_filter.len > 0) {
+        const final_filter_str = std.mem.trim(u8, filter_str[start..], " \t\n");
+        if (final_filter_str.len > 0) {
+            // Parse filter name (basic - arguments not fully supported yet)
+            const filter_name = blk: {
+                var name_end = final_filter_str.len;
+                var j: usize = 0;
+                while (j < final_filter_str.len) {
+                    if (final_filter_str[j] == ' ') {
+                        name_end = j;
+                        break;
+                    }
+                    j += 1;
+                }
+                break :blk std.mem.trim(u8, final_filter_str[0..name_end], " \t\n");
+            };
+            
             filters = filters ++ &[_]ast.TemplateAST.Filter{.{
-                .name = final_filter,
-                .args = &[_][]const u8{},
+                .name = filter_name,
+                .args = &[_][]const u8{}, // Args parsing TODO
             }};
         }
         

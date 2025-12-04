@@ -23,20 +23,23 @@ pub const TypeChecker = struct {
     /// Validate that context type matches AST requirements
     /// This is a compile-time check
     pub fn validateContext(
-        ast_tree: ast.TemplateAST,
+        comptime ast_tree: ast.TemplateAST,
         comptime context_type: type,
     ) void {
         // For Phase 3, we'll do basic validation
         // Walk AST and check that all accessed fields exist in context_type
         
-        // Validate each node
-        for (ast_tree.nodes) |node| {
+        // Validate each node - use inline for to ensure comptime evaluation
+        inline for (ast_tree.nodes) |node| {
             validateNode(node, context_type);
         }
     }
     
     /// Validate a single node
-    fn validateNode(comptime node: ast.TemplateAST.Node, comptime context_type: type) void {
+    fn validateNode(
+        comptime node: ast.TemplateAST.Node,
+        comptime context_type: type,
+    ) void {
         switch (node) {
             .variable => |var_node| {
                 validateVariablePath(var_node.path, context_type);
@@ -145,34 +148,38 @@ pub const TypeChecker = struct {
 
 // Tests
 test "validate simple context" {
-    const TestAST = ast.TemplateAST.init(&[_]ast.TemplateAST.Node{
-        .{ .variable = ast.TemplateAST.VariableNode{
-            .path = &[_][]const u8{"name"},
-            .filters = &[_]ast.TemplateAST.Filter{},
-        } },
-    });
-    
-    const TestContext = struct {
-        name: []const u8,
-    };
-    
-    TypeChecker.validateContext(TestAST, TestContext);
+    comptime {
+        const TestAST = ast.TemplateAST.init(&[_]ast.TemplateAST.Node{
+            .{ .variable = ast.TemplateAST.VariableNode{
+                .path = &[_][]const u8{"name"},
+                .filters = &[_]ast.TemplateAST.Filter{},
+            } },
+        });
+        
+        const TestContext = struct {
+            name: []const u8,
+        };
+        
+        TypeChecker.validateContext(TestAST, TestContext);
+    }
 }
 
 test "validate nested context" {
-    const TestAST = ast.TemplateAST.init(&[_]ast.TemplateAST.Node{
-        .{ .variable = ast.TemplateAST.VariableNode{
-            .path = &[_][]const u8{"user", "name"},
-            .filters = &[_]ast.TemplateAST.Filter{},
-        } },
-    });
-    
-    const TestContext = struct {
-        user: struct {
-            name: []const u8,
-        },
-    };
-    
-    TypeChecker.validateContext(TestAST, TestContext);
+    comptime {
+        const TestAST = ast.TemplateAST.init(&[_]ast.TemplateAST.Node{
+            .{ .variable = ast.TemplateAST.VariableNode{
+                .path = &[_][]const u8{"user", "name"},
+                .filters = &[_]ast.TemplateAST.Filter{},
+            } },
+        });
+        
+        const TestContext = struct {
+            user: struct {
+                name: []const u8,
+            },
+        };
+        
+        TypeChecker.validateContext(TestAST, TestContext);
+    }
 }
 

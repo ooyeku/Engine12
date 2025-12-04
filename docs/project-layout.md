@@ -1073,15 +1073,19 @@ pub fn initDatabase() !void {
 
 ### 2. restApi Configuration Pattern
 
-**Recommended**: Use `restApiDefault` with automatic ORM:
+**Recommended**: Use `restApi` with automatic ORM:
 
 ```zig
 // In main.zig
 // Initialize database first
 try app.initDatabaseWithMigrations("app.db", "src/migrations");
 
-// Use restApiDefault - automatically uses app.getORM()
-try app.restApiDefault("/api/todos", Todo, .{
+// Get ORM instance
+const orm = try app.getORM();
+
+// Use restApi with automatic ORM
+try app.restApi("/api/todos", Todo, .{
+    .orm = orm,
     .validator = validators.validateTodo,
     .authenticator = auth.requireAuthForRestApi,
     .authorization = auth.canAccessTodo,

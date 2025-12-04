@@ -598,7 +598,6 @@ const Todo = struct {
 - **Enum types**: Automatically converted to integers when saving
 - **Optional fields**: Null values are skipped in INSERT/UPDATE operations
 - **Parameter binding**: All CRUD operations use parameter binding to prevent SQL injection
-- **Statement caching**: Optional prepared statement caching for improved performance
 
 ### 4.3 Update Handlers
 
@@ -700,8 +699,6 @@ pub fn main() !void {
 **Note**: With the recommended approach, you don't need a separate `database.zig` file. The database is managed by Engine12's singleton pattern, and you can access the ORM using `app.getORM()` anywhere in your handlers.
 
 **Security**: All ORM operations (`create()`, `update()`, `find()`, `delete()`) use parameter binding to prevent SQL injection. User input is always safely bound as parameters, never interpolated into SQL strings.
-
-**Performance**: Statement caching is automatically enabled when using `initDatabaseWithMigrations()`, improving query performance by reusing compiled SQL statements.
 
 ### 4.5 ORM Convenience Methods (New!)
 

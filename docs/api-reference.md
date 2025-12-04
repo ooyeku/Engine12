@@ -201,7 +201,7 @@ try app.get("/", handleRoot);
 try app.get("/todos/:id", handleTodo);
 ```
 
-#### `templateRoute(comptime path_pattern: []const u8, template_path: []const u8, context_fn: fn(*Request) anytype) !void`
+#### `templateRoute(comptime path_pattern: []const u8, template_path: []const u8, context_fn: anytype) !void`
 Register a template route that automatically renders a template file. Context function is called for each request to provide template variables. The `path_pattern` must be comptime-known.
 
 ```zig
@@ -294,16 +294,8 @@ pub const RestApiConfig = struct {
     enable_filtering: bool = true,
     /// Enable sorting via ?sort=field:asc|desc (default: true)
     enable_sorting: bool = true,
-    /// Optional hook called before creating a record
-    before_create: ?*const fn (*Request, anytype) !anytype = null,
-    /// Optional hook called after creating a record
-    after_create: ?*const fn (*Request, anytype) void = null,
-    /// Optional hook called before updating a record
-    before_update: ?*const fn (*Request, i64, anytype) !anytype = null,
-    /// Optional hook called after updating a record
-    after_update: ?*const fn (*Request, anytype) void = null,
-    /// Optional hook called before deleting a record
-    before_delete: ?*const fn (*Request, i64) !void = null,
+    /// Note: Hooks (before_create, after_create, etc.) are reserved for future use
+    /// Due to Zig type system limitations, hooks are not currently supported
 };
 ```
 
@@ -396,11 +388,7 @@ try app.restApi("/api/todos", Todo, .{
 - Cache hit/miss is indicated by `X-Cache` header
 
 **Hooks**:
-- `before_create`: Called before creating a record, can modify the model
-- `after_create`: Called after creating a record
-- `before_update`: Called before updating a record, can modify the model
-- `after_update`: Called after updating a record
-- `before_delete`: Called before deleting a record, can prevent deletion by returning an error
+- Note: Hooks (before_create, after_create, etc.) are reserved for future use and not currently supported
 
 **OpenAPI Integration**:
 - When OpenAPI documentation is enabled, `restApi` automatically registers all CRUD endpoints with the OpenAPI generator
@@ -546,6 +534,8 @@ try app.restApiDefault("/api/items", Item, .{
 - `authenticator`: `null` (no authentication)
 - `authorization`: `null` (no authorization)
 - `cache_ttl_ms`: `null` (no caching)
+
+**Note**: Requires database to be initialized first with `initDatabaseWithMigrations()` or `initDatabase()`.
 
 ## Handler Context
 

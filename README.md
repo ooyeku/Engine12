@@ -69,10 +69,10 @@ const engine12_dep = b.dependency("engine12", .{
 exe.addModule("engine12", engine12_dep.module("engine12"));
 ```
 
-If you're using the ORM or C API, you'll also need to link libc:
+If you're using the ORM, you'll also need to link libc:
 
 ```zig
-// Link libc (required for ORM and C API functionality)
+// Link libc (required for ORM/SQLite functionality)
 exe.linkLibC();
 ```
 
@@ -88,7 +88,7 @@ exe.linkLibC();
 - **Project Scaffolding** - CLI tool (`e12 new`) to generate projects with recommended structure
 - **Structured Logging** - JSON and human-readable logging with multiple destinations (stdout, file, syslog)
 - **Middleware System** - Pre-request and response middleware chains
-- **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, managed memory, parameter binding for SQL injection prevention, and prepared statement caching for performance
+- **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, managed memory, and parameter binding for SQL injection prevention
 - **Template Engine** - Server-side HTML rendering
 - **Request/Response API** - Clean, memory-safe HTTP handling with struct-to-JSON convenience methods
 - **Rate Limiting** - Per-route rate limiting
@@ -97,7 +97,6 @@ exe.linkLibC();
 - **Background Tasks** - Periodic and one-time task scheduling
 - **Static File Serving** - Serve static assets
 - **OpenAPI/Swagger Documentation** - Automatic API documentation generation with Swagger UI
-- **C API** - Language bindings for non-Zig code
 
 
 ## Documentation

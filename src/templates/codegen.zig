@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const escape = @import("escape.zig");
+const filters = @import("filters.zig");
 
 /// Code generator for templates
 /// Generates optimized rendering functions at comptime
@@ -44,15 +45,33 @@ pub const Codegen = struct {
                         try buffer.appendSlice(allocator, text);
                     },
                     .variable => |var_node| {
-                        const value = try getVariableValue(var_node.path, ctx, allocator);
+                        var value = try getVariableValue(var_node.path, ctx, allocator);
                         defer allocator.free(value);
+                        
+                        // Apply filters before escaping
+                        if (var_node.filters.len > 0) {
+                            const filtered = try applyFilters(value, var_node.filters, allocator);
+                            allocator.free(value);
+                            value = filtered;
+                            defer allocator.free(value);
+                        }
+                        
                         const escaped = try escape.Escape.escapeHtml(allocator, value);
                         defer allocator.free(escaped);
                         try buffer.appendSlice(allocator, escaped);
                     },
                     .raw_variable => |var_node| {
-                        const value = try getVariableValue(var_node.path, ctx, allocator);
+                        var value = try getVariableValue(var_node.path, ctx, allocator);
                         defer allocator.free(value);
+                        
+                        // Apply filters for raw variables too
+                        if (var_node.filters.len > 0) {
+                            const filtered = try applyFilters(value, var_node.filters, allocator);
+                            allocator.free(value);
+                            value = filtered;
+                            defer allocator.free(value);
+                        }
+                        
                         try buffer.appendSlice(allocator, value);
                     },
                     .if_block => |if_node| {
@@ -81,8 +100,14 @@ pub const Codegen = struct {
                             try renderNodesWithLoopVars(for_node.block.nodes, ctx, for_node.item_name, item_value.value, index, collection_value.len, buffer, allocator);
                         }
                     },
-                    .include => |_| {
-                        // Includes handled separately in Phase 7
+                    .include => |include_node| {
+                        // Include rendering - attempt to load and render included template
+                        // Note: Full include support requires template file path tracking
+                        // For now, we'll render a placeholder indicating include is not fully supported
+                        // TODO: Implement full include support with @embedFile and path resolution
+                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} (not yet implemented) -->", .{include_node.file_path});
+                        defer allocator.free(include_placeholder);
+                        try buffer.appendSlice(allocator, include_placeholder);
                     },
                 }
             }
@@ -93,11 +118,60 @@ pub const Codegen = struct {
                 allocator: std.mem.Allocator,
             ) ![]const u8 {
                 if (path.len == 0) {
-                    return error.InvalidVariablePath;
+                    // Empty path means root context - serialize entire context
+                    return formatValue(ctx, allocator);
                 }
 
                 // Navigate through context using runtime reflection
                 return getVariableValueImpl(ctx, path, allocator);
+            }
+
+            /// Apply filters to a value sequentially
+            fn applyFilters(
+                value: []const u8,
+                filter_list: []const ast.TemplateAST.Filter,
+                allocator: std.mem.Allocator,
+            ) ![]const u8 {
+                var current_value = value;
+                var needs_free = false;
+
+                for (filter_list) |filter| {
+                    const filter_name = filter.name;
+                    const filtered = blk: {
+                        // Apply filter based on name
+                        if (std.mem.eql(u8, filter_name, "uppercase")) {
+                            break :blk try filters.Filters.uppercase(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "lowercase")) {
+                            break :blk try filters.Filters.lowercase(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "trim")) {
+                            break :blk try filters.Filters.trim(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "default")) {
+                            // Default filter takes first argument as default value
+                            const default_val = if (filter.args.len > 0) filter.args[0] else "";
+                            const value_opt: ?[]const u8 = if (current_value.len > 0) current_value else null;
+                            const result = filters.Filters.default(value_opt, default_val);
+                            // Default filter doesn't allocate, so we need to dupe the result
+                            break :blk try allocator.dupe(u8, result);
+                        } else {
+                            // Unknown filter - return value as-is (log warning in debug mode)
+                            break :blk try allocator.dupe(u8, current_value);
+                        }
+                    };
+
+                    // Free previous value if we allocated it
+                    if (needs_free) {
+                        allocator.free(current_value);
+                    }
+                    current_value = filtered;
+                    needs_free = true;
+                }
+
+                // If no filters were applied, dupe the original value
+                if (!needs_free) {
+                    return try allocator.dupe(u8, value);
+                }
+
+                return current_value;
             }
 
             fn getVariableValueImpl(value: anytype, path: []const []const u8, allocator: std.mem.Allocator) ![]const u8 {
@@ -265,15 +339,33 @@ pub const Codegen = struct {
                         try buffer.appendSlice(allocator, text);
                     },
                     .variable => |var_node| {
-                        const value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        var value = try getVariableValueWithContext(var_node.path, ctx, allocator);
                         defer allocator.free(value);
+                        
+                        // Apply filters before escaping
+                        if (var_node.filters.len > 0) {
+                            const filtered = try applyFilters(value, var_node.filters, allocator);
+                            allocator.free(value);
+                            value = filtered;
+                            defer allocator.free(value);
+                        }
+                        
                         const escaped = try escape.Escape.escapeHtml(allocator, value);
                         defer allocator.free(escaped);
                         try buffer.appendSlice(allocator, escaped);
                     },
                     .raw_variable => |var_node| {
-                        const value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        var value = try getVariableValueWithContext(var_node.path, ctx, allocator);
                         defer allocator.free(value);
+                        
+                        // Apply filters for raw variables too
+                        if (var_node.filters.len > 0) {
+                            const filtered = try applyFilters(value, var_node.filters, allocator);
+                            allocator.free(value);
+                            value = filtered;
+                            defer allocator.free(value);
+                        }
+                        
                         try buffer.appendSlice(allocator, value);
                     },
                     .if_block => |if_node| {
@@ -298,27 +390,52 @@ pub const Codegen = struct {
                             defer item_value.deinit();
 
                             // Check if we're already in a loop context
+                            // For nested loops, we need to preserve the outer loop's context
+                            // We detect loop context by checking if ctx has loop-specific fields
                             const T = @TypeOf(ctx);
-                            if (T == LoopContext) {
-                                // Nested loop - preserve parent loop context
-                                try renderNodesWithLoopVars(for_node.block.nodes, ctx.parent_ctx, for_node.item_name, item_value.value, index, collection_value.len, buffer, allocator);
+                            const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
+                            
+                            if (is_loop_ctx) {
+                                // Nested loop - we need to create a new context that preserves outer loop
+                                // Since LoopContext.parent_ctx is context_type, we need to extract the original context
+                                // For now, create a wrapper that stores both outer and inner loop info
+                                // Outer loop variables are accessible via ../outer_item_name syntax
+                                // We'll handle this in getVariableValueWithContext by checking parent_ctx recursively
+                                const nested_loop_ctx = LoopContext{
+                                    .parent_ctx = ctx.parent_ctx, // Go back to original context, losing outer loop item
+                                    .item_name = for_node.item_name,
+                                    .item_value = item_value.value,
+                                    .index = index,
+                                    .total = collection_value.len,
+                                };
+                                // TODO: Full nested loop support requires storing outer loop item in a map
+                                // For now, nested loops work but can't access outer loop items directly
+                                try renderNodesWithContext(for_node.block.nodes, nested_loop_ctx, buffer, allocator);
                             } else {
                                 // First level loop
                                 try renderNodesWithLoopVars(for_node.block.nodes, ctx, for_node.item_name, item_value.value, index, collection_value.len, buffer, allocator);
                             }
                         }
                     },
-                    .include => |_| {
-                        // Includes handled separately
+                    .include => |include_node| {
+                        // Include rendering - attempt to load and render included template
+                        // Note: Full include support requires template file path tracking
+                        // For now, we'll render a placeholder indicating include is not fully supported
+                        // TODO: Implement full include support with @embedFile and path resolution
+                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} (not yet implemented) -->", .{include_node.file_path});
+                        defer allocator.free(include_placeholder);
+                        try buffer.appendSlice(allocator, include_placeholder);
                     },
                 }
             }
 
             // Get variable value with context (checks loop context first)
             fn getVariableValueWithContext(path: []const []const u8, ctx: anytype, allocator: std.mem.Allocator) ![]const u8 {
-                // Check if context is LoopContext
+                // Check if context is LoopContext by checking for loop-specific fields
                 const T = @TypeOf(ctx);
-                if (T == LoopContext) {
+                const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
+                
+                if (is_loop_ctx) {
                     // Check for parent navigation (../)
                     if (path.len > 0 and std.mem.eql(u8, path[0], "..")) {
                         // Navigate to parent context
@@ -327,6 +444,9 @@ pub const Codegen = struct {
                             return error.InvalidVariablePath;
                         }
                         // Use parent context with remaining path
+                        // Note: For nested loops, parent_ctx is the original context_type,
+                        // so we can't directly access outer loop variables
+                        // This is a limitation of the current design
                         return getVariableValueImpl(ctx.parent_ctx, path[1..], allocator);
                     }
 
@@ -348,6 +468,8 @@ pub const Codegen = struct {
                         }
                     }
                     // Fall through to parent context
+                    // Note: parent_ctx is always context_type, not another LoopContext
+                    // So we go directly to the original context
                     return getVariableValueImpl(ctx.parent_ctx, path, allocator);
                 }
                 // Regular context - check for parent navigation (should not happen in non-loop context)
@@ -360,13 +482,18 @@ pub const Codegen = struct {
             // Get collection value with context
             fn getCollectionValueWithContext(collection_path: []const []const u8, ctx: anytype, allocator: std.mem.Allocator) !CollectionWrapper {
                 const T = @TypeOf(ctx);
-                if (T == LoopContext) {
+                const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
+                
+                if (is_loop_ctx) {
                     // Try parent context first
                     return getCollectionValueImpl(ctx.parent_ctx, collection_path, allocator);
                 }
                 return getCollectionValueImpl(ctx, collection_path, allocator);
             }
 
+            // LoopContext for tracking loop state
+            // parent_ctx is the original context_type, but we handle nested loops
+            // by creating nested LoopContext structs
             const LoopContext = struct {
                 parent_ctx: context_type,
                 item_name: []const u8,
@@ -507,15 +634,24 @@ pub const Codegen = struct {
                 // Empty strings are falsy
                 if (value.len == 0) return false;
 
-                // Explicit false values
-                if (std.mem.eql(u8, value, "false")) return false;
-                if (std.mem.eql(u8, value, "0")) return false;
-                if (std.mem.eql(u8, value, "null")) return false;
-                if (std.mem.eql(u8, value, "nil")) return false;
+                // Normalize to lowercase for case-insensitive comparison
+                var lower_buf: [256]u8 = undefined;
+                const lower = if (value.len <= 256) blk: {
+                    for (value, 0..) |char, i| {
+                        lower_buf[i] = std.ascii.toLower(char);
+                    }
+                    break :blk lower_buf[0..value.len];
+                } else value; // Fallback to original if too long (rare case)
 
-                // Explicit true values
-                if (std.mem.eql(u8, value, "true")) return true;
-                if (std.mem.eql(u8, value, "1")) return true;
+                // Explicit false values (case-insensitive)
+                if (std.mem.eql(u8, lower, "false")) return false;
+                if (std.mem.eql(u8, lower, "0")) return false;
+                if (std.mem.eql(u8, lower, "null")) return false;
+                if (std.mem.eql(u8, lower, "nil")) return false;
+
+                // Explicit true values (case-insensitive)
+                if (std.mem.eql(u8, lower, "true")) return true;
+                if (std.mem.eql(u8, lower, "1")) return true;
 
                 // All other non-empty strings are truthy
                 return true;

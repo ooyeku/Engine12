@@ -20,7 +20,9 @@ pub const Escape = struct {
             };
         }
 
-        // If no escaping needed, return original
+        // If no escaping needed, still allocate a copy since caller will free it
+        // The optimization is that we skip the escaping loop, not the allocation
+        // (Caller always frees the returned value, so we must allocate)
         if (escaped_count == input.len) {
             return try allocator.dupe(u8, input);
         }

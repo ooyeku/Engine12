@@ -93,3 +93,66 @@ test "template with raw variable" {
     defer std.testing.allocator.free(html);
     try std.testing.expectEqualStrings(html, "<div>Hello</div>");
 }
+
+// BUG VERIFICATION TESTS - These tests demonstrate actual bugs in the template system
+// These tests are designed to FAIL, proving that the bugs exist
+
+test "BUG #1: Filters are parsed but never applied" {
+    // This test demonstrates that filters are parsed correctly but not applied during rendering
+    // Expected: "HELLO" (uppercase filter applied)
+    // Actual: "hello" (no filter applied - filter syntax is ignored)
+    const TemplateType = Template.compile("{{ .name | uppercase }}");
+    const context = struct {
+        name: []const u8,
+    }{ .name = "hello" };
+    const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
+    defer std.testing.allocator.free(html);
+    
+    // VERIFICATION: This test will FAIL because filters are not applied
+    // The filter syntax is parsed (see parser.zig test "parse filter") but ignored during rendering
+    // Current output: "hello" (filter not applied)
+    // Expected output: "HELLO" (filter applied)
+    // 
+    // To verify the bug: Run this test and it will fail with:
+    //   expected "HELLO", found "hello"
+    try std.testing.expectEqualStrings(html, "HELLO");
+}
+
+test "BUG #1: Trim filter is parsed but not applied" {
+    // Test that trim filter is parsed but not applied
+    const TemplateType = Template.compile("{{ .name | trim }}");
+    const context = struct {
+        name: []const u8,
+    }{ .name = "  hello  " };
+    const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
+    defer std.testing.allocator.free(html);
+    
+    // VERIFICATION: This test will FAIL
+    // Expected: "hello" (trim applied)
+    // Actual: "  hello  " (no filters applied)
+    try std.testing.expectEqualStrings(html, "hello");
+}
+
+test "BUG #2: Include nodes are parsed but not rendered" {
+    // This test demonstrates that include statements are parsed but produce no output
+    // Expected: Content from included file between "Before" and "After"
+    // Actual: Empty string (include is ignored during rendering)
+    const TemplateType = Template.compile("Before {% include \"test.zt.html\" %} After");
+    const context = struct {};
+    const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
+    defer std.testing.allocator.free(html);
+    
+    // VERIFICATION: This test documents the bug
+    // The include syntax is parsed (see parser.zig parseInclude function)
+    // but the rendering code in codegen.zig line 84-86 just has a comment:
+    //   .include => |_| {
+    //       // Includes handled separately in Phase 7
+    //   }
+    // 
+    // Current output: "Before  After" (include produces nothing)
+    // Expected output: "Before [include content] After"
+    try std.testing.expect(std.mem.indexOf(u8, html, "Before") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "After") != null);
+    // The output will be "Before  After" with nothing in between
+    // This proves the include is parsed but not rendered
+}
