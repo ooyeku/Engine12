@@ -1344,6 +1344,27 @@ pub const Response = struct {
             self._persistent_body = null;
         }
     }
+
+    /// Free memory used by this Response (for testing and manual cleanup)
+    /// This should be called when Response objects are created in tests to prevent memory leaks
+    pub fn deinit(self: *Response, allocator: std.mem.Allocator) void {
+        // Free persistent body - use page_allocator since that's what both FileServer and buffer pool use
+        if (self._persistent_body) |body| {
+            std.heap.page_allocator.free(body);
+            self._persistent_body = null;
+        }
+
+        // Free custom headers if allocated
+        if (self._custom_headers) |*headers| {
+            var iter = headers.iterator();
+            while (iter.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                allocator.free(entry.value_ptr.*);
+            }
+            headers.deinit();
+            self._custom_headers = null;
+        }
+    }
 };
 
 // Tests
