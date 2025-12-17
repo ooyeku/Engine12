@@ -1,4 +1,3 @@
-// Root module - exports all public API
 pub const types = @import("types.zig");
 pub const engine12 = @import("engine12.zig");
 pub const fileserver = @import("fileserver.zig");
@@ -30,8 +29,6 @@ pub const websocket = @import("websocket/module.zig");
 pub const hot_reload = @import("hot_reload/module.zig");
 pub const htmx = @import("htmx/module.zig");
 pub const services = @import("services.zig");
-
-// Re-export main types for convenience
 pub const Engine12 = engine12.Engine12;
 pub const ServerConfig = engine12.ServerConfig;
 pub const FileServer = fileserver.FileServer;
@@ -48,21 +45,13 @@ pub const BackgroundTask = types.BackgroundTask;
 pub const HealthCheckFn = types.HealthCheckFn;
 pub const PreRequestMiddleware = types.PreRequestMiddleware;
 pub const ResponseTransformMiddleware = types.ResponseTransformMiddleware;
-
-// Re-export logging types
 pub const Logger = dev_tools.Logger;
 pub const LogLevel = dev_tools.LogLevel;
 pub const LogEntry = dev_tools.LogEntry;
 pub const OutputFormat = dev_tools.OutputFormat;
-
-// Re-export cache types
 pub const ResponseCache = cache.ResponseCache;
 pub const CacheEntry = cache.CacheEntry;
-
-// Re-export JSON utilities
 pub const Json = json.Json;
-
-// Re-export valve types
 pub const Valve = valve.Valve;
 pub const ValveMetadata = valve.ValveMetadata;
 pub const ValveCapability = valve.ValveCapability;
@@ -72,64 +61,40 @@ pub const ValveRegistry = @import("valve/registry.zig").ValveRegistry;
 pub const RegistryError = @import("valve/registry.zig").RegistryError;
 pub const ValveErrorInfo = @import("valve/error_info.zig").ValveErrorInfo;
 pub const ValveErrorPhase = @import("valve/error_info.zig").ValveErrorPhase;
-
-// Re-export builtin valves
 pub const BasicAuthValve = @import("valve/builtin/basic_auth.zig").BasicAuthValve;
 pub const BasicAuthConfig = @import("valve/builtin/basic_auth.zig").BasicAuthConfig;
 pub const User = @import("valve/builtin/basic_auth.zig").User;
-
-// Re-export websocket types
 pub const WebSocketConnection = websocket.WebSocketConnection;
 pub const WebSocketHandler = websocket.WebSocketHandler;
 pub const WebSocketManager = websocket.WebSocketManager;
 pub const WebSocketRoom = websocket.WebSocketRoom;
-
-// Re-export hot reload types
 pub const RuntimeTemplate = hot_reload.RuntimeTemplate;
 pub const HotReloadManager = hot_reload.HotReloadManager;
 pub const FileWatcher = hot_reload.FileWatcher;
-
-// Re-export HTMX types
 pub const HtmxConfig = htmx.HtmxConfig;
 pub const HtmxRequestInfo = htmx.HtmxRequestInfo;
-
-// Re-export logging middleware types
 pub const LoggingMiddleware = logging_middleware.LoggingMiddleware;
 pub const LoggingConfig = logging_middleware.LoggingConfig;
-
-// Re-export RESTful API types
 pub const rest_api = @import("rest_api.zig");
 pub const restApi = rest_api.restApi;
 pub const RestApiConfig = rest_api.RestApiConfig; // Generic function: RestApiConfig(Model)
 pub const AuthUser = rest_api.AuthUser;
-
-// Re-export Handler Context types
 pub const handler_context = @import("handler_context.zig");
 pub const HandlerCtx = handler_context.HandlerCtx;
 pub const HandlerCtxError = handler_context.HandlerCtxError;
-
-// Re-export migration discovery
 pub const migration_discovery = @import("orm/migration_discovery.zig");
-
-// Re-export TemplateRegistry (from Engine12 struct)
 pub const TemplateRegistry = engine12.Engine12.TemplateRegistry;
-
-// Re-export service types
 pub const Service = services.Service;
 pub const ServiceRegistry = services.ServiceRegistry;
 pub const ServiceState = services.ServiceState;
 pub const ServiceConfig = services.ServiceConfig;
 pub const RestartPolicy = services.RestartPolicy;
 pub const ManagedService = services.ManagedService;
-
-// Re-export TryHandler utilities
 pub const TryHttpHandler = types.TryHttpHandler;
 pub const wrapTryHandler = types.wrapTryHandler;
 pub const wrapTryHandlerCustom = types.wrapTryHandlerCustom;
 
-// Import test files to ensure all tests are discovered and run
-// These imports don't need to be used - they just need to be compiled
-// so Zig can discover the test declarations in these files
+
 comptime {
     _ = @import("tests/integration.zig");
     _ = @import("orm/orm_comprehensive_tests.zig");
