@@ -53,26 +53,18 @@ pub const ModelDef = struct {
 
 pub fn getTableName(comptime T: type) []const u8 {
     const type_name = @typeName(T);
-    // Convert PascalCase to snake_case for table name
-    // For now, just return lowercase version
-    // TODO: Implement proper PascalCase to snake_case conversion
     _ = type_name;
     return "unknown_table";
 }
 
 pub fn inferTableName(comptime T: type) []const u8 {
     const type_name = @typeName(T);
-    // Extract the innermost struct name (after the last dot)
-    // For "builtin.basic_auth.User", we want "User"
-    // Note: We return "User" here, lowercase conversion happens in toLowercaseTableName()
     if (std.mem.lastIndexOf(u8, type_name, ".")) |idx| {
         return type_name[idx + 1 ..];
     }
     return type_name;
 }
 
-/// Convert table name to lowercase (for SQLite compatibility)
-/// This is a runtime function that can be called when building SQL queries
 pub fn toLowercaseTableName(allocator: std.mem.Allocator, table_name: []const u8) ![]const u8 {
     var result = std.ArrayListUnmanaged(u8){};
     errdefer result.deinit(allocator);
@@ -103,18 +95,9 @@ pub fn toSnakeCase(allocator: std.mem.Allocator, input: []const u8) ![]const u8 
     return result.toOwnedSlice(allocator);
 }
 
-/// Pluralize a singular word to create a conventional table name
-/// Follows common English pluralization rules:
-/// - Words ending in s, x, z, ch, sh -> add "es"
-/// - Words ending in consonant + y -> change to "ies"
-/// - Common irregular words handled specially
-/// - Default -> add "s"
-///
-/// Example: "user" -> "users", "todo" -> "todos", "category" -> "categories"
 pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8 {
     if (singular.len == 0) return allocator.dupe(u8, singular);
 
-    // Check for common irregular plurals
     const irregulars = [_]struct { singular: []const u8, plural: []const u8 }{
         .{ .singular = "person", .plural = "people" },
         .{ .singular = "child", .plural = "children" },
@@ -146,7 +129,6 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
     const last_char = singular[singular.len - 1];
     const second_last = if (singular.len >= 2) singular[singular.len - 2] else 0;
 
-    // Words ending in s, x, z, ch, sh -> add "es"
     if (last_char == 's' or last_char == 'x' or last_char == 'z') {
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "es");
@@ -156,12 +138,10 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "es");
     }
-    // Words ending in consonant + y -> change to "ies"
     else if (last_char == 'y' and singular.len >= 2 and !isVowel(second_last)) {
         try result.appendSlice(allocator, singular[0 .. singular.len - 1]);
         try result.appendSlice(allocator, "ies");
     }
-    // Words ending in f or fe -> change to "ves" (common cases)
     else if (last_char == 'f') {
         try result.appendSlice(allocator, singular[0 .. singular.len - 1]);
         try result.appendSlice(allocator, "ves");
@@ -169,11 +149,7 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
         try result.appendSlice(allocator, singular[0 .. singular.len - 2]);
         try result.appendSlice(allocator, "ves");
     }
-    // Words ending in o preceded by consonant 
-    // Most modern English words ending in -o just add -s (photo, piano, radio, video, todo)
-    // Only a few older words add -es (hero, potato, tomato, echo)
     else if (last_char == 'o' and singular.len >= 2 and !isVowel(second_last)) {
-        // Check for words that need "es"
         const o_es_words = [_][]const u8{ "hero", "potato", "tomato", "echo", "veto", "torpedo", "embargo" };
         var needs_es = false;
         for (o_es_words) |word| {
@@ -186,12 +162,10 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
             try result.appendSlice(allocator, singular);
             try result.appendSlice(allocator, "es");
         } else {
-            // Default for -o words: just add "s" (todo, photo, piano, etc.)
             try result.appendSlice(allocator, singular);
             try result.appendSlice(allocator, "s");
         }
     }
-    // Default: just add "s"
     else {
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "s");
@@ -217,45 +191,30 @@ pub fn getFieldNames(comptime T: type) *const [std.meta.fields(T).len][]const u8
     return &names;
 }
 
-/// Comptime table name generation
-/// Returns the pluralized, lowercase table name for a type at compile time
-/// Supports custom table_name declaration on the type
-///
-/// Example:
-/// ```zig
-/// const User = struct { id: i64, name: []const u8 };
-/// const table_name = comptimeTableName(User); // "users"
-/// ```
 pub fn comptimeTableName(comptime T: type) []const u8 {
     return comptime blk: {
-        // Check for custom table_name declaration
         if (@hasDecl(T, "table_name")) {
             break :blk @field(T, "table_name");
         }
 
-        // Get struct name
         const raw_name = inferTableName(T);
 
-        // Convert to lowercase
         var lowercase: [raw_name.len]u8 = undefined;
         for (raw_name, 0..) |c, i| {
             lowercase[i] = if (c >= 'A' and c <= 'Z') (c + 32) else c;
         }
         const lowercase_slice: []const u8 = &lowercase;
 
-        // Pluralize (simplified comptime version)
         break :blk comptimePluralize(lowercase_slice);
     };
 }
 
-/// Comptime pluralization (simplified for compile-time use)
 fn comptimePluralize(comptime singular: []const u8) []const u8 {
     if (singular.len == 0) return singular;
 
     const last = singular[singular.len - 1];
     const second_last = if (singular.len >= 2) singular[singular.len - 2] else 0;
 
-    // Irregular plurals
     if (comptimeEql(singular, "person")) return "people";
     if (comptimeEql(singular, "child")) return "children";
     if (comptimeEql(singular, "man")) return "men";
@@ -267,12 +226,10 @@ fn comptimePluralize(comptime singular: []const u8) []const u8 {
     if (comptimeEql(singular, "datum")) return "data";
     if (comptimeEql(singular, "medium")) return "media";
 
-    // Words ending in s, x, z -> add "es"
     if (last == 's' or last == 'x' or last == 'z') {
         return singular ++ "es";
     }
 
-    // Words ending in ch, sh -> add "es"
     if (singular.len >= 2) {
         if ((second_last == 'c' and last == 'h') or
             (second_last == 's' and last == 'h'))
@@ -281,22 +238,18 @@ fn comptimePluralize(comptime singular: []const u8) []const u8 {
         }
     }
 
-    // Words ending in consonant + y -> change to "ies"
     if (last == 'y' and singular.len >= 2 and !comptimeIsVowel(second_last)) {
         return singular[0 .. singular.len - 1] ++ "ies";
     }
 
-    // Words ending in f -> change to "ves"
     if (last == 'f') {
         return singular[0 .. singular.len - 1] ++ "ves";
     }
 
-    // Words ending in fe -> change to "ves"
     if (singular.len >= 2 and second_last == 'f' and last == 'e') {
         return singular[0 .. singular.len - 2] ++ "ves";
     }
 
-    // Default: just add "s"
     return singular ++ "s";
 }
 
@@ -329,7 +282,6 @@ test "inferTableName qualified struct" {
     };
 
     const table_name = inferTableName(@TypeOf(TestUser));
-    // This should handle qualified types
     _ = table_name;
 }
 
@@ -440,7 +392,6 @@ test "ModelDef toCreateTableSQL blob field" {
 test "pluralize common words" {
     const allocator = std.testing.allocator;
 
-    // Regular plurals
     const users = try pluralize(allocator, "user");
     defer allocator.free(users);
     try std.testing.expectEqualStrings("users", users);
@@ -465,8 +416,6 @@ test "pluralize words ending in s/x/z/ch/sh" {
     defer allocator.free(boxes);
     try std.testing.expectEqualStrings("boxes", boxes);
 
-    // Note: English "quiz" -> "quizzes" but our simple pluralization produces "quizes"
-    // This is acceptable for table naming - consistency is more important than perfect English
     const quizes = try pluralize(allocator, "quiz");
     defer allocator.free(quizes);
     try std.testing.expectEqualStrings("quizes", quizes);
@@ -491,7 +440,6 @@ test "pluralize words ending in consonant + y" {
     defer allocator.free(cities);
     try std.testing.expectEqualStrings("cities", cities);
 
-    // Vowel + y should just add s
     const days = try pluralize(allocator, "day");
     defer allocator.free(days);
     try std.testing.expectEqualStrings("days", days);

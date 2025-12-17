@@ -16,8 +16,6 @@ const openapi = @import("openapi.zig");
 
 const allocator = std.heap.page_allocator;
 
-/// Generic authentication user type
-/// Users should define their own User type that matches this structure
 pub const AuthUser = struct {
     id: i64,
     username: []const u8,
@@ -25,58 +23,26 @@ pub const AuthUser = struct {
     password_hash: []const u8,
 };
 
-/// RESTful API configuration
-/// Must be created with the Model type using RestApiConfig(Model)
 pub fn RestApiConfig(comptime Model: type) type {
     return struct {
-        /// ORM instance (required)
         orm: *ORM,
-        /// Validator function that validates a model instance from request
-        /// Should return ValidationErrors (empty if valid)
         validator: *const fn (*Request, Model) anyerror!ValidationErrors,
-        /// Optional authentication function
-        /// Should return AuthUser or error if not authenticated
         authenticator: ?*const fn (*Request) anyerror!AuthUser = null,
-        /// Optional authorization function for GET/PUT/DELETE by ID
-        /// Should return true if user can access the resource, false otherwise
         authorization: ?*const fn (*Request, Model) anyerror!bool = null,
-        /// Optional cache TTL in milliseconds
         cache_ttl_ms: ?u32 = null,
-        /// Enable pagination (default: true)
         enable_pagination: bool = true,
-        /// Default pagination limit when no ?limit= parameter is provided (default: 20)
         default_limit: u32 = 20,
-        /// Maximum allowed pagination limit to prevent excessive data transfer (default: 100)
         max_limit: u32 = 100,
-        /// Enable filtering via ?filter=field:value (default: true)
         enable_filtering: bool = true,
-        /// Enable sorting via ?sort=field:asc|desc (default: true)
         enable_sorting: bool = true,
-        /// Optional hook called before creating a record
-        /// Note: Hooks are not currently supported due to Zig type system limitations
-        /// This field is reserved for future use
         _reserved_before_create: ?*const fn () void = null,
-        /// Optional hook called after creating a record
-        /// Note: Hooks are not currently supported due to Zig type system limitations
-        /// This field is reserved for future use
         _reserved_after_create: ?*const fn () void = null,
-        /// Optional hook called before updating a record
-        /// Note: Hooks are not currently supported due to Zig type system limitations
-        /// This field is reserved for future use
         _reserved_before_update: ?*const fn () void = null,
-        /// Optional hook called after updating a record
-        /// Note: Hooks are not currently supported due to Zig type system limitations
-        /// This field is reserved for future use
         _reserved_after_update: ?*const fn () void = null,
-        /// Optional hook called before deleting a record
-        /// Note: Hooks are not currently supported due to Zig type system limitations
-        /// This field is reserved for future use
         _reserved_before_delete: ?*const fn () void = null,
     };
 }
 
-/// Parse filter query parameters into QueryBuilder where clauses
-/// Format: ?filter=field1:value1&filter=field2:value2
 fn parseFilters(
     comptime T: type,
     builder: *QueryBuilder,
@@ -94,7 +60,6 @@ fn parseFilters(
         const field_name = filter_value[0..colon_pos];
         const field_value = filter_value[colon_pos + 1 ..];
 
-        // Validate field name exists in struct (runtime check)
         var field_valid = false;
         inline for (std.meta.fields(T)) |field| {
             if (std.mem.eql(u8, field.name, field_name)) {
@@ -107,13 +72,10 @@ fn parseFilters(
             return error.InvalidFieldName;
         }
 
-        // Add where clause (using equals by default)
         _ = builder.whereEq(field_name, field_value);
     }
 }
 
-/// Parse sort query parameter into QueryBuilder orderBy
-/// Format: ?sort=field:asc or ?sort=field:desc
 fn parseSort(
     comptime T: type,
     builder: *QueryBuilder,
@@ -127,7 +89,6 @@ fn parseSort(
     const field_name = sort_value[0..colon_pos];
     const direction = sort_value[colon_pos + 1 ..];
 
-    // Validate field name exists in struct (runtime check)
     var field_valid = false;
     inline for (std.meta.fields(T)) |field| {
         if (std.mem.eql(u8, field.name, field_name)) {
@@ -140,7 +101,6 @@ fn parseSort(
         return error.InvalidFieldName;
     }
 
-    // Validate direction
     const ascending = if (std.mem.eql(u8, direction, "asc"))
         true
     else if (std.mem.eql(u8, direction, "desc"))
@@ -151,7 +111,6 @@ fn parseSort(
     _ = builder.orderBy(field_name, ascending);
 }
 
-/// Build cache key for list endpoint
 fn buildListCacheKey(
     prefix: []const u8,
     request: *Request,
@@ -160,19 +119,16 @@ fn buildListCacheKey(
 ) ![]const u8 {
     const arena = request.arena.allocator();
 
-    // Build key string directly
     var key_buf = std.ArrayListUnmanaged(u8){};
     defer key_buf.deinit(arena);
     const writer = key_buf.writer(arena);
 
     try writer.print("{s}:list", .{prefix});
 
-    // Add user_id if authenticated
     if (user_id) |uid| {
         try writer.print(":user:{d}", .{uid});
     }
 
-    // Add filters
     const filter_params = try request.queryParams();
     var filter_iter = filter_params.iterator();
     var has_filters = false;
@@ -186,12 +142,10 @@ fn buildListCacheKey(
         }
     }
 
-    // Add sort
     if (try request.query("sort")) |sort| {
         try writer.print(":sort:{s}", .{sort});
     }
 
-    // Add pagination (use config default_limit if not provided in query)
     const page = (request.queryParamTyped(u32, "page") catch null) orelse 1;
     const limit = (request.queryParamTyped(u32, "limit") catch null) orelse default_limit;
     try writer.print(":page:{d}:limit:{d}", .{ page, limit });
@@ -199,7 +153,6 @@ fn buildListCacheKey(
     return try key_buf.toOwnedSlice(arena);
 }
 
-/// Build cache key for show endpoint
 fn buildShowCacheKey(prefix: []const u8, id: i64, user_id: ?i64) ![]const u8 {
     if (user_id) |uid| {
         return std.fmt.allocPrint(allocator, "{s}:{d}:user:{d}", .{ prefix, id, uid });
@@ -208,7 +161,6 @@ fn buildShowCacheKey(prefix: []const u8, id: i64, user_id: ?i64) ![]const u8 {
     }
 }
 
-/// Paginated response structure
 fn PaginatedResponse(comptime T: type) type {
     return struct {
         data: []const T,
@@ -216,14 +168,12 @@ fn PaginatedResponse(comptime T: type) type {
     };
 }
 
-/// Handler for GET /resource (list endpoint)
 fn handleList(
     comptime T: type,
     prefix: []const u8,
     config: RestApiConfig(T),
     request: *Request,
 ) Response {
-    // Check authentication
     var user: ?AuthUser = null;
     if (config.authenticator) |auth_fn| {
         user = auth_fn(request) catch {
@@ -231,11 +181,9 @@ fn handleList(
         };
     }
 
-    // Check cache
     if (config.cache_ttl_ms) |_| {
         const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
-            // Note: key is allocated with request.arena.allocator(), so no manual free needed
             if (request.cacheGet(key) catch null) |entry| {
                 return Response.text(entry.body)
                     .withContentType(entry.content_type)
@@ -244,7 +192,6 @@ fn handleList(
         }
     }
 
-    // Parse pagination using config-specified defaults and limits
     const pagination = if (config.enable_pagination)
         Pagination.fromRequestWithDefaults(request, config.default_limit, config.max_limit) catch {
             return Response.errorResponse("Invalid pagination parameters", 400);
@@ -252,14 +199,12 @@ fn handleList(
     else
         Pagination{ .page = 1, .limit = config.default_limit, .offset = 0 };
 
-    // Build query - get table name using model utilities
     const raw_table_name = model_utils.inferTableName(T);
     var table_name = model_utils.toLowercaseTableName(config.orm.allocator, raw_table_name) catch {
         return Response.serverError("Failed to get table name");
     };
     defer config.orm.allocator.free(table_name);
 
-    // Handle special case: "todo" -> "todos"
     if (std.mem.eql(u8, table_name, "todo")) {
         config.orm.allocator.free(table_name);
         table_name = config.orm.allocator.dupe(u8, "todos") catch {
@@ -270,7 +215,6 @@ fn handleList(
     var builder = QueryBuilder.init(config.orm.allocator, table_name);
     defer builder.deinit();
 
-    // Automatically filter by user_id if authenticator is present and model has user_id field
     if (user) |authenticated_user| {
         var has_user_id_field = false;
         inline for (std.meta.fields(T)) |field| {
@@ -280,8 +224,6 @@ fn handleList(
             }
         }
         if (has_user_id_field) {
-            // Add user_id filter automatically to ensure users only see their own resources
-            // Use request arena allocator so string persists until builder.build() is called
             const user_id_str = std.fmt.allocPrint(request.arena.allocator(), "{d}", .{authenticated_user.id}) catch {
                 return Response.serverError("Failed to format user_id filter");
             };
@@ -289,7 +231,6 @@ fn handleList(
         }
     }
 
-    // Add filters from query parameters
     if (config.enable_filtering) {
         parseFilters(T, &builder, request) catch |err| {
             if (err == error.InvalidFieldName) {
@@ -299,7 +240,6 @@ fn handleList(
         };
     }
 
-    // Add sort
     if (config.enable_sorting) {
         parseSort(T, &builder, request) catch |err| {
             if (err == error.InvalidFieldName) {
@@ -311,10 +251,8 @@ fn handleList(
         };
     }
 
-    // Add pagination
     _ = builder.limit(pagination.limit).offset(pagination.offset);
 
-    // Build and execute query
     const sql = builder.build() catch {
         return Response.serverError("Failed to build query");
     };
@@ -353,11 +291,9 @@ fn handleList(
         items.deinit(config.orm.allocator);
     }
 
-    // Get total count for pagination
     var count_builder = QueryBuilder.init(config.orm.allocator, table_name);
     defer count_builder.deinit();
 
-    // Automatically filter by user_id if authenticator is present and model has user_id field
     if (user) |authenticated_user| {
         var has_user_id_field = false;
         inline for (std.meta.fields(T)) |field| {
@@ -367,8 +303,6 @@ fn handleList(
             }
         }
         if (has_user_id_field) {
-            // Add user_id filter automatically to ensure count matches filtered results
-            // Use request arena allocator so string persists until count_builder.build() is called
             const user_id_str = std.fmt.allocPrint(request.arena.allocator(), "{d}", .{authenticated_user.id}) catch {
                 return Response.serverError("Failed to format user_id filter for count");
             };
@@ -377,14 +311,11 @@ fn handleList(
     }
 
     if (config.enable_filtering) {
-        // Parse filters for count query - ignore errors as filtering is optional
-        // If parsing fails, count query will proceed without filters
         parseFilters(T, &count_builder, request) catch |err| {
             std.debug.print("[REST API] Warning: Failed to parse filters for count query: {}\n", .{err});
         };
     }
 
-    // Build COUNT query
     var count_sql_buf = std.ArrayListUnmanaged(u8){};
     defer count_sql_buf.deinit(config.orm.allocator);
 
@@ -392,7 +323,6 @@ fn handleList(
         return Response.serverError("Failed to build count query");
     };
 
-    // Add WHERE clause if filters exist
     if (count_builder.where_clauses.items.len > 0) {
         count_sql_buf.writer(config.orm.allocator).print(" WHERE ", .{}) catch {
             return Response.serverError("Failed to build count query");
@@ -405,7 +335,6 @@ fn handleList(
             defer escaped_value.deinit(config.orm.allocator);
             for (clause.value) |char| {
                 if (char == '\'') {
-                    // Escaping SQL single quotes - best effort, log if allocation fails
                     escaped_value.append(config.orm.allocator, '\'') catch {
                         std.debug.print("[REST API] Warning: Failed to escape SQL value, skipping character\n", .{});
                         continue;
@@ -442,7 +371,6 @@ fn handleList(
     };
     const total = count_row.getInt64(0);
 
-    // Create paginated response
     const meta = pagination.toResponse(@intCast(total));
     const paginated = PaginatedResponse(T){
         .data = items.items,
@@ -451,17 +379,14 @@ fn handleList(
 
     const response = Response.jsonFrom(PaginatedResponse(T), paginated, config.orm.allocator);
 
-    // Cache the response
     if (config.cache_ttl_ms) |ttl| {
         const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
-            // Note: key is allocated with request.arena.allocator(), so no manual free needed
             const json = json_mod.Json.serialize(PaginatedResponse(T), paginated, config.orm.allocator) catch null;
             if (json) |j| {
                 defer config.orm.allocator.free(j);
                 const persistent_json = std.heap.page_allocator.dupe(u8, j) catch null;
                 if (persistent_json) |pj| {
-                    // Cache set is best-effort - log but don't fail request if caching fails
                     request.cacheSet(key, pj, ttl, "application/json") catch |err| {
                         std.debug.print("[REST API] Warning: Failed to cache response: {}\n", .{err});
                     };
@@ -473,14 +398,12 @@ fn handleList(
     return response.withHeader("X-Cache", "MISS");
 }
 
-/// Handler for GET /resource/:id (show endpoint)
 fn handleShow(
     comptime T: type,
     prefix: []const u8,
     config: RestApiConfig(T),
     request: *Request,
 ) Response {
-    // Check authentication
     var user: ?AuthUser = null;
     if (config.authenticator) |auth_fn| {
         user = auth_fn(request) catch {
@@ -488,12 +411,10 @@ fn handleShow(
         };
     }
 
-    // Get ID from route params
     const id = request.paramTyped(i64, "id") catch {
         return Response.errorResponse("Invalid ID", 400);
     };
 
-    // Check cache
     if (config.cache_ttl_ms) |_| {
         const cache_key = buildShowCacheKey(prefix, id, if (user) |u| u.id else null) catch null;
         if (cache_key) |key| {
@@ -506,7 +427,6 @@ fn handleShow(
         }
     }
 
-    // Find record
     const found = config.orm.find(T, id) catch {
         return Response.serverError("Failed to fetch record");
     };
@@ -536,7 +456,6 @@ fn handleShow(
         }
     }
 
-    // Check authorization
     if (config.authorization) |authz_fn| {
         const allowed = authz_fn(request, record) catch {
             return Response.errorResponse("Authorization failed", 403);
@@ -548,7 +467,6 @@ fn handleShow(
 
     const response = Response.jsonFrom(T, record, config.orm.allocator);
 
-    // Cache the response
     if (config.cache_ttl_ms) |ttl| {
         const cache_key = buildShowCacheKey(prefix, id, if (user) |u| u.id else null) catch null;
         if (cache_key) |key| {
@@ -558,7 +476,6 @@ fn handleShow(
                 defer config.orm.allocator.free(j);
                 const persistent_json = std.heap.page_allocator.dupe(u8, j) catch null;
                 if (persistent_json) |pj| {
-                    // Cache set is best-effort - log but don't fail request if caching fails
                     request.cacheSet(key, pj, ttl, "application/json") catch |err| {
                         std.debug.print("[REST API] Warning: Failed to cache response: {}\n", .{err});
                     };
@@ -570,14 +487,12 @@ fn handleShow(
     return response.withHeader("X-Cache", "MISS");
 }
 
-/// Handler for POST /resource (create endpoint)
 fn handleCreate(
     comptime T: type,
     prefix: []const u8,
     config: RestApiConfig(T),
     request: *Request,
 ) Response {
-    // Check authentication
     var user: ?AuthUser = null;
     if (config.authenticator) |auth_fn| {
         user = auth_fn(request) catch {
@@ -585,12 +500,10 @@ fn handleCreate(
         };
     }
 
-    // Parse JSON body
     const parsed = request.jsonBody(T) catch {
         return Response.errorResponse("Invalid JSON", 400);
     };
 
-    // Validate
     var validation_errors = config.validator(request, parsed) catch {
         return Response.serverError("Validation error");
     };
@@ -600,11 +513,8 @@ fn handleCreate(
         return Response.validationError(&validation_errors);
     }
 
-    // Create record
-    // Automatically set user_id, timestamps, and defaults if model has those fields
     var model_to_create = parsed;
 
-    // Set user_id if authenticated and model has user_id field
     if (user) |authenticated_user| {
         inline for (std.meta.fields(T)) |field| {
             if (std.mem.eql(u8, field.name, "user_id")) {
@@ -614,8 +524,6 @@ fn handleCreate(
         }
     }
 
-    // Set timestamps if model has those fields
-    // Use milliTimestamp() to match handleUpdate and frontend expectations (milliseconds)
     const now = std.time.milliTimestamp();
     inline for (std.meta.fields(T)) |field| {
         if (std.mem.eql(u8, field.name, "created_at")) {
@@ -626,7 +534,6 @@ fn handleCreate(
         }
     }
 
-    // Ensure id is 0 (will be auto-generated by database)
     inline for (std.meta.fields(T)) |field| {
         if (std.mem.eql(u8, field.name, "id")) {
             @field(model_to_create, "id") = 0;
@@ -638,16 +545,12 @@ fn handleCreate(
         return Response.serverError("Failed to create record");
     };
 
-    // Fetch the created ID from the database and set it on the model
-    // This ensures the response includes the actual database-generated ID
     const created_id = config.orm.db.lastInsertRowId() catch |err| {
         std.debug.print("[REST API] Warning: Failed to get lastInsertRowId: {}\n", .{err});
-        // Fallback: return with id=0 (matches previous behavior)
         const response = Response.jsonFrom(T, model_to_create, config.orm.allocator);
         return response.withStatus(201);
     };
 
-    // Set the created ID on the model before returning
     inline for (std.meta.fields(T)) |field| {
         if (std.mem.eql(u8, field.name, "id")) {
             @field(model_to_create, "id") = created_id;
@@ -655,12 +558,9 @@ fn handleCreate(
         }
     }
 
-    // Invalidate cache
     if (config.cache_ttl_ms) |_| {
-        // Invalidate list cache
         const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
-            // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
         }
     }
@@ -669,14 +569,12 @@ fn handleCreate(
     return response.withStatus(201);
 }
 
-/// Handler for PUT /resource/:id (update endpoint)
 fn handleUpdate(
     comptime T: type,
     prefix: []const u8,
     config: RestApiConfig(T),
     request: *Request,
 ) Response {
-    // Check authentication
     var user: ?AuthUser = null;
     if (config.authenticator) |auth_fn| {
         user = auth_fn(request) catch {
@@ -684,12 +582,10 @@ fn handleUpdate(
         };
     }
 
-    // Get ID from route params
     const id = request.paramTyped(i64, "id") catch {
         return Response.errorResponse("Invalid ID", 400);
     };
 
-    // Find existing record
     const existing = config.orm.find(T, id) catch {
         return Response.serverError("Failed to fetch record");
     };
@@ -719,7 +615,6 @@ fn handleUpdate(
         }
     }
 
-    // Check authorization
     if (config.authorization) |authz_fn| {
         const allowed = authz_fn(request, existing_record) catch {
             return Response.errorResponse("Authorization failed", 403);
@@ -729,17 +624,12 @@ fn handleUpdate(
         }
     }
 
-    // Parse JSON body (partial update)
     const parsed = request.jsonBody(T) catch {
         return Response.errorResponse("Invalid JSON", 400);
     };
 
-    // Merge with existing record (copy non-null/non-zero fields from parsed to existing)
-    // Skip fields that are zero values (empty strings, 0) to allow partial updates
-    // This prevents empty strings/zeros from overwriting existing data when only some fields are sent
     var updated_record = existing_record;
     inline for (std.meta.fields(T)) |field| {
-        // Skip managed fields - these are set automatically
         const field_name = field.name;
         const is_managed_field = comptime blk: {
             break :blk std.mem.eql(u8, field_name, "id") or
@@ -758,8 +648,6 @@ fn handleUpdate(
                 @field(updated_record, field.name) = val;
             }
         } else {
-            // For non-optional fields, only copy if it's not a zero value
-            // This prevents empty strings/zeros from overwriting existing data in partial updates
             const type_info = @typeInfo(field_type);
             const should_copy = switch (type_info) {
                 .bool => true, // Always copy bools (false is a valid value)
@@ -779,10 +667,8 @@ fn handleUpdate(
         }
     }
 
-    // Ensure ID is set
     @field(updated_record, "id") = id;
 
-    // Validate
     var validation_errors = config.validator(request, updated_record) catch {
         return Response.serverError("Validation error");
     };
@@ -792,11 +678,8 @@ fn handleUpdate(
         return Response.validationError(&validation_errors);
     }
 
-    // Update record
-    // Note: Hooks are not currently supported due to Zig type system limitations
     var model_to_update = updated_record;
 
-    // Update timestamp if model has updated_at field
     inline for (std.meta.fields(T)) |field| {
         if (std.mem.eql(u8, field.name, "updated_at")) {
             @field(model_to_update, "updated_at") = std.time.milliTimestamp();
@@ -808,15 +691,11 @@ fn handleUpdate(
         return Response.serverError("Failed to update record");
     };
 
-    // Invalidate cache
     if (config.cache_ttl_ms) |_| {
-        // Invalidate list cache
         const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
-            // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
         }
-        // Invalidate show cache
         const show_cache_key = buildShowCacheKey(prefix, id, if (user) |u| u.id else null) catch null;
         if (show_cache_key) |key| {
             defer allocator.free(key); // buildShowCacheKey uses allocator (page_allocator)
@@ -828,14 +707,12 @@ fn handleUpdate(
     return response;
 }
 
-/// Handler for DELETE /resource/:id (delete endpoint)
 fn handleDelete(
     comptime T: type,
     prefix: []const u8,
     config: RestApiConfig(T),
     request: *Request,
 ) Response {
-    // Check authentication
     var user: ?AuthUser = null;
     if (config.authenticator) |auth_fn| {
         user = auth_fn(request) catch {
@@ -843,12 +720,10 @@ fn handleDelete(
         };
     }
 
-    // Get ID from route params
     const id = request.paramTyped(i64, "id") catch {
         return Response.errorResponse("Invalid ID", 400);
     };
 
-    // Find existing record
     const existing = config.orm.find(T, id) catch {
         return Response.serverError("Failed to fetch record");
     };
@@ -878,7 +753,6 @@ fn handleDelete(
         }
     }
 
-    // Check authorization
     if (config.authorization) |authz_fn| {
         const allowed = authz_fn(request, existing_record) catch {
             return Response.errorResponse("Authorization failed", 403);
@@ -888,21 +762,15 @@ fn handleDelete(
         }
     }
 
-    // Delete record
-    // Note: Hooks are not currently supported due to Zig type system limitations
     config.orm.delete(T, id) catch {
         return Response.serverError("Failed to delete record");
     };
 
-    // Invalidate cache
     if (config.cache_ttl_ms) |_| {
-        // Invalidate list cache
         const cache_key = buildListCacheKey(prefix, request, if (user) |u| u.id else null, config.default_limit) catch null;
         if (cache_key) |key| {
-            // Note: key is allocated with request.arena.allocator(), so no manual free needed
             request.cacheInvalidate(key);
         }
-        // Invalidate show cache
         const show_cache_key = buildShowCacheKey(prefix, id, if (user) |u| u.id else null) catch null;
         if (show_cache_key) |key| {
             defer allocator.free(key); // buildShowCacheKey uses allocator (page_allocator)
@@ -913,7 +781,6 @@ fn handleDelete(
     return Response.noContent();
 }
 
-/// Global registry for REST API configs (keyed by prefix)
 var rest_api_configs: std.StringHashMap(*const anyopaque) = undefined;
 var rest_api_configs_mutex: std.Thread.Mutex = .{};
 var rest_api_configs_initialized: bool = false;
@@ -925,8 +792,6 @@ fn initRestApiConfigs() void {
     }
 }
 
-/// Register RESTful API endpoints for a model
-/// Generates: GET /prefix, GET /prefix/:id, POST /prefix, PUT /prefix/:id, DELETE /prefix/:id
 pub fn restApi(
     app: *@import("engine12.zig").Engine12,
     comptime prefix: []const u8,
@@ -935,16 +800,13 @@ pub fn restApi(
 ) !void {
     initRestApiConfigs();
 
-    // Register with OpenAPI generator
     if (app.getOpenApiGenerator()) |generator| {
         generator.registerResource(prefix, Model) catch |err| {
             std.debug.print("Failed to register OpenAPI resource: {}\n", .{err});
         };
     } else |_| {
-        // Ignore error (generator init failed?)
     }
 
-    // Store config in global registry (allocate on heap so it persists)
     const config_ptr = try allocator.create(RestApiConfig(Model));
     config_ptr.* = config;
 
@@ -952,7 +814,6 @@ pub fn restApi(
     defer rest_api_configs_mutex.unlock();
     try rest_api_configs.put(prefix, config_ptr);
 
-    // Register GET /prefix (list)
     try app.get(prefix, struct {
         const model_type = Model;
         const api_prefix = prefix;
@@ -967,7 +828,6 @@ pub fn restApi(
         }
     }.handler);
 
-    // Register GET /prefix/:id (show)
     const show_path = comptime prefix ++ "/:id";
     try app.get(show_path, struct {
         const model_type = Model;
@@ -983,7 +843,6 @@ pub fn restApi(
         }
     }.handler);
 
-    // Register POST /prefix (create)
     try app.post(prefix, struct {
         const model_type = Model;
         const api_prefix = prefix;
@@ -998,7 +857,6 @@ pub fn restApi(
         }
     }.handler);
 
-    // Register PUT /prefix/:id (update)
     const update_path = comptime prefix ++ "/:id";
     try app.put(update_path, struct {
         const model_type = Model;
@@ -1014,7 +872,6 @@ pub fn restApi(
         }
     }.handler);
 
-    // Register DELETE /prefix/:id (delete)
     const delete_path = comptime prefix ++ "/:id";
     try app.delete(delete_path, struct {
         const model_type = Model;

@@ -6,11 +6,9 @@ const cli_utils = @import("utils.zig");
 const allocator = std.heap.page_allocator;
 
 pub fn main() !void {
-    // Use page allocator to avoid allocator corruption issues
     const alloc = std.heap.page_allocator;
 
     const args = try std.process.argsAlloc(alloc);
-    // Note: argsAlloc uses page_allocator internally, so no need to free
 
     if (args.len < 2) {
         printUsage();
@@ -28,7 +26,6 @@ pub fn main() !void {
 
         const project_name = args[2];
 
-        // Validate project name before proceeding
         if (!cli_utils.validateProjectName(project_name)) {
             std.debug.print("Error: Invalid project name '{s}'\n", .{project_name});
             std.debug.print("Project names must contain only alphanumeric characters, hyphens, and underscores\n\n", .{});

@@ -1,14 +1,7 @@
 const std = @import("std");
 const escape = @import("../templates/escape.zig");
 
-/// Simple runtime template renderer for hot reloading
-/// Supports basic variable substitution: {{ .field }} and {{! .field }}
-/// Note: This is a simplified version - full template features (if/for blocks) require comptime compilation
 pub const RuntimeRenderer = struct {
-    /// Render template with context using simple variable substitution
-    /// Supports:
-    /// - {{ .field }} - HTML-escaped variables
-    /// - {{! .field }} - Raw (unescaped) variables
     pub fn render(
         template_content: []const u8,
         comptime Context: type,
@@ -20,11 +13,9 @@ pub const RuntimeRenderer = struct {
 
         var i: usize = 0;
         while (i < template_content.len) {
-            // Look for {{ or {%
             const var_start = std.mem.indexOf(u8, template_content[i..], "{{");
             const block_start = std.mem.indexOf(u8, template_content[i..], "{%");
 
-            // Determine which comes first
             var next_token: ?struct { start: usize, is_block: bool } = null;
 
             if (var_start) |vs| {
@@ -37,28 +28,22 @@ pub const RuntimeRenderer = struct {
             }
 
             if (next_token) |token| {
-                // Add text before token
                 if (token.start > i) {
                     try result.appendSlice(allocator, template_content[i..token.start]);
                 }
 
                 if (token.is_block) {
-                    // Parse {% ... %} blocks
                     const block_end = std.mem.indexOf(u8, template_content[token.start + 2 ..], "%}") orelse {
-                        // No closing tag, skip to end
                         i = template_content.len;
                         continue;
                     };
 
                     const block_content = std.mem.trim(u8, template_content[token.start + 2 .. token.start + 2 + block_end], " \t\n");
 
-                    // Handle {% if .field %} ... {% endif %}
                     if (std.mem.startsWith(u8, block_content, "if ")) {
                         const condition_str = std.mem.trim(u8, block_content[3..], " \t\n");
                         const condition_value = getVariableValue(condition_str, Context, ctx, allocator) catch |err| {
-                            // If variable not found, treat as false
                             if (err == error.InvalidVariablePath) {
-                                // Skip to {% endif %}
                                 const endif_pos = findEndif(template_content, token.start + 2 + block_end + 2) orelse {
                                     i = template_content.len;
                                     continue;
@@ -70,35 +55,27 @@ pub const RuntimeRenderer = struct {
                         };
                         defer allocator.free(condition_value);
 
-                        // Check if condition is truthy
                         const is_true = isTruthy(condition_value);
 
-                        // Find {% endif %}
                         const endif_pos = findEndif(template_content, token.start + 2 + block_end + 2) orelse {
                             i = token.start + 2 + block_end + 2;
                             continue;
                         };
 
                         if (is_true) {
-                            // Include content between {% if %} and {% endif %}
                             const content_start = token.start + 2 + block_end + 2;
                             const content_end = endif_pos;
                             try result.appendSlice(allocator, template_content[content_start..content_end]);
                         }
-                        // Skip past {% endif %} (11 characters: {% endif %})
                         i = endif_pos + 11;
                     } else if (std.mem.eql(u8, block_content, "endif")) {
-                        // Just skip {% endif %} - it's handled by {% if %}
                         i = token.start + 2 + block_end + 2;
                     } else {
-                        // Unknown block type - output as-is
                         try result.appendSlice(allocator, template_content[token.start .. token.start + 2 + block_end + 2]);
                         i = token.start + 2 + block_end + 2;
                     }
                 } else {
-                    // Parse {{ ... }} variable
                     const var_end = std.mem.indexOf(u8, template_content[token.start + 2 ..], "}}") orelse {
-                        // No closing tag, skip
                         i = template_content.len;
                         continue;
                     };
@@ -107,9 +84,7 @@ pub const RuntimeRenderer = struct {
                     const is_raw = var_content.len > 0 and var_content[0] == '!';
                     const var_str = if (is_raw) std.mem.trim(u8, var_content[1..], " \t\n") else std.mem.trim(u8, var_content, " \t\n");
 
-                    // Get variable value
                     const value = getVariableValue(var_str, Context, ctx, allocator) catch |err| {
-                        // If variable not found or null, output empty string
                         if (err == error.InvalidVariablePath) {
                             i = token.start + 2 + var_end + 2;
                             continue;
@@ -118,7 +93,6 @@ pub const RuntimeRenderer = struct {
                     };
                     defer allocator.free(value);
 
-                    // Output value (escaped or raw)
                     if (is_raw) {
                         try result.appendSlice(allocator, value);
                     } else {
@@ -130,7 +104,6 @@ pub const RuntimeRenderer = struct {
                     i = token.start + 2 + var_end + 2;
                 }
             } else {
-                // No more tokens - add remaining text
                 try result.appendSlice(allocator, template_content[i..]);
                 break;
             }
@@ -139,17 +112,14 @@ pub const RuntimeRenderer = struct {
         return result.toOwnedSlice(allocator);
     }
 
-    /// Get variable value from context
     fn getVariableValue(
         var_path: []const u8,
         comptime Context: type,
         ctx: Context,
         allocator: std.mem.Allocator,
     ) ![]const u8 {
-        // Remove leading dot if present
         const path = if (var_path.len > 0 and var_path[0] == '.') var_path[1..] else var_path;
 
-        // Split path by dots
         var parts = std.ArrayListUnmanaged([]const u8){};
         defer parts.deinit(allocator);
 
@@ -169,11 +139,9 @@ pub const RuntimeRenderer = struct {
             try parts.append(allocator, path[start..]);
         }
 
-        // Navigate context using comptime introspection
         return getVariableValueImpl(ctx, parts.items, allocator);
     }
 
-    /// Get variable value using comptime introspection (similar to codegen)
     fn getVariableValueImpl(
         value: anytype,
         path: []const []const u8,
@@ -190,39 +158,32 @@ pub const RuntimeRenderer = struct {
 
                 const field_name = path[0];
 
-                // Find field and get its value using inline for
                 inline for (struct_info.fields) |field| {
                     if (std.mem.eql(u8, field.name, field_name)) {
                         const field_value = @field(value, field.name);
 
                         if (path.len == 1) {
-                            // Last field - convert to string
                             return formatValue(field_value, allocator);
                         } else {
-                            // Navigate deeper
                             return getVariableValueImpl(field_value, path[1..], allocator);
                         }
                     }
                 }
 
-                // Field not found
                 return error.InvalidVariablePath;
             },
             .pointer => |ptr_info| {
                 if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    // String slice - return as-is
                     return try allocator.dupe(u8, value);
                 }
                 return error.InvalidVariablePath;
             },
             else => {
-                // Convert to string
                 return formatValue(value, allocator);
             },
         }
     }
 
-    /// Format a value as a string
     fn formatValue(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
         const T = @TypeOf(value);
 
@@ -254,18 +215,15 @@ pub const RuntimeRenderer = struct {
                 if (value) |val| {
                     return formatValue(val, allocator);
                 } else {
-                    // Return empty string for null optional
                     return try allocator.dupe(u8, "");
                 }
             },
             else => {
-                // Try to convert to string using format
                 return try std.fmt.allocPrint(allocator, "{any}", .{value});
             },
         };
     }
 
-    /// Check if a value is truthy
     fn isTruthy(value: []const u8) bool {
         if (value.len == 0) return false;
         if (std.mem.eql(u8, value, "false")) return false;
@@ -274,7 +232,6 @@ pub const RuntimeRenderer = struct {
         return true;
     }
 
-    /// Find the position of {% endif %} after a given position
     fn findEndif(content: []const u8, start_pos: usize) ?usize {
         if (start_pos >= content.len) return null;
         const endif_start = std.mem.indexOf(u8, content[start_pos..], "{% endif %}") orelse return null;

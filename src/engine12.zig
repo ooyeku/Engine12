@@ -32,42 +32,22 @@ const shutdown_utils = @import("utils/shutdown.zig");
 
 const allocator = std.heap.page_allocator;
 
-/// Generate a unique request ID
-/// Uses a stack buffer to format, then allocates directly into the provided allocator
-/// This avoids double allocation and memory leaks
 fn generateRequestId(alloc: std.mem.Allocator) ![]const u8 {
     const timestamp = std.time.milliTimestamp();
     const random = @as(u64, @intCast(std.time.nanoTimestamp())) % 1000000;
     var buffer: [64]u8 = undefined;
     const id_str = std.fmt.bufPrint(&buffer, "req_{d}_{d}", .{ timestamp, random }) catch {
-        // Fallback if bufPrint somehow fails (shouldn't happen)
         return alloc.dupe(u8, "req_unknown");
     };
     return alloc.dupe(u8, id_str);
 }
 
-/// Global middleware pointer (thread-local for thread safety)
-/// This is set when routes are registered and accessed at runtime
-///
-/// Thread Safety:
-/// - This pointer is set once per route registration and read-only during request handling
-/// - Each request handler runs in its own thread context
-/// - No mutex needed as the pointer itself is immutable after initialization
 pub var global_middleware: ?*const middleware_chain.MiddlewareChain = null;
 
-/// Global metrics collector pointer
-/// This is set when routes are registered and accessed at runtime
-///
-/// Thread Safety:
-/// - Metrics operations use internal thread-safe mechanisms
-/// - Multiple threads can safely increment counters concurrently
 pub var global_metrics: ?*metrics.MetricsCollector = null;
 
-/// Global hot reload manager pointer for WebSocket handler
-/// This is set when hot reload manager starts and accessed by WebSocket handler
 var hot_reload_manager_for_ws: ?*hot_reload_mod.HotReloadManager = null;
 
-/// WebSocket handler for hot reload notifications
 fn hotReloadWebSocketHandler(conn: *websocket_mod.connection.WebSocketConnection) void {
     if (hot_reload_manager_for_ws) |mgr| {
         if (mgr.getReloadRoom()) |room| {
@@ -76,8 +56,6 @@ fn hotReloadWebSocketHandler(conn: *websocket_mod.connection.WebSocketConnection
                 return;
             };
 
-            // Store room reference in connection context so we can remove it on close
-            // Note: conn.set() will duplicate the string, so we can free it here
             const room_ptr_str = std.fmt.allocPrint(allocator, "{d}", .{@intFromPtr(room)}) catch return;
             defer allocator.free(room_ptr_str);
             conn.set("hot_reload_room", room_ptr_str) catch {};
@@ -85,59 +63,20 @@ fn hotReloadWebSocketHandler(conn: *websocket_mod.connection.WebSocketConnection
     }
 }
 
-/// Global rate limiter pointer
-/// This is set when routes are registered and accessed at runtime
-///
-/// Thread Safety:
-/// - Rate limiter uses internal mutex for thread-safe access
-/// - Multiple threads can safely check rate limits concurrently
 pub var global_rate_limiter: ?*rate_limit.RateLimiter = null;
 
-/// Global cache pointer
-/// This is set when routes are registered and accessed at runtime
-///
-/// Thread Safety:
-/// - Cache uses internal mutex for thread-safe access
-/// - Multiple threads can safely read/write cache entries concurrently
 pub var global_cache: ?*cache.ResponseCache = null;
 
-/// Global logger pointer
-/// This is set when Engine12 is initialized and accessed at runtime
-///
-/// Thread Safety:
-/// - Logger uses internal mutex for thread-safe file writing
-/// - Multiple threads can safely log concurrently
 pub var global_logger: ?*dev_tools.Logger = null;
 
-/// Global error handler registry pointer
-/// This is set when engine12 is initialized and accessed at runtime
-///
-/// Thread Safety:
-/// - Error handler registry is read-only after initialization
-/// - No mutex needed as handlers are immutable function pointers
 pub var global_error_handler: ?*error_handler.ErrorHandlerRegistry = null;
 
-/// Global runtime route registry pointer
-/// This is set when engine12 is initialized and accessed at runtime
-///
-/// Thread Safety:
-/// - Runtime route registry uses internal mutex for thread-safe access
-/// - Multiple threads can safely register/lookup routes concurrently
 pub var global_runtime_routes: ?*runtime_routes_mod.RuntimeRouteRegistry = null;
 
-/// Global active request tracker pointer
-/// This is set when engine12 is initialized and accessed at runtime
-///
-/// Thread Safety:
-/// - Active request tracker uses atomic operations for thread-safe counting
-/// - Multiple threads can safely increment/decrement concurrently
 pub var global_active_request_tracker: ?*shutdown_utils.ActiveRequestTracker = null;
 
-/// Global OpenAPI generator pointer (for documentation handlers)
 var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 
-/// Thread-safe connection queue for the thread pool
-/// Workers pull sockets from this queue to handle requests
 const ConnectionQueue = struct {
     const Self = @This();
     const MAX_QUEUE_SIZE = 4096;
@@ -151,12 +90,10 @@ const ConnectionQueue = struct {
     not_full: std.Thread.Condition = .{},
     shutdown: bool = false,
 
-    /// Push a socket to the queue (blocking if full)
     pub fn push(self: *Self, socket: posix.socket_t) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Wait while queue is full (unless shutting down)
         while (self.count >= MAX_QUEUE_SIZE and !self.shutdown) {
             self.not_full.wait(&self.mutex);
         }
@@ -173,13 +110,10 @@ const ConnectionQueue = struct {
         self.not_empty.signal();
     }
 
-    /// Pop a socket from the queue (blocking if empty)
-    /// Returns null if shutdown is signaled
     pub fn pop(self: *Self) ?posix.socket_t {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Wait while queue is empty (unless shutting down)
         while (self.count == 0 and !self.shutdown) {
             self.not_empty.wait(&self.mutex);
         }
@@ -196,7 +130,6 @@ const ConnectionQueue = struct {
         return socket;
     }
 
-    /// Signal all workers to shutdown
     pub fn signalShutdown(self: *Self) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -207,34 +140,24 @@ const ConnectionQueue = struct {
     }
 };
 
-/// Global connection queue for thread pool (set during startHttpServer)
 var global_connection_queue: ?*ConnectionQueue = null;
 
-/// Global server reference for workers (set during startHttpServer)
 var global_server_for_workers: ?*ziggurat.Server = null;
 
-/// Global server config for workers (set during startHttpServer)
 var global_server_config: ?ServerConfig = null;
 
-/// Handle a connection in a worker thread
-/// This reimplements ziggurat's handleConnection but allows multi-threaded execution
-/// Supports HTTP keep-alive for connection reuse
 fn handleConnectionThreaded(socket: posix.socket_t) void {
     const server = global_server_for_workers orelse return;
     const config = global_server_config orelse return;
 
     defer posix.close(socket);
 
-    // Set socket timeouts
     setSocketTimeouts(socket, config) catch return;
 
-    // Maximum requests per connection for keep-alive (prevents resource exhaustion)
     const max_requests_per_connection: usize = 100;
     var requests_handled: usize = 0;
 
-    // Keep-alive loop - handle multiple requests on the same connection
     while (requests_handled < max_requests_per_connection) : (requests_handled += 1) {
-        // Track active request for graceful shutdown
         if (global_active_request_tracker) |tracker| {
             tracker.increment();
         }
@@ -244,11 +167,9 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             }
         }
 
-        // Allocate buffer for request
         var buf: [65536]u8 = undefined; // 64KB buffer
         var total_read: usize = 0;
 
-        // Read request data
         const read_result = posix.read(socket, &buf);
         if (read_result) |bytes_read| {
             if (bytes_read == 0) return; // Connection closed by client
@@ -257,7 +178,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             return; // Read error or timeout - close connection
         }
 
-        // Find header end
         const header_end_marker = "\r\n\r\n";
         var header_end_pos: ?usize = null;
 
@@ -265,7 +185,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             header_end_pos = pos;
         }
 
-        // If headers not complete, try to read more
         while (header_end_pos == null and total_read < buf.len) {
             const additional_result = posix.read(socket, buf[total_read..]);
             if (additional_result) |bytes| {
@@ -280,7 +199,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             }
         }
 
-        // Parse request
         var request = ziggurat.request.Request.init(allocator);
         defer request.deinit();
 
@@ -290,7 +208,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             return;
         };
 
-        // Check Content-Length and read body if needed
         if (request.headers.get("Content-Length")) |cl_str| {
             const expected_body_len = std.fmt.parseInt(usize, cl_str, 10) catch 0;
             const header_len = if (header_end_pos) |pos| pos + header_end_marker.len else total_read;
@@ -299,7 +216,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             if (expected_body_len > current_body_len) {
                 const remaining = expected_body_len - current_body_len;
 
-                // Read remaining body
                 var body_read: usize = 0;
                 while (body_read < remaining and (total_read + body_read) < buf.len) {
                     const chunk_result = posix.read(socket, buf[total_read + body_read ..]);
@@ -312,7 +228,6 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
                 }
                 total_read += body_read;
 
-                // Re-parse with full body
                 request.deinit();
                 request = ziggurat.request.Request.init(allocator);
                 request.parse(buf[0..total_read]) catch {
@@ -323,23 +238,18 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             }
         }
 
-        // Check for keep-alive preference
-        // HTTP/1.1 defaults to keep-alive unless Connection: close is specified
         const keep_alive = if (request.headers.get("Connection")) |conn_header|
             !std.ascii.eqlIgnoreCase(conn_header, "close")
         else
             true; // Default to keep-alive for HTTP/1.1
 
-        // Process middleware
         if (server.inner.middleware.process(&request)) |mw_response| {
-            // Check if there's a pre-formatted response with custom headers
             const formatted = if (response_mod.Response.getFormattedResponse(&mw_response)) |pre_formatted|
                 pre_formatted
             else
                 mw_response.format() catch return;
 
             defer {
-                // Free formatted response if it was pre-formatted
                 if (response_mod.Response.getFormattedResponse(&mw_response) != null) {
                     response_mod.Response.clearFormattedResponse(&mw_response);
                 } else {
@@ -347,28 +257,23 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
                 }
             }
 
-            // Release any pending response buffers back to the pool after formatting
             response_mod.releasePendingBuffer();
             _ = posix.write(socket, formatted) catch {};
             if (!keep_alive) return;
             continue;
         }
 
-        // Match route and call handler
         const response = if (server.inner.router.matchRoute(&request)) |route_response|
             route_response
         else
             ziggurat.response.Response.init(.not_found, "text/plain", "Not Found");
 
-        // Format and send response
-        // Check if there's a pre-formatted response with custom headers
         const formatted_response = if (response_mod.Response.getFormattedResponse(&response)) |pre_formatted|
             pre_formatted
         else
             response.format() catch return;
 
         defer {
-            // Free formatted response if it was pre-formatted
             if (response_mod.Response.getFormattedResponse(&response) != null) {
                 response_mod.Response.clearFormattedResponse(&response);
             } else {
@@ -376,17 +281,13 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             }
         }
 
-        // Release any pending response buffers back to the pool after formatting
-        // This is safe because format() has already copied the body data
         response_mod.releasePendingBuffer();
         _ = posix.write(socket, formatted_response) catch {};
 
-        // Close connection if client doesn't want keep-alive
         if (!keep_alive) return;
     }
 }
 
-/// Set socket timeouts
 fn setSocketTimeouts(socket: posix.socket_t, config: ServerConfig) !void {
     const read_timeout = posix.timeval{
         .sec = @intCast(config.read_timeout / 1000),
@@ -401,7 +302,6 @@ fn setSocketTimeouts(socket: posix.socket_t, config: ServerConfig) !void {
     try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(write_timeout));
 }
 
-/// Worker thread function - pulls connections from queue and handles them
 fn workerThreadFn() void {
     const queue = global_connection_queue orelse return;
 
@@ -411,30 +311,22 @@ fn workerThreadFn() void {
     }
 }
 
-/// Create a runtime route wrapper that dispatches to handlers stored in the runtime route registry
-/// This allows valves to register routes dynamically at runtime
-/// Returns a single wrapper function that looks up routes dynamically from the registry
 pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.response.Response {
     return struct {
         fn wrapper(ziggurat_request: *ziggurat.request.Request) ziggurat.response.Response {
-            // Track active request
             if (global_active_request_tracker) |tracker| {
                 tracker.increment();
                 defer tracker.decrement();
             }
 
-            // Access runtime route registry from global
             const runtime_registry = global_runtime_routes orelse {
                 return Response.text("Runtime routes not available").withStatus(500).toZiggurat();
             };
 
-            // Access middleware from global
             const mw_chain = global_middleware orelse {
-                // No middleware, proceed directly
                 var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
                 defer engine12_request.deinit();
 
-                // Find route in runtime registry - use path without query string for matching
                 const method_str = @tagName(ziggurat_request.method);
                 const route = runtime_registry.findRoute(method_str, engine12_request.path(), &engine12_request) catch |err| {
                     std.debug.print("[Runtime Route] Error finding route: {}\n", .{err});
@@ -449,25 +341,18 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 return Response.text("Not Found").withStatus(404).toZiggurat();
             };
 
-            // Access metrics collector from global
             const metrics_collector = global_metrics;
 
-            // Create request with arena allocator
             var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
 
-            // Generate request ID
             const request_id = generateRequestId(engine12_request.arena.allocator()) catch "unknown";
             engine12_request.set("request_id", request_id) catch {};
 
-            // Start timing - use path without query string for consistent metrics
             var timing = metrics.RequestTiming.start(engine12_request.path());
 
-            // Ensure cleanup happens even if handler panics
             defer engine12_request.deinit();
 
-            // Execute pre-request middleware chain
             if (mw_chain.executePreRequest(&engine12_request)) |abort_response| {
-                // Record error metrics
                 if (metrics_collector) |mc| {
                     mc.incrementError();
                     timing.finish(mc) catch {};
@@ -475,7 +360,6 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 return abort_response.toZiggurat();
             }
 
-            // Find route in runtime registry - use path without query string for matching
             const method_str = @tagName(ziggurat_request.method);
             const route = runtime_registry.findRoute(method_str, engine12_request.path(), &engine12_request) catch |err| {
                 std.debug.print("[Runtime Route] Error finding route: {}\n", .{err});
@@ -487,13 +371,10 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
             };
 
             if (route) |r| {
-                // Call the handler
                 var engine12_response = r.handler(&engine12_request);
 
-                // Execute response middleware chain
                 engine12_response = mw_chain.executeResponse(engine12_response, &engine12_request);
 
-                // Record timing and metrics
                 if (metrics_collector) |mc| {
                     timing.finish(mc) catch {};
                 }
@@ -501,7 +382,6 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 return engine12_response.toZiggurat();
             }
 
-            // Route not found
             if (metrics_collector) |mc| {
                 mc.incrementError();
                 timing.finish(mc) catch {};
@@ -511,10 +391,6 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
     }.wrapper;
 }
 
-/// Wrap an engine12 handler to work with ziggurat
-/// Creates an arena allocator for each request and automatically cleans it up
-/// If route_pattern is provided, extracts route parameters from the request path
-/// Executes middleware chain before and after handler
 pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]const u8) fn (*ziggurat.request.Request) ziggurat.response.Response {
     const HandlerType = @TypeOf(handler_fn);
     const actual_handler: types.HttpHandler = switch (@typeInfo(HandlerType)) {
@@ -526,44 +402,31 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
         const pattern = route_pattern;
 
         fn wrapper(ziggurat_request: *ziggurat.request.Request) ziggurat.response.Response {
-            // Track active request
             if (global_active_request_tracker) |tracker| {
                 tracker.increment();
                 defer tracker.decrement();
             }
 
-            // Access middleware from global (set when route is registered)
             const mw_chain = global_middleware orelse {
-                // No middleware, proceed directly
                 var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
                 defer engine12_request.deinit();
                 const engine12_response = handler(&engine12_request);
                 return engine12_response.toZiggurat();
             };
 
-            // Access metrics collector from global
             const metrics_collector = global_metrics;
 
-            // Start timing
             const route_pattern_str = if (pattern) |p| p else ziggurat_request.path;
             var timing = metrics.RequestTiming.start(route_pattern_str);
 
-            // Create request with arena allocator
-            // Using page_allocator as backing for performance
-            // The arena is warmed up inside fromZiggurat to prevent panics
             var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
 
-            // Generate request ID directly into the request's arena allocator
-            // This avoids double allocation and memory leaks
             const request_id = generateRequestId(engine12_request.arena.allocator()) catch "unknown";
             engine12_request.set("request_id", request_id) catch {};
 
-            // Ensure cleanup happens even if handler panics
             defer engine12_request.deinit();
 
-            // Execute pre-request middleware chain
             if (mw_chain.executePreRequest(&engine12_request)) |abort_response| {
-                // Record error metrics
                 if (metrics_collector) |mc| {
                     mc.incrementError();
                     timing.finish(mc) catch {};
@@ -571,15 +434,11 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
                 return abort_response.toZiggurat();
             }
 
-            // If route has parameters, extract them
             if (pattern) |pattern_str| {
                 if (std.mem.indexOf(u8, pattern_str, ":") != null) {
-                    // This route has parameters - parse and extract
                     var route_pattern_parsed = router.RoutePattern.parse(allocator, pattern_str) catch {
-                        // If parsing fails, continue without params
                         const engine12_response = handler(&engine12_request);
                         var final_response = mw_chain.executeResponse(engine12_response, &engine12_request);
-                        // Record timing
                         if (metrics_collector) |mc| {
                             timing.finish(mc) catch {};
                         }
@@ -587,54 +446,35 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
                     };
                     defer route_pattern_parsed.deinit(allocator);
 
-                    // Match against request path
                     if (route_pattern_parsed.match(engine12_request.arena.allocator(), ziggurat_request.path) catch null) |params| {
                         engine12_request.setRouteParams(params) catch |err| {
-                            // If setting params fails, log and continue without params
                             std.debug.print("Failed to set route params: {}\n", .{err});
                         };
                     }
                 }
             }
 
-            // Call the engine12 handler
-            // Error handler registry is available via global_error_handler if handlers need it
             var engine12_response = handler(&engine12_request);
 
-            // Execute response middleware chain (pass request for cache headers)
             engine12_response = mw_chain.executeResponse(engine12_response, &engine12_request);
 
-            // Record timing and metrics
             if (metrics_collector) |mc| {
                 timing.finish(mc) catch {};
             }
 
-            // Convert engine12 response to ziggurat response
-            // Note: Response data must be copied to persistent allocator before arena is freed
             return engine12_response.toZiggurat();
         }
     }.wrapper;
 }
 
-/// Server configuration options
-/// Use with Engine12.configure() to customize server settings
 pub const ServerConfig = struct {
-    /// Server host address (default: "127.0.0.1")
     host: []const u8 = "127.0.0.1",
-    /// Server port (default: 8080)
     port: u16 = 8080,
-    /// Read timeout in milliseconds (default: 10000)
     read_timeout: u32 = 10000,
-    /// Write timeout in milliseconds (default: 10000)
     write_timeout: u32 = 10000,
-    /// Number of worker threads for handling requests (default: 12)
-    /// Set to 0 to use single-threaded mode (legacy behavior)
     worker_threads: u16 = 12,
-    /// Buffer size for reading HTTP requests (default: 16KB)
     buffer_size: usize = 16384,
-    /// Maximum header size (default: 32KB)
     max_header_size: usize = 32768,
-    /// Maximum body size (default: 10MB)
     max_body_size: usize = 10 * 1024 * 1024,
 };
 
@@ -652,7 +492,6 @@ pub const Engine12 = struct {
     request_count: u64 = 0,
     start_time: i64 = 0,
 
-    // HTTP Server - store routes for tracking, but register immediately
     http_routes: [MAX_ROUTES]?types.Route = [_]?types.Route{null} ** MAX_ROUTES,
     routes_count: usize = 0,
     custom_root_handler: bool = false, // Track if custom root handler is registered
@@ -660,64 +499,47 @@ pub const Engine12 = struct {
     server_built: bool = false,
     built_server: ?ziggurat.Server = null,
 
-    // Static File Serving
     static_routes: [MAX_STATIC_ROUTES]?fileserver.FileServer = [_]?fileserver.FileServer{null} ** MAX_STATIC_ROUTES,
     static_routes_count: usize = 0,
     static_root_mounted: bool = false, // Track if static files are mounted at "/"
 
-    // Template Routes
     template_routes: [MAX_ROUTES]struct { path: []const u8, context_fn: *const anyopaque } = undefined,
     template_routes_count: usize = 0,
 
-    // Supervision
     background_workers: [MAX_WORKERS]?types.BackgroundWorker = [_]?types.BackgroundWorker{null} ** MAX_WORKERS,
     workers_count: usize = 0,
 
-    // Health & Monitoring
     health_checks: [MAX_HEALTH_CHECKS]?types.HealthCheckFn = [_]?types.HealthCheckFn{null} ** MAX_HEALTH_CHECKS,
     health_checks_count: usize = 0,
 
-    // Middleware Chain
     middleware: middleware_chain.MiddlewareChain,
 
-    // Error Handler
     error_handler_registry: error_handler.ErrorHandlerRegistry,
 
-    // Metrics Collector
     metrics_collector: metrics.MetricsCollector,
 
-    // Logger
     logger: dev_tools.Logger,
 
-    // Valve Registry
     valve_registry: ?valve_registry_mod.ValveRegistry = null,
 
-    // Runtime Route Registry (for valve-registered routes)
     runtime_routes: runtime_routes_mod.RuntimeRouteRegistry,
 
-    // ORM Instance (optional, set by application)
     orm_instance: ?*orm.ORM = null,
 
-    // WebSocket Manager
     ws_manager: ?websocket_mod.manager.WebSocketManager = null,
     ws_routes: [MAX_WS_ROUTES]?types.WebSocketRoute = [_]?types.WebSocketRoute{null} ** MAX_WS_ROUTES,
     ws_routes_count: usize = 0,
 
-    // Hot Reload Manager (development only)
     hot_reload_manager: ?*hot_reload_mod.HotReloadManager = null,
 
-    // HTMX Configuration (auto-enabled in development mode)
     htmx_config: ?htmx_mod.HtmxConfig = null,
     htmx_registration_failed: bool = false, // Track if HTMX middleware registration failed
 
-    // OpenAPI Generator
     openapi_generator: ?openapi.OpenAPIGenerator = null,
 
-    // Lifecycle
     supervisor: ?vigil.Supervisor = null,
     http_server: ?*anyopaque = null,
 
-    // Graceful shutdown
     active_request_tracker: shutdown_utils.ActiveRequestTracker,
     shutdown_hooks: shutdown_utils.ShutdownHookRegistry,
 
@@ -733,61 +555,36 @@ pub const Engine12 = struct {
             .active_request_tracker = shutdown_utils.ActiveRequestTracker.init(),
             .shutdown_hooks = shutdown_utils.ShutdownHookRegistry.init(allocator),
         };
-        // Set global references
         global_logger = &app.logger;
         global_active_request_tracker = &app.active_request_tracker;
         return app;
     }
 
-    /// Initialize engine12 for development
-    /// Hot reloading and HTMX are automatically enabled in development mode
     pub fn initDevelopment() !Engine12 {
         var app = try Engine12.initWithProfile(types.ServerProfile_Development);
 
-        // Initialize hot reload manager for development
         const hr_manager = try allocator.create(hot_reload_mod.HotReloadManager);
         hr_manager.* = hot_reload_mod.HotReloadManager.init(allocator, true);
         app.hot_reload_manager = hr_manager;
 
-        // Set manager reference for script injector middleware (register early so it's available)
         script_injector_mod.setHotReloadManager(hr_manager);
 
-        // Register script injector middleware early (before server starts)
-        // This ensures it's in the middleware chain when requests are handled
         try app.useResponse(script_injector_mod.injectHotReloadScript);
 
-        // Auto-enable HTMX in development mode with debug enabled
         app.enableHtmx();
 
         return app;
     }
 
-    /// Initialize engine12 for production
     pub fn initProduction() !Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Production);
     }
 
-    /// Initialize engine12 for testing
     pub fn initTesting() !Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
     }
 
-    // =========================================================================
-    // HTMX Configuration
-    // =========================================================================
 
-    /// Enable HTMX with automatic configuration based on environment
-    /// In development: enables debug mode
-    /// In production: disables debug mode
-    ///
-    /// HTMX script is automatically injected into full HTML page responses.
-    /// Fragment responses (created with Response.fragment()) are not modified.
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initProduction();
-    /// app.enableHtmx();  // Enable HTMX in production
-    /// ```
     pub fn enableHtmx(self: *Engine12) void {
         const config = if (self.profile.environment == .production)
             htmx_mod.production_config
@@ -796,158 +593,87 @@ pub const Engine12 = struct {
         self.enableHtmxWithConfig(config);
     }
 
-    /// Enable HTMX with custom configuration
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initProduction();
-    /// app.enableHtmxWithConfig(.{
-    ///     .version = "2.0.0",
-    ///     .debug = false,
-    ///     .include_ws_extension = true,
-    /// });
-    /// ```
     pub fn enableHtmxWithConfig(self: *Engine12, config: htmx_mod.HtmxConfig) void {
         self.htmx_config = config;
         htmx_mod.setConfig(config);
         self.htmx_registration_failed = false; // Reset flag
 
-        // Register HTMX injector as response middleware
         self.useResponse(htmx_mod.injectHtmx) catch |err| {
             self.htmx_registration_failed = true;
             std.debug.print("[Engine12] Error: Failed to register HTMX injector middleware: {}\n", .{err});
             std.debug.print("[Engine12] This usually means too many middleware are registered (max: {d})\n", .{middleware_chain.MiddlewareChain.MAX_MIDDLEWARE});
             std.debug.print("[Engine12] HTMX will not be injected into responses. Consider removing unused middleware.\n", .{});
-            // Don't clear config - user might fix middleware count and retry
             return;
         };
     }
 
-    /// Disable HTMX injection
     pub fn disableHtmx(self: *Engine12) void {
         self.htmx_config = null;
         self.htmx_registration_failed = false;
         htmx_mod.setConfig(null);
     }
 
-    /// Check if HTMX is enabled and successfully registered
-    /// Returns true only if HTMX config is set, enabled, and middleware registration succeeded
     pub fn isHtmxEnabled(self: *const Engine12) bool {
         return self.htmx_config != null and self.htmx_config.?.enabled and !self.htmx_registration_failed;
     }
 
-    // =========================================================================
-    // End HTMX Configuration
-    // =========================================================================
 
-    /// Configure server settings (host, port, timeouts)
-    /// Must be called before start()
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initDevelopment();
-    /// app.configure(.{ .port = 3000, .host = "0.0.0.0" });
-    /// try app.start();
-    /// ```
     pub fn configure(self: *Engine12, config: ServerConfig) void {
         self.server_config = config;
     }
 
-    /// Set the server port
-    /// Convenience method - equivalent to configure(.{ .port = port })
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initDevelopment();
-    /// app.setPort(3000);
-    /// try app.start();
-    /// ```
     pub fn setPort(self: *Engine12, port: u16) void {
         self.server_config.port = port;
     }
 
-    /// Set the server host
-    /// Convenience method - equivalent to configure(.{ .host = host })
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initDevelopment();
-    /// app.setHost("0.0.0.0"); // Listen on all interfaces
-    /// try app.start();
-    /// ```
     pub fn setHost(self: *Engine12, host: []const u8) void {
         self.server_config.host = host;
     }
 
-    /// Get the configured port
     pub fn getPort(self: *Engine12) u16 {
         return self.server_config.port;
     }
 
-    /// Get the configured host
     pub fn getHost(self: *Engine12) []const u8 {
         return self.server_config.host;
     }
 
-    /// Clean up server resources
     pub fn deinit(self: *Engine12) void {
         self.is_running = false;
 
-        // Cleanup logger (file handles and destinations)
         self.logger.deinit();
 
-        // Cleanup hot reload manager
         if (self.hot_reload_manager) |manager| {
             manager.deinit();
             allocator.destroy(manager);
             self.hot_reload_manager = null;
         }
 
-        // Cleanup OpenAPI generator
         if (self.openapi_generator) |*generator| {
             generator.deinit();
             self.openapi_generator = null;
         }
 
-        // Cleanup valve registry
         if (self.valve_registry) |*registry| {
             registry.deinit();
             self.valve_registry = null;
         }
 
-        // Cleanup runtime routes
         self.runtime_routes.deinit();
 
-        // Cleanup shutdown hooks
         self.shutdown_hooks.deinit(self.allocator);
     }
 
-    /// Register a valve with this engine12 instance
-    /// Valves provide isolated services that integrate with engine12 runtime
-    ///
-    /// Example:
-    /// ```zig
-    /// var auth_valve = AuthValve.init(...);
-    /// try app.registerValve(&auth_valve.valve);
-    /// ```
     pub fn registerValve(self: *Engine12, valve_ptr: *valve_mod.Valve) !void {
-        // Initialize registry if needed
         if (self.valve_registry == null) {
             self.valve_registry = valve_registry_mod.ValveRegistry.init(self.allocator);
         }
 
-        // Register valve
         if (self.valve_registry) |*registry| {
             try registry.register(valve_ptr, self);
         }
     }
 
-    /// Unregister a valve by name
-    ///
-    /// Example:
-    /// ```zig
-    /// try app.unregisterValve("auth");
-    /// ```
     pub fn unregisterValve(self: *Engine12, name: []const u8) !void {
         if (self.valve_registry) |*registry| {
             try registry.unregister(name);
@@ -956,8 +682,6 @@ pub const Engine12 = struct {
         }
     }
 
-    /// Get the valve registry instance
-    /// Returns null if no valves are registered
     pub fn getValveRegistry(self: *Engine12) ?*valve_registry_mod.ValveRegistry {
         if (self.valve_registry) |*registry| {
             return registry;
@@ -965,9 +689,6 @@ pub const Engine12 = struct {
         return null;
     }
 
-    /// Register a GET endpoint
-    /// Handler can be passed directly (function) or as a pointer (*const fn)
-    /// Supports route parameters with :param syntax (e.g., "/todos/:id")
     pub fn get(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= MAX_ROUTES) {
             return error.TooManyRoutes;
@@ -976,12 +697,10 @@ pub const Engine12 = struct {
             return error.ServerAlreadyBuilt;
         }
 
-        // Track if this is a custom root handler BEFORE building server
         if (std.mem.eql(u8, path_pattern, "/")) {
             self.custom_root_handler = true;
         }
 
-        // Build server if not already built
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
@@ -991,7 +710,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            // Register default routes (skip "/" if static files will be served at root or custom handler registered)
             global_middleware = &self.middleware;
             global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
@@ -1005,22 +723,15 @@ pub const Engine12 = struct {
             self.http_server = @ptrCast(&server);
         }
 
-        // Wrap the engine12 handler to work with ziggurat
-        // path_pattern is comptime-known, so it can be captured in the wrapper
-        // Set global middleware before registering so wrapper can access it
         global_middleware = &self.middleware;
         global_metrics = &self.metrics_collector;
 
         const wrapped_handler = wrapHandler(handler, path_pattern);
 
-        // Register immediately - wrapped handler is comptime-known
         if (self.built_server) |*server| {
             try server.get(path_pattern, wrapped_handler);
         }
 
-        // Store route info after registration
-        // Note: handler_ptr is stored for tracking, actual handler is wrapped and registered above
-        // Create a static storage for the handler function pointer
         const HandlerType = @TypeOf(handler);
         const handler_for_storage: types.HttpHandler = switch (@typeInfo(HandlerType)) {
             .pointer => |ptr_info| if (ptr_info.size == .one) handler.* else handler,
@@ -1034,59 +745,22 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
-    /// Register a GET endpoint with a fallible handler (returns !Response).
-    /// Errors are automatically converted to 500 Internal Server Error responses.
-    ///
-    /// This reduces boilerplate when handlers need to use try/catch:
-    ///
-    /// Example:
-    /// ```zig
-    /// // Instead of this verbose pattern:
-    /// fn handler(req: *Request) Response {
-    ///     const data = orm.find(Todo, 1) catch return Response.serverError("DB error");
-    ///     return Response.jsonFrom(Todo, data, req.allocator());
-    /// }
-    ///
-    /// // Use this cleaner pattern:
-    /// fn handler(req: *Request) !Response {
-    ///     const data = try orm.find(Todo, 1);
-    ///     return try Response.fromStruct(Todo, data, req.allocator());
-    /// }
-    /// try app.getTry("/api/todo/:id", handler);
-    /// ```
     pub fn getTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.get(path_pattern, types.wrapTryHandler(handler));
     }
 
-    /// Register a POST endpoint with a fallible handler (returns !Response).
-    /// Errors are automatically converted to 500 Internal Server Error responses.
     pub fn postTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.post(path_pattern, types.wrapTryHandler(handler));
     }
 
-    /// Register a PUT endpoint with a fallible handler (returns !Response).
-    /// Errors are automatically converted to 500 Internal Server Error responses.
     pub fn putTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.put(path_pattern, types.wrapTryHandler(handler));
     }
 
-    /// Register a DELETE endpoint with a fallible handler (returns !Response).
-    /// Errors are automatically converted to 500 Internal Server Error responses.
     pub fn deleteTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.delete(path_pattern, types.wrapTryHandler(handler));
     }
 
-    /// Register a template route that automatically renders a template file
-    /// Context function is called for each request to provide template variables
-    ///
-    /// Example:
-    /// ```zig
-    /// fn getIndexContext(req: *Request) struct { title: []const u8, message: []const u8 } {
-    ///     _ = req;
-    ///     return .{ .title = "Welcome", .message = "Hello" };
-    /// }
-    /// try app.templateRoute("/", "src/templates/index.zt.html", getIndexContext);
-    /// ```
     pub fn templateRoute(
         self: *Engine12,
         comptime path_pattern: []const u8,
@@ -1094,13 +768,9 @@ pub const Engine12 = struct {
         context_fn: anytype,
     ) !void {
         const ContextFn = @TypeOf(context_fn);
-        // Type validation happens automatically when we try to call the function
-        // No need for explicit type checking - Zig's type system will catch errors
 
-        // Duplicate template_path to ensure it persists
         const template_path_copy = try self.allocator.dupe(u8, template_path);
 
-        // Store template route info
         if (self.template_routes_count >= MAX_ROUTES) {
             return error.TooManyRoutes;
         }
@@ -1111,12 +781,9 @@ pub const Engine12 = struct {
         };
         self.template_routes_count += 1;
 
-        // Create handler function that captures route_index
-        // Store route_index in a way accessible to the handler
         const captured_route_idx = route_index;
         const captured_app_ptr = self;
 
-        // Create a function that returns a handler, capturing the route index
         const createHandler = struct {
             fn create(route_idx: usize, app: *Engine12) fn (*Request) Response {
                 const Handler = struct {
@@ -1145,9 +812,6 @@ pub const Engine12 = struct {
         try self.get(path_pattern, createHandler);
     }
 
-    /// Register a POST endpoint
-    /// Handler can be passed directly (function) or as a pointer (*const fn)
-    /// Supports route parameters with :param syntax (e.g., "/todos/:id")
     pub fn post(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= MAX_ROUTES) {
             return error.TooManyRoutes;
@@ -1156,7 +820,6 @@ pub const Engine12 = struct {
             return error.ServerAlreadyBuilt;
         }
 
-        // Build server if not already built
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
@@ -1166,7 +829,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            // Register default routes (skip "/" if static files will be served at root or custom handler registered)
             global_middleware = &self.middleware;
             global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
@@ -1180,7 +842,6 @@ pub const Engine12 = struct {
             self.http_server = @ptrCast(&server);
         }
 
-        // Wrap the engine12 handler to work with ziggurat
         const wrapped_handler = wrapHandler(handler, path_pattern);
 
         if (self.built_server) |*server| {
@@ -1200,31 +861,10 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
-    /// Register a POST endpoint that explicitly does not require a request body.
-    /// Use this for action endpoints like "/todos/:id/toggle" or "/processes/:pid/kill"
-    /// that don't need JSON data in the request body.
-    ///
-    /// Note: POST routes with path parameters may return 404 if the underlying HTTP
-    /// server expects a Content-Type header. Using postEmpty() documents intent and
-    /// ensures the handler runs regardless of body presence.
-    ///
-    /// Example:
-    /// ```zig
-    /// // This route works without a JSON body
-    /// try app.postEmpty("/api/processes/:pid/kill", handleKillProcess);
-    ///
-    /// // Client can call with just:
-    /// // fetch('/api/processes/10/kill', { method: 'POST' })
-    /// ```
     pub fn postEmpty(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
-        // postEmpty is the same as post but documents the intent for bodyless POST
-        // The route matching and handler execution work the same way
         return self.post(path_pattern, handler);
     }
 
-    /// Register a PUT endpoint
-    /// Handler can be passed directly (function) or as a pointer (*const fn)
-    /// Supports route parameters with :param syntax (e.g., "/todos/:id")
     pub fn put(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= MAX_ROUTES) {
             return error.TooManyRoutes;
@@ -1242,7 +882,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            // Register default routes (skip "/" if static files will be served at root or custom handler registered)
             global_middleware = &self.middleware;
             global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
@@ -1256,7 +895,6 @@ pub const Engine12 = struct {
             self.http_server = @ptrCast(&server);
         }
 
-        // Wrap the engine12 handler to work with ziggurat
         const wrapped_handler = wrapHandler(handler, path_pattern);
 
         if (self.built_server) |*server| {
@@ -1276,9 +914,6 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
-    /// Register a DELETE endpoint
-    /// Handler can be passed directly (function) or as a pointer (*const fn)
-    /// Supports route parameters with :param syntax (e.g., "/todos/:id")
     pub fn delete(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= MAX_ROUTES) {
             return error.TooManyRoutes;
@@ -1296,7 +931,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            // Register default routes (skip "/" if static files will be served at root or custom handler registered)
             global_middleware = &self.middleware;
             global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
@@ -1310,7 +944,6 @@ pub const Engine12 = struct {
             self.http_server = @ptrCast(&server);
         }
 
-        // Wrap the engine12 handler to work with ziggurat
         const wrapped_handler = wrapHandler(handler, path_pattern);
 
         if (self.built_server) |*server| {
@@ -1330,16 +963,7 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
-    /// Create a route group with a prefix and optional shared middleware
-    ///
-    /// Example:
-    /// ```zig
-    /// var api = app.group("/api");
-    /// api.usePreRequest(authMiddleware);
-    /// api.get("/todos", handleTodos);  // Registers at /api/todos
-    /// ```
     pub fn group(self: *Engine12, prefix: []const u8) route_group.RouteGroup {
-        // Create wrapper functions that cast engine_ptr back to engine12
         const get_wrapper = struct {
             fn wrap(ptr: *anyopaque, comptime path: []const u8, handler: anytype) !void {
                 const engine = @as(*Engine12, @ptrCast(ptr));
@@ -1379,7 +1003,6 @@ pub const Engine12 = struct {
         };
     }
 
-    /// Get the OpenAPI generator, initializing it if necessary with default info
     pub fn getOpenApiGenerator(self: *Engine12) !*openapi.OpenAPIGenerator {
         if (self.openapi_generator == null) {
             self.openapi_generator = openapi.OpenAPIGenerator.init(self.allocator, .{
@@ -1390,35 +1013,22 @@ pub const Engine12 = struct {
         return &self.openapi_generator.?;
     }
 
-    /// Enable OpenAPI documentation (Swagger UI)
-    /// Serves the OpenAPI JSON spec and a Swagger UI page
-    ///
-    /// Example:
-    /// ```zig
-    /// try app.enableOpenApiDocs("/docs", .{ .title = "My API", .version = "1.0" });
-    /// ```
     pub fn enableOpenApiDocs(self: *Engine12, comptime mount_path: []const u8, info: openapi.OpenApiInfo) !void {
-        // Initialize generator if not present, or update info
         if (self.openapi_generator == null) {
             self.openapi_generator = openapi.OpenAPIGenerator.init(self.allocator, info);
         } else {
             self.openapi_generator.?.doc.info = info;
         }
 
-        // Set global pointer for handlers
         global_openapi_generator = &self.openapi_generator.?;
 
-        // Use comptime string concatenation for JSON path
         const json_path = mount_path ++ "/openapi.json";
 
-        // 1. JSON Endpoint
         try self.get(json_path, struct {
             fn handler(req: *Request) Response {
                 _ = req;
                 if (global_openapi_generator) |gen| {
                     const json = gen.doc.toJson() catch return Response.serverError("Failed to generate OpenAPI JSON");
-                    // Response.text duplicates the string, so we must free our generated json
-                    // We use page_allocator because that's what gen.allocator is (from self.allocator)
                     defer std.heap.page_allocator.free(json);
                     return Response.text(json).withContentType("application/json");
                 }
@@ -1426,30 +1036,11 @@ pub const Engine12 = struct {
             }
         }.handler);
 
-        // 2. UI Endpoint
         try self.get(mount_path, struct {
-            // We need to bake the path into the handler via comptime string concat or similar,
-            // but we only have runtime string.
-            // Ziggurat and Engine12 support closures via this struct wrapper trick but values must be comptime known
-            // OR accessible via global/context.
-            //
-            // Since we can't easily pass runtime `json_path` to a static struct function without a global map or similar,
-            // we will use the request path to infer the JSON path relative to the mount point.
-            //
-            // Assumption: mount_path is what we are serving.
-            // If user visits /docs, we want /docs/openapi.json
 
             fn handler(_: *Request) Response {
-                // Construct JSON URL relative to current path
-                // If we are at /docs, we want ./docs/openapi.json? No, just openapi.json if trailing slash
-                // or ./docs/openapi.json if no trailing slash.
-                // Safer to use absolute path if we knew it, but we don't inside static handler easily.
-                // BUT we can reconstruct it from request path + /openapi.json?
 
-                // Actually, let's just assume standard relative path "openapi.json" works if we ensure trailing slash
-                // or handle it in JS.
 
-                // Simple Swagger UI HTML
                 const html =
                     \\<!DOCTYPE html>
                     \\<html lang="en">
@@ -1482,41 +1073,10 @@ pub const Engine12 = struct {
         }.handler);
     }
 
-    /// Register RESTful API endpoints for a model
-    /// Generates: GET /prefix, GET /prefix/:id, POST /prefix, PUT /prefix/:id, DELETE /prefix/:id
-    ///
-    /// Example:
-    /// ```zig
-    /// try app.restApi("/api/todos", Todo, .{
-    ///     .orm = &my_orm,
-    ///     .validator = validateTodo,
-    ///     .authenticator = requireAuth,
-    ///     .authorization = canAccessTodo,
-    ///     .enable_pagination = true,
-    ///     .enable_filtering = true,
-    ///     .enable_sorting = true,
-    ///     .cache_ttl_ms = 30000,
-    /// });
-    /// ```
     pub fn restApi(self: *Engine12, comptime prefix: []const u8, comptime Model: type, config: rest_api_mod.RestApiConfig(Model)) !void {
         return rest_api_mod.restApi(self, prefix, Model, config);
     }
 
-    /// Register RESTful API endpoints with sensible defaults
-    /// Uses app.getORM() automatically and enables pagination, filtering, and sorting by default
-    /// Only requires model type and path - all other options are optional
-    ///
-    /// Example:
-    /// ```zig
-    /// // Minimal usage - uses defaults
-    /// try app.restApiDefault("/api/items", Item);
-    ///
-    /// // With optional overrides
-    /// try app.restApiDefault("/api/items", Item, .{
-    ///     .authenticator = auth.requireAuthForRestApi,
-    ///     .validator = validators.validateItem,
-    /// });
-    /// ```
     pub fn restApiDefault(
         self: *Engine12,
         comptime prefix: []const u8,
@@ -1525,11 +1085,9 @@ pub const Engine12 = struct {
     ) !void {
         const orm_instance = try self.getORM();
 
-        // Build config with defaults, allowing overrides
         const ConfigType = rest_api_mod.RestApiConfig(Model);
         const OverrideType = @TypeOf(overrides);
 
-        // Check if validator is provided in overrides
         var validator_fn: ?*const fn (*Request, Model) anyerror!validation.ValidationErrors = null;
         comptime {
             const type_info = @typeInfo(OverrideType);
@@ -1547,7 +1105,6 @@ pub const Engine12 = struct {
         }
         const validator_provided = validator_fn != null;
 
-        // Validator is required, so provide a default no-op validator if not provided
         const default_validator = struct {
             fn validate(_: *Request, _: Model) anyerror!validation.ValidationErrors {
                 const errors = validation.ValidationErrors.init(allocator);
@@ -1565,7 +1122,6 @@ pub const Engine12 = struct {
         config.authorization = null;
         config.cache_ttl_ms = null;
 
-        // Apply overrides if provided
         comptime {
             const type_info = @typeInfo(OverrideType);
             switch (type_info) {
@@ -1583,48 +1139,34 @@ pub const Engine12 = struct {
         return rest_api_mod.restApi(self, prefix, Model, config);
     }
 
-    /// Register a custom error handler
-    ///
-    /// Example:
-    /// ```zig
-    /// app.useErrorHandler(customErrorHandler);
-    /// ```
     pub fn useErrorHandler(self: *Engine12, handler: error_handler.ErrorHandler) void {
         self.error_handler_registry.register(handler);
     }
 
-    /// Set a global rate limiter for all routes
     pub fn setRateLimiter(self: *Engine12, limiter: *rate_limit.RateLimiter) void {
         _ = self;
         global_rate_limiter = limiter;
     }
 
-    /// Set a global response cache for all routes
     pub fn setCache(self: *Engine12, response_cache: *cache.ResponseCache) void {
         _ = self;
         global_cache = response_cache;
     }
 
-    /// Get the global response cache instance
-    /// Returns null if cache is not configured
     pub fn getCache(self: *Engine12) ?*cache.ResponseCache {
         _ = self;
         return global_cache;
     }
 
-    /// Get the logger instance
     pub fn getLogger(self: *Engine12) *dev_tools.Logger {
         return &self.logger;
     }
 
-    /// Set a custom logger (replaces the default logger)
     pub fn setLogger(self: *Engine12, logger: dev_tools.Logger) void {
         self.logger.deinit();
         self.logger = logger;
     }
 
-    /// Enable request/response logging with default configuration
-    /// This registers the logging middleware automatically
     pub fn enableRequestLogging(self: *Engine12, config: ?@import("logging_middleware.zig").LoggingConfig) !void {
         const logging_middleware_mod = @import("logging_middleware.zig");
         const default_config = logging_middleware_mod.LoggingConfig{};
@@ -1638,40 +1180,14 @@ pub const Engine12 = struct {
         try self.useResponse(logging_mw.responseMwFn());
     }
 
-    /// Add a pre-request middleware to the chain
-    /// Middleware are executed in the order they are added
-    /// Middleware can short-circuit by returning .abort
-    ///
-    /// Example:
-    /// ```zig
-    /// app.usePreRequest(authMiddleware);
-    /// app.usePreRequest(loggingMiddleware);
-    /// ```
     pub fn usePreRequest(self: *Engine12, middleware: middleware_chain.PreRequestMiddlewareFn) !void {
         try self.middleware.addPreRequest(middleware);
     }
 
-    /// Add a response middleware to the chain
-    /// Middleware are executed in the order they are added
-    ///
-    /// Example:
-    /// ```zig
-    /// app.useResponse(corsMiddleware);
-    /// app.useResponse(loggingMiddleware);
-    /// ```
     pub fn useResponse(self: *Engine12, middleware: middleware_chain.ResponseMiddlewareFn) !void {
         try self.middleware.addResponse(middleware);
     }
 
-    /// Load a template file for hot reloading (development mode only)
-    /// Returns a RuntimeTemplate that automatically reloads when the file changes
-    ///
-    /// Example:
-    /// ```zig
-    /// const template = try app.loadTemplate("templates/index.zt.html");
-    /// const content = try template.getContentString();
-    /// // Use content with Template.compile() or a runtime template engine
-    /// ```
     pub fn loadTemplate(self: *Engine12, template_path: []const u8) !*hot_reload_mod.RuntimeTemplate {
         if (self.hot_reload_manager) |manager| {
             return try manager.watchTemplate(template_path);
@@ -1684,7 +1200,6 @@ pub const Engine12 = struct {
         return error.HotReloadNotEnabled;
     }
 
-    /// Template registry for storing discovered templates
     pub const TemplateRegistry = struct {
         templates: std.StringHashMap(*hot_reload_mod.RuntimeTemplate),
         registry_allocator: std.mem.Allocator,
@@ -1709,8 +1224,6 @@ pub const Engine12 = struct {
         }
 
         pub fn deinit(self: *TemplateRegistry) void {
-            // Note: Templates are owned by HotReloadManager, so we don't free them here
-            // Free the duplicated keys we allocated
             var iter = self.templates.iterator();
             while (iter.next()) |entry| {
                 self.registry_allocator.free(entry.key_ptr.*);
@@ -1719,20 +1232,6 @@ pub const Engine12 = struct {
         }
     };
 
-    /// Auto-discover and load templates from a directory
-    /// Scans templates/ directory for .zt.html files and auto-registers routes
-    /// Convention: index.zt.html -> GET /, {name}.zt.html -> GET /{name}
-    /// Returns a TemplateRegistry for manual template access
-    /// Only works in development mode (requires hot reload)
-    ///
-    /// Example:
-    /// ```zig
-    /// const registry = try app.discoverTemplates("src/templates");
-    /// defer registry.deinit();
-    /// // Automatically registered:
-    /// // - templates/index.zt.html -> GET /
-    /// // - templates/about.zt.html -> GET /about
-    /// ```
     pub fn discoverTemplates(
         self: *Engine12,
         templates_dir: []const u8,
@@ -1760,7 +1259,6 @@ pub const Engine12 = struct {
                 return registry;
             } orelse break;
 
-            // Only process .zt.html files
             if (entry.kind != .file) continue;
             const template_name = entry.name;
             if (!std.mem.endsWith(u8, template_name, ".zt.html")) continue;
@@ -1768,30 +1266,14 @@ pub const Engine12 = struct {
             const template_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ templates_dir, template_name });
             defer self.allocator.free(template_path);
 
-            // Load template
             const template = self.loadTemplate(template_path) catch |err| {
                 std.debug.print("[Engine12] Warning: Failed to load template '{s}': {}\n", .{ template_path, err });
                 continue;
             };
 
-            // Extract route name from filename (remove .zt.html extension)
-            // template_name is like "index.zt.html", we want "index"
-            // .zt.html is 7 characters, but we need to account for the period before it
-            // For "index.zt.html" (13 chars): index(5) + .(1) + zt.html(6) = 12, but actual is 13
-            // So: index.zt.html = 13 chars, .zt.html = 7 chars
-            // We want index = 5 chars, so we need [0..5] = template_name[0..(13-8)]
-            // Actually, let's be more precise: if it ends with .zt.html, remove those 7 chars
-            // But the period is part of the extension, so: index.zt.html -> index (remove 8 chars: .zt.html)
             if (template_name.len < 8) continue; // Skip files that are too short
-            // Extract base name: remove the last 7 characters (.zt.html)
-            // For "index.zt.html" (13 chars), removing 7 gives us 6 chars "index."
-            // We need to remove 8 to get "index" (5 chars)
             const route_name_len = template_name.len - 7;
-            // But wait, if template_name is "index.zt.html", len-7 = 6, which gives "index."
-            // We need to check if there's a period before .zt.html and handle it
-            // Actually, the simplest fix: if route_name ends with ".", remove it
             var route_name_slice = template_name[0..route_name_len];
-            // Remove trailing period if present
             if (route_name_slice.len > 0 and route_name_slice[route_name_slice.len - 1] == '.') {
                 route_name_slice = route_name_slice[0 .. route_name_slice.len - 1];
             }
@@ -1799,7 +1281,6 @@ pub const Engine12 = struct {
             const route_name_copy = try self.allocator.dupe(u8, route_name);
             try registry.templates.put(route_name_copy, template);
 
-            // Auto-register route based on filename convention
             const route_path = if (std.mem.eql(u8, route_name, "index"))
                 "/"
             else
@@ -1808,62 +1289,32 @@ pub const Engine12 = struct {
                 self.allocator.free(route_path);
             };
 
-            // Note: Auto-registration of routes is complex due to route conflict detection
-            // For now, we just load templates and store them in the registry
-            // Users should register their own handlers that use templates from the registry
             std.debug.print("[Engine12] Discovered template: {s} (stored as: '{s}', route: {s})\n", .{ template_path, route_name_copy, route_path });
         }
 
         return registry;
     }
 
-    /// Register a WebSocket endpoint
-    /// Each WebSocket route runs on its own port (starting from 9000)
-    /// The handler function is called when a connection is established
-    ///
-    /// Example:
-    /// ```zig
-    /// fn handleChat(conn: *websocket.WebSocketConnection) void {
-    ///     // Connection established - set up message handling
-    /// }
-    /// try app.websocket("/ws/chat", handleChat);
-    /// ```
     pub fn websocket(self: *Engine12, comptime path_pattern: []const u8, handler: types.WebSocketHandler) !void {
         if (self.ws_routes_count >= MAX_WS_ROUTES) {
             return error.TooManyWebSocketRoutes;
         }
 
-        // Initialize WebSocket manager lazily
         if (self.ws_manager == null) {
             self.ws_manager = try websocket_mod.manager.WebSocketManager.init(self.allocator);
         }
 
-        // Store route
         self.ws_routes[self.ws_routes_count] = types.WebSocketRoute{
             .path = path_pattern,
             .handler_ptr = handler, // Store function pointer value directly, not address
         };
         self.ws_routes_count += 1;
 
-        // Register WebSocket server (will be started in start())
         if (self.ws_manager) |*manager| {
             try manager.registerServer(path_pattern, handler);
         }
     }
 
-    /// Auto-discover and register static files from a directory structure
-    /// Scans the static directory for subdirectories and automatically registers them
-    /// Convention: static/css/ -> /css/*, static/js/ -> /js/*
-    /// Fails gracefully if directory doesn't exist (logs warning, returns without error)
-    ///
-    /// Example:
-    /// ```zig
-    /// try app.discoverStaticFiles("static");
-    /// // Automatically registers:
-    /// // - static/css/ -> /css/*
-    /// // - static/js/ -> /js/*
-    /// // - static/images/ -> /images/*
-    /// ```
     pub fn discoverStaticFiles(self: *Engine12, static_dir: []const u8) !void {
         var dir = std.fs.cwd().openDir(static_dir, .{ .iterate = true }) catch |err| {
             std.debug.print("[Engine12] Warning: Could not open static directory '{s}': {}\n", .{ static_dir, err });
@@ -1877,27 +1328,20 @@ pub const Engine12 = struct {
                 std.debug.print("[Engine12] Warning: Error iterating static directory '{s}': {}\n", .{ static_dir, err });
                 return;
             } orelse break;
-            // Only process subdirectories, skip files
             if (entry.kind != .directory) continue;
 
             const subdir_name = entry.name;
 
-            // Skip hidden directories
             if (subdir_name.len > 0 and subdir_name[0] == '.') continue;
 
-            // Create mount path: /{subdir_name}
             const mount_path = try std.fmt.allocPrint(self.allocator, "/{s}", .{subdir_name});
-            // Note: mount_path will be duplicated in serveStatic, so we can free it here
             defer self.allocator.free(mount_path);
 
-            // Create full directory path: static/{subdir_name}
             const full_dir_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ static_dir, subdir_name });
             defer self.allocator.free(full_dir_path);
 
-            // Register static route (this will duplicate mount_path internally)
             self.serveStatic(mount_path, full_dir_path) catch |err| {
                 std.debug.print("[Engine12] Warning: Failed to register static route '{s}' -> '{s}': {}\n", .{ mount_path, full_dir_path, err });
-                // Continue with other directories
                 continue;
             };
 
@@ -1905,89 +1349,53 @@ pub const Engine12 = struct {
         }
     }
 
-    /// Convenience method to serve all static files from a directory
-    /// Auto-discovers subdirectories and serves them at corresponding routes
-    /// Example: static/css/ -> /css/*, static/js/ -> /js/*
-    ///
-    /// ```zig
-    /// try app.serveStaticDirectory("static");
-    /// ```
     pub fn serveStaticDirectory(self: *Engine12, static_dir: []const u8) !void {
         try self.discoverStaticFiles(static_dir);
     }
 
-    /// Serve static files with wildcard path support.
-    /// This is the recommended way to serve static files.
-    ///
-    /// Usage:
-    /// ```zig
-    /// // Serve all files from "public/" directory at "/static/*"
-    /// try app.static("/static/*", "public/");
-    ///
-    /// // Serve all files from "assets/" at root
-    /// try app.static("/*", "assets/");
-    /// ```
-    ///
-    /// Note: The wildcard "*" at the end of mount_path is optional and ignored -
-    /// all paths under the mount_path will be served automatically.
     pub fn static(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
-        // Remove trailing "/*" or "*" if present (just for cleaner mount path)
         var clean_mount = mount_path;
         if (std.mem.endsWith(u8, clean_mount, "/*")) {
             clean_mount = clean_mount[0 .. clean_mount.len - 2];
         } else if (std.mem.endsWith(u8, clean_mount, "*")) {
             clean_mount = clean_mount[0 .. clean_mount.len - 1];
         }
-        // Ensure mount path ends without trailing slash (unless it's just "/")
         if (clean_mount.len > 1 and std.mem.endsWith(u8, clean_mount, "/")) {
             clean_mount = clean_mount[0 .. clean_mount.len - 1];
         }
-        // Handle empty string -> root
         if (clean_mount.len == 0) {
             clean_mount = "/";
         }
         try self.serveStatic(clean_mount, directory);
     }
 
-    /// Register static file serving from a directory
-    /// Can be called before or after server is started (lazy route registration)
     pub fn serveStatic(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
         if (self.static_routes_count >= MAX_STATIC_ROUTES) {
             return error.TooManyStaticRoutes;
         }
 
-        // Duplicate mount_path and directory to ensure they persist
-        // These strings are stored in FileServer and must outlive the function call
-        // We'll store these copies in the FileServer, so they need to be allocated
         const mount_path_copy = try self.allocator.dupe(u8, mount_path);
         const directory_copy = try self.allocator.dupe(u8, directory);
 
         var file_server = fileserver.FileServer.init(self.allocator, mount_path_copy, directory_copy);
 
-        // Disable cache in development mode (hot reload enabled)
         if (self.hot_reload_manager != null) {
             file_server.disableCache();
         }
 
-        // Track if static files are mounted at root
         if (std.mem.eql(u8, mount_path_copy, "/")) {
             self.static_root_mounted = true;
         }
 
-        // Store a copy of the FileServer
         self.static_routes[self.static_routes_count] = file_server;
         self.static_routes_count += 1;
 
-        // Register with hot reload manager if enabled (development mode)
         if (self.hot_reload_manager) |hr_manager| {
-            // Get a pointer to the stored FileServer
             hr_manager.watchStaticFiles(&self.static_routes[self.static_routes_count - 1].?) catch |err| {
-                // Log error but don't fail - hot reload is optional
                 std.debug.print("[HotReload] Warning: Failed to watch static files: {}\n", .{err});
             };
         }
 
-        // Build server if not already built (works even after start() is called)
         if (self.built_server == null) {
             var builder = ziggurat.ServerBuilder.init(self.allocator);
             var server = try builder
@@ -1997,7 +1405,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            // Register default routes (but skip "/" if we're mounting static files at root or custom handler registered)
             if (!std.mem.eql(u8, mount_path_copy, "/") and !self.custom_root_handler) {
                 try server.get("/", wrapHandler(handlers.handleDefaultRoot, "/"));
             }
@@ -2009,24 +1416,17 @@ pub const Engine12 = struct {
             self.http_server = @ptrCast(&server);
         }
 
-        // Register static file handler immediately - create individual wrapper per route
         const static_index = static_file_registry_count;
         static_file_registry[static_index] = file_server;
         static_file_registry_count += 1;
 
         if (self.built_server) |*server| {
-            // Store the mount path for this registry entry
-            // Use the already-duplicated mount_path_copy from above
             static_mount_paths[static_index] = mount_path_copy;
 
-            // For root mount, register "/" and also register common frontend paths
             if (std.mem.eql(u8, mount_path, "/")) {
-                // Override the default root handler if it was already registered
-                // Create inline wrappers that look up the FileServer by mount path at runtime
                 const root_wrapper = struct {
                     fn handler(request: *ziggurat.request.Request) ziggurat.response.Response {
                         _ = request;
-                        // Find FileServer for "/" mount
                         var i: usize = 0;
                         while (i < static_file_registry_count) {
                             if (static_file_registry[i]) |*fs| {
@@ -2040,7 +1440,6 @@ pub const Engine12 = struct {
                     }
                 }.handler;
 
-                // Register root handler - this will override any previous "/" handler
                 try server.get("/", root_wrapper);
 
                 const css_wrapper = struct {
@@ -2078,23 +1477,16 @@ pub const Engine12 = struct {
                 try server.get("/css/styles.css", css_wrapper);
                 try server.get("/js/app.js", js_wrapper);
             } else {
-                // For non-root mounts, register a handler that extracts the full path from the request
-                // This allows serving files like /css/styles.css, /js/app.js, etc.
                 const wrapper = struct {
                     fn handler(request: *ziggurat.request.Request) ziggurat.response.Response {
-                        // Get the full request path (e.g., "/css/styles.css")
                         const request_path = request.path;
 
-                        // Find FileServer by matching mount path prefix in registry
                         var i: usize = 0;
                         while (i < static_file_registry_count) {
                             if (static_file_registry[i]) |*fs| {
                                 const registry_mount = static_mount_paths[i];
-                                // Safety check: ensure registry_mount is valid
                                 if (registry_mount.len > 0) {
-                                    // Check if request path starts with the mount path
                                     if (std.mem.startsWith(u8, request_path, registry_mount)) {
-                                        // Serve the file using the full request path
                                         return fs.serveFile(request_path).toZiggurat();
                                     }
                                 }
@@ -2105,24 +1497,11 @@ pub const Engine12 = struct {
                     }
                 }.handler;
 
-                // Don't register mount_path directly - ziggurat requires comptime strings
-                // Instead, we register specific routes below using comptime strings
 
-                // Register wildcard route for any file under the mount path
-                // This handles all files in subdirectories automatically
 
-                // Register a wildcard route that matches any file under the mount path
-                // Pattern: /{mount_path}/* or /{mount_path}/:file
-                // For ziggurat, we'll use a pattern that matches the mount path prefix
-                // Since ziggurat requires comptime strings, we register common patterns
 
-                // Register the mount path itself (for index files)
-                // IMPORTANT: Use mount_path_copy (the persistent copy) not mount_path (which may be freed)
                 try server.get(mount_path_copy, wrapper);
 
-                // Register wildcard pattern for files in the mount directory
-                // Note: ziggurat may not support true wildcards, so we register common patterns
-                // The wrapper handler will check the request path dynamically
                 if (std.mem.eql(u8, mount_path_copy, "/css")) {
                     try server.get("/css/:file", wrapper);
                     try server.get("/css/style.css", wrapper);
@@ -2136,59 +1515,19 @@ pub const Engine12 = struct {
                 } else if (std.mem.eql(u8, mount_path_copy, "/fonts")) {
                     try server.get("/fonts/:file", wrapper);
                 } else {
-                    // For other mount paths, register a catch-all handler
-                    // The wrapper will dynamically check if the request path matches
-                    // Register a generic route that the wrapper can handle
-                    // Since we can't register dynamic routes, we'll rely on the wrapper's
-                    // dynamic path matching logic which already handles this
                 }
             }
         }
     }
 
-    /// Initialize database using singleton pattern
-    /// Opens database and creates ORM instance
-    /// Thread-safe and idempotent (can be called multiple times safely)
-    ///
-    /// Supports both SQLite and PostgreSQL:
-    /// - SQLite (default): Uses provided db_path
-    /// - PostgreSQL: Set DB_DRIVER=postgresql and PGDATABASE, PGUSER, etc.
-    ///
-    /// Example:
-    /// ```zig
-    /// // SQLite (default)
-    /// try app.initDatabase("app.db");
-    ///
-    /// // PostgreSQL (via environment variables)
-    /// // Set: DB_DRIVER=postgresql PGDATABASE=myapp PGUSER=myuser
-    /// try app.initDatabase("app.db"); // db_path ignored for PostgreSQL
-    /// ```
     pub fn initDatabase(self: *Engine12, db_path: []const u8) !void {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
         const loadConfigFromEnv = @import("orm/singleton.zig").loadConfigFromEnv;
 
-        // Check if PostgreSQL is configured via environment variables
         const config = try loadConfigFromEnv(self.allocator, db_path);
         try DatabaseSingleton.initWithConfig(config, self.allocator);
     }
 
-    /// Initialize database and run migrations automatically
-    /// Discovers migrations from directory and runs them
-    /// Supports both init.zig convention and numbered migration files
-    ///
-    /// Supports both SQLite and PostgreSQL:
-    /// - SQLite (default): Uses provided db_path
-    /// - PostgreSQL: Set DB_DRIVER=postgresql and PGDATABASE, PGUSER, etc.
-    ///
-    /// Example:
-    /// ```zig
-    /// // SQLite (default)
-    /// try app.initDatabaseWithMigrations("app.db", "src/migrations");
-    ///
-    /// // PostgreSQL (via environment variables)
-    /// // Set: DB_DRIVER=postgresql PGDATABASE=myapp PGUSER=myuser
-    /// try app.initDatabaseWithMigrations("app.db", "src/migrations");
-    /// ```
     pub fn initDatabaseWithMigrations(
         self: *Engine12,
         db_path: []const u8,
@@ -2199,11 +1538,9 @@ pub const Engine12 = struct {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
         const orm_instance = try DatabaseSingleton.get();
 
-        // Try to discover migrations from directory
         const migration_discovery_mod = @import("orm/migration_discovery.zig");
         var registry = migration_discovery_mod.discoverMigrations(self.allocator, migrations_dir) catch |err| {
             std.debug.print("[Engine12] Warning: Migration discovery failed: {}\n", .{err});
-            // Try direct import of init.zig as fallback
             const init_path = try std.fmt.allocPrint(self.allocator, "{s}/init.zig", .{migrations_dir});
             defer self.allocator.free(init_path);
 
@@ -2212,31 +1549,19 @@ pub const Engine12 = struct {
             };
             defer init_file.close();
 
-            // If init.zig exists, try to import it (this requires comptime, so we'll just return)
-            // User should use direct import pattern for init.zig
             std.debug.print("[Engine12] Info: migrations/init.zig found. For comptime imports, use @import(\"migrations/init.zig\") directly.\n", .{});
             return;
         };
         defer registry.deinit();
 
-        // Run discovered migrations
         try orm_instance.runMigrationsFromRegistry(&registry);
     }
 
-    /// Get ORM instance from singleton
-    /// Returns error if database is not initialized
-    ///
-    /// Example:
-    /// ```zig
-    /// const orm = try app.getORM();
-    /// const items = try orm.findAll(Item);
-    /// ```
     pub fn getORM(_: *Engine12) !*orm.ORM {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
         return DatabaseSingleton.get();
     }
 
-    /// Register a background task that runs once
     pub fn runTask(self: *Engine12, name: []const u8, task: types.BackgroundTask) !void {
         if (self.workers_count >= MAX_WORKERS) {
             return error.TooManyWorkers;
@@ -2249,7 +1574,6 @@ pub const Engine12 = struct {
         self.workers_count += 1;
     }
 
-    /// Register a background task that runs periodically
     pub fn schedulePeriodicTask(self: *Engine12, name: []const u8, task: types.BackgroundTask, interval_ms: u32) !void {
         if (self.workers_count >= MAX_WORKERS) {
             return error.TooManyWorkers;
@@ -2262,7 +1586,6 @@ pub const Engine12 = struct {
         self.workers_count += 1;
     }
 
-    /// Register a health check function
     pub fn registerHealthCheck(self: *Engine12, check: types.HealthCheckFn) !void {
         if (self.health_checks_count >= MAX_HEALTH_CHECKS) {
             return error.TooManyHealthChecks;
@@ -2271,7 +1594,6 @@ pub const Engine12 = struct {
         self.health_checks_count += 1;
     }
 
-    /// Get overall system health status
     pub fn getSystemHealth(self: *Engine12) types.HealthStatus {
         var overall_status: types.HealthStatus = .healthy;
         var i: usize = 0;
@@ -2290,22 +1612,16 @@ pub const Engine12 = struct {
         return overall_status;
     }
 
-    /// Get uptime in milliseconds
     pub fn getUptimeMs(self: *Engine12) i64 {
         if (self.start_time == 0) return 0;
         return std.time.milliTimestamp() - self.start_time;
     }
 
-    /// Get total request count
     pub fn getRequestCount(self: *Engine12) u64 {
         return self.request_count;
     }
 
-    /// Start the entire system (HTTP server + background tasks + WebSocket servers)
-    /// This method returns immediately after starting the server.
-    /// Use listen() instead if you want to block until shutdown.
     pub fn start(self: *Engine12) !void {
-        // Warn about debug mode performance impact
         if (@import("builtin").mode == .Debug) {
             std.debug.print("\n[WARN] Running in Debug mode. Performance is significantly slower.\n", .{});
             std.debug.print("       Use: zig build -Doptimize=ReleaseFast for production.\n\n", .{});
@@ -2319,7 +1635,6 @@ pub const Engine12 = struct {
         try self.startHotReloadManager(); // Register hot reload WebSocket route first
         try self.startWebSocketManager(); // Then start all WebSocket servers
 
-        // Call onAppStart for all registered valves
         if (self.valve_registry) |*registry| {
             registry.onAppStart() catch |err| {
                 std.debug.print("[Valve] Error during valve onAppStart: {}\n", .{err});
@@ -2327,35 +1642,20 @@ pub const Engine12 = struct {
         }
     }
 
-    /// Start the server and block until shutdown
-    /// This is the recommended way to run the server for most applications.
-    /// The method will block until stop() is called from another thread or signal handler.
-    ///
-    /// Example:
-    /// ```zig
-    /// var app = try Engine12.initDevelopment();
-    /// defer app.deinit();
-    /// try app.listen();  // Blocks until shutdown
-    /// ```
     pub fn listen(self: *Engine12) !void {
         try self.start();
         self.printStatus();
 
-        // Block until is_running becomes false (set by stop())
         while (self.is_running) {
             std.Thread.sleep(100 * std.time.ns_per_ms);
         }
     }
 
-    /// Stop the entire system gracefully
-    /// Waits for in-flight requests to complete (with timeout)
     pub fn stop(self: *Engine12) !void {
         std.debug.print("\n[System] Initiating graceful shutdown...\n", .{});
 
-        // Mark as not accepting new requests
         self.is_running = false;
 
-        // Wait for in-flight requests to complete
         const timeout_ms = self.profile.graceful_shutdown_timeout_ms;
         const active_count = self.active_request_tracker.get();
         if (active_count > 0) {
@@ -2368,11 +1668,9 @@ pub const Engine12 = struct {
             }
         }
 
-        // Execute shutdown hooks
         std.debug.print("[System] Executing shutdown hooks...\n", .{});
         self.shutdown_hooks.execute();
 
-        // Call onAppStop for all registered valves
         if (self.valve_registry) |*registry| {
             registry.onAppStop();
         }
@@ -2386,24 +1684,20 @@ pub const Engine12 = struct {
         std.debug.print("[System] Shutdown complete. Uptime: {d}ms\n", .{uptime});
     }
 
-    /// Register a shutdown hook for cleanup operations
     pub fn registerShutdownHook(self: *Engine12, hook: shutdown_utils.ShutdownHook) !void {
         try self.shutdown_hooks.register(hook, self.allocator);
     }
 
-    /// Get number of active requests
     pub fn getActiveRequestCount(self: *const Engine12) u64 {
         return self.active_request_tracker.get();
     }
 
     fn startHttpServer(self: *Engine12) !void {
-        // Mark server as built - no more routes can be registered
         self.server_built = true;
 
         if (self.built_server) |*server| {
             const num_workers = self.server_config.worker_threads;
 
-            // If worker_threads is 0, use legacy single-threaded mode
             if (num_workers == 0) {
                 const ServerThread = struct {
                     server_ptr: *ziggurat.Server,
@@ -2419,24 +1713,20 @@ pub const Engine12 = struct {
                 return;
             }
 
-            // Multi-threaded mode with thread pool
             std.debug.print("[HTTP] Starting with {d} worker threads\n", .{num_workers});
 
-            // Allocate and initialize connection queue
             const queue = try self.allocator.create(ConnectionQueue);
             queue.* = ConnectionQueue{};
             global_connection_queue = queue;
             global_server_for_workers = server;
             global_server_config = self.server_config;
 
-            // Spawn worker threads
             var i: u16 = 0;
             while (i < num_workers) : (i += 1) {
                 var worker_thread = try std.Thread.spawn(.{}, workerThreadFn, .{});
                 worker_thread.detach();
             }
 
-            // Spawn accept thread
             const AcceptThread = struct {
                 fn run() void {
                     const srv = global_server_for_workers orelse return;
@@ -2489,7 +1779,6 @@ pub const Engine12 = struct {
             i += 1;
         }
 
-        // Build and start supervisor
         self.supervisor = supervisor.build();
         try self.supervisor.?.start();
     }
@@ -2521,21 +1810,14 @@ pub const Engine12 = struct {
         if (self.hot_reload_manager) |manager| {
             try manager.start();
 
-            // Register WebSocket endpoint for hot reload notifications
-            // Initialize WebSocket manager if not already initialized
             if (self.ws_manager == null) {
                 self.ws_manager = try websocket_mod.manager.WebSocketManager.init(self.allocator);
             }
 
-            // Store manager pointer in a way the handler can access it
-            // Use a module-level variable (thread-safe since we're single-threaded during startup)
             hot_reload_manager_for_ws = manager;
 
-            // Note: Script injector middleware is already registered in initDevelopment()
-            // Just ensure manager reference is set (it should already be set, but double-check)
             script_injector_mod.setHotReloadManager(manager);
 
-            // Register WebSocket route
             if (self.ws_routes_count < MAX_WS_ROUTES) {
                 self.ws_routes[self.ws_routes_count] = types.WebSocketRoute{
                     .path = "/ws/hot-reload",
@@ -2543,7 +1825,6 @@ pub const Engine12 = struct {
                 };
                 self.ws_routes_count += 1;
 
-                // Register with WebSocket manager
                 if (self.ws_manager) |*ws_mgr| {
                     try ws_mgr.registerServer("/ws/hot-reload", hotReloadWebSocketHandler);
                 }
@@ -2560,9 +1841,7 @@ pub const Engine12 = struct {
         }
     }
 
-    /// Check if a route exists at the given path (for any HTTP method)
     fn hasRoute(self: *Engine12, path: []const u8) bool {
-        // Check http_routes
         var i: usize = 0;
         while (i < self.routes_count) : (i += 1) {
             if (self.http_routes[i]) |route| {
@@ -2572,26 +1851,20 @@ pub const Engine12 = struct {
             }
         }
 
-        // Check runtime routes (valve-registered routes)
-        // Check if any route matches the path pattern
         self.runtime_routes.mutex.lock();
         defer self.runtime_routes.mutex.unlock();
 
         var iterator = self.runtime_routes.routes.iterator();
         while (iterator.next()) |*entry| {
             const route = entry.value_ptr;
-            // Check exact path match
             if (std.mem.eql(u8, route.path_pattern, path)) {
                 return true;
             }
-            // Check if path matches pattern (e.g., "/api/todos/:id" matches "/api/todos/123")
-            // For exact matches like "/" and "/api/todos", we only need exact match
         }
 
         return false;
     }
 
-    /// Print streamlined server status
     pub fn printStatus(self: *Engine12) void {
         std.debug.print("\nServer ready\n", .{});
         std.debug.print("  Status: {s} | Health: {s} | Routes: {d} | Tasks: {d}\n", .{
@@ -2601,7 +1874,6 @@ pub const Engine12 = struct {
             self.workers_count,
         });
 
-        // Only print URLs if routes exist
         var printed_any = false;
         if (self.hasRoute("/")) {
             std.debug.print("\nFrontend: http://{s}:{d}/\n", .{ self.server_config.host, self.server_config.port });
@@ -2617,7 +1889,6 @@ pub const Engine12 = struct {
     }
 };
 
-// Test helper functions
 fn testDummyHandler(_: *Request) Response {
     return Response.ok();
 }
@@ -2644,7 +1915,6 @@ fn testDummyResponseMiddleware(_: ziggurat.response.Response) ziggurat.response.
     return ziggurat.response.Response.json("{}");
 }
 
-// Tests
 test "Engine12 initWithProfile" {
     const profile = types.ServerProfile_Development;
     var app = try Engine12.initWithProfile(profile);
@@ -2672,7 +1942,6 @@ test "Engine12 initTesting" {
     try std.testing.expectEqual(app.profile.environment, types.Environment.staging);
 }
 
-// Tests deleted - AddressInUse errors due to port conflicts in test isolation
 
 test "Engine12 runTask registration" {
     var app = try Engine12.initTesting();
@@ -2702,12 +1971,10 @@ test "Engine12 schedulePeriodicTask registration" {
 test "Engine12 runTask fails when max workers exceeded" {
     var app = try Engine12.initTesting();
     defer app.deinit();
-    // Fill up all workers
     var i: usize = 0;
     while (i < Engine12.MAX_WORKERS) : (i += 1) {
         try app.runTask("task", &testDummyTask);
     }
-    // Should fail on next registration
     try std.testing.expectError(error.TooManyWorkers, app.runTask("task", &testDummyTask));
 }
 
@@ -2722,12 +1989,10 @@ test "Engine12 registerHealthCheck" {
 test "Engine12 registerHealthCheck fails when max checks exceeded" {
     var app = try Engine12.initTesting();
     defer app.deinit();
-    // Fill up all health checks
     var i: usize = 0;
     while (i < Engine12.MAX_HEALTH_CHECKS) : (i += 1) {
         try app.registerHealthCheck(&testDummyHealthCheck);
     }
-    // Should fail on next registration
     try std.testing.expectError(error.TooManyHealthChecks, app.registerHealthCheck(&testDummyHealthCheck));
 }
 
@@ -2845,16 +2110,12 @@ test "Engine12 registerValve" {
     try std.testing.expect(app.valve_registry != null);
 }
 
-// Test deleted - causes ORM queries that fail without database setup
 
-// Static file registry for runtime dispatch
 var static_file_registry: [4]?fileserver.FileServer = [_]?fileserver.FileServer{null} ** 4;
 var static_file_registry_count: usize = 0;
 var static_mount_paths: [4][]const u8 = [1][]const u8{""} ** 4;
 
-// Create a static file wrapper function that captures mount path and route path at comptime
 fn createStaticFileWrapperForPath(comptime mount_path: []const u8, comptime route_path: []const u8) fn (*ziggurat.request.Request) ziggurat.response.Response {
-    // Return a function that uses the captured values at comptime
     return struct {
         const mount = mount_path;
         const route = route_path;
@@ -2862,14 +2123,10 @@ fn createStaticFileWrapperForPath(comptime mount_path: []const u8, comptime rout
         fn wrapper(request: *ziggurat.request.Request) ziggurat.response.Response {
             _ = request;
 
-            // Find the FileServer in the registry by matching mount_path
-            // This is runtime, but the wrapper function itself is comptime
             var i: usize = 0;
             while (i < static_file_registry_count) {
                 if (static_file_registry[i]) |*fs| {
                     if (std.mem.eql(u8, static_mount_paths[i], mount)) {
-                        // Use the route path that was registered (e.g., "/css/styles.css")
-                        // This path is known at comptime when the route is registered
                         return fs.serveFile(route).toZiggurat();
                     }
                 }
@@ -2880,15 +2137,11 @@ fn createStaticFileWrapperForPath(comptime mount_path: []const u8, comptime rout
     }.wrapper;
 }
 
-// Catch-all static file handler that matches any path and finds the right FileServer
 fn staticFileHandler(request: *ziggurat.request.Request) ziggurat.response.Response {
     _ = request;
-    // Try to find a matching FileServer based on registry
-    // For now, try the first available one (typically root)
     var i: usize = 0;
     while (i < static_file_registry_count) {
         if (static_file_registry[i]) |*fs| {
-            // Return the FileServer's serveFile result for root
             return fs.serveFile("/").toZiggurat();
         }
         i += 1;

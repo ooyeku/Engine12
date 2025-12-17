@@ -1,7 +1,5 @@
 const std = @import("std");
 
-/// Abstract Syntax Tree for templates
-/// All nodes are known at comptime after parsing
 pub const TemplateAST = struct {
     nodes: []const Node,
     
@@ -49,7 +47,6 @@ pub const TemplateAST = struct {
     }
 };
 
-/// Parse error types
 pub const ParseError = error{
     UnexpectedEndOfInput,
     InvalidVariableSyntax,

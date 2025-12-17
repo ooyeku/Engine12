@@ -2,21 +2,15 @@ const std = @import("std");
 const connection = @import("connection.zig");
 const WebSocketConnection = connection.WebSocketConnection;
 
-/// WebSocket room for broadcasting to groups of connections
 pub const WebSocketRoom = struct {
-    /// Room name
     name: []const u8,
 
-    /// Connections in this room
     connections: std.ArrayListUnmanaged(*WebSocketConnection),
 
-    /// Mutex for thread-safe access
     mutex: std.Thread.Mutex = .{},
 
-    /// Allocator
     allocator: std.mem.Allocator,
 
-    /// Initialize a new room
     pub fn init(allocator: std.mem.Allocator, name: []const u8) !WebSocketRoom {
         return WebSocketRoom{
             .name = try allocator.dupe(u8, name),
@@ -25,20 +19,15 @@ pub const WebSocketRoom = struct {
         };
     }
 
-    /// Deinitialize room
     pub fn deinit(self: *WebSocketRoom) void {
         self.allocator.free(self.name);
         self.connections.deinit(self.allocator);
     }
 
-    /// Broadcast a text message to all connections in the room
-    /// Thread-safe: Uses mutex protection and atomic checks
     pub fn broadcast(self: *WebSocketRoom, message: []const u8) !void {
-        // Duplicate message to ensure it persists across threads
         const message_copy = try self.allocator.dupe(u8, message);
         defer self.allocator.free(message_copy);
 
-        // Copy connection pointers while holding lock
         var connections_copy = std.ArrayListUnmanaged(*connection.WebSocketConnection){};
         defer connections_copy.deinit(self.allocator);
 
@@ -46,33 +35,22 @@ pub const WebSocketRoom = struct {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            // Copy all connections while holding the lock
             for (self.connections.items) |conn| {
                 connections_copy.append(self.allocator, conn) catch continue;
             }
         }
 
-        // Now unlock and iterate - connections might be closed, but shouldn't be freed
-        // Connections are only freed after being removed from all rooms
         for (connections_copy.items) |conn| {
-            // Check if connection is still open using atomic load
-            // This is safe because is_open is an atomic value that persists even if conn is freed
-            // However, we ensure connections are only freed after removal from rooms
             if (!conn.is_open.load(.monotonic)) {
                 continue;
             }
 
-            // Try to send - connection errors are handled gracefully
-            // Use message_copy to ensure thread safety
             conn.sendText(message_copy) catch |err| {
-                // Connection error (closed, network issue, etc.) - skip it
-                // Log error for debugging but don't crash
                 std.debug.print("[WebSocketRoom] Error sending message to connection: {}\n", .{err});
                 continue;
             };
         }
 
-        // Clean up closed connections (re-acquire lock)
         {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -89,24 +67,14 @@ pub const WebSocketRoom = struct {
         }
     }
 
-    /// Safely check if a connection is open
-    /// Returns false if connection is closed
-    /// Note: This accesses the atomic is_open field which is safe to read even if the connection
-    /// is being cleaned up, as long as connections are only freed after removal from all rooms
     fn safeIsOpen(conn: *connection.WebSocketConnection) bool {
-        // Check if connection is still open using atomic load
-        // This is thread-safe and safe as long as conn pointer is valid
         return conn.is_open.load(.monotonic);
     }
 
-    /// Broadcast a binary message to all connections in the room
-    /// Thread-safe: Uses mutex protection and atomic checks
     pub fn broadcastBinary(self: *WebSocketRoom, data: []const u8) !void {
-        // Duplicate data to ensure it persists across threads
         const data_copy = try self.allocator.dupe(u8, data);
         defer self.allocator.free(data_copy);
 
-        // Copy connection pointers while holding lock
         var connections_copy = std.ArrayListUnmanaged(*connection.WebSocketConnection){};
         defer connections_copy.deinit(self.allocator);
 
@@ -114,7 +82,6 @@ pub const WebSocketRoom = struct {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            // Copy all connections while holding the lock
             for (self.connections.items) |conn| {
                 connections_copy.append(self.allocator, conn) catch continue;
             }
@@ -122,16 +89,13 @@ pub const WebSocketRoom = struct {
 
         for (connections_copy.items) |conn| {
             if (safeIsOpen(conn)) {
-                // Use data_copy to ensure thread safety
                 conn.sendBinary(data_copy) catch |err| {
-                    // Connection error - log for debugging but don't crash
                     std.debug.print("[WebSocketRoom] Error sending binary to connection: {}\n", .{err});
                     continue;
                 };
             }
         }
 
-        // Clean up closed connections
         {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -147,7 +111,6 @@ pub const WebSocketRoom = struct {
         }
     }
 
-    /// Broadcast a JSON message to all connections in the room
     pub fn broadcastJson(self: *WebSocketRoom, comptime T: type, value: T) !void {
         const json = @import("../json.zig");
         const json_str = try json.Json.serialize(T, value, self.allocator);
@@ -156,12 +119,10 @@ pub const WebSocketRoom = struct {
         try self.broadcast(json_str);
     }
 
-    /// Add a connection to the room
     pub fn join(self: *WebSocketRoom, conn: *WebSocketConnection) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Check if connection is already in room (prevent duplicates)
         for (self.connections.items) |existing| {
             if (existing == conn) {
                 return; // Already in room
@@ -171,7 +132,6 @@ pub const WebSocketRoom = struct {
         try self.connections.append(self.allocator, conn);
     }
 
-    /// Remove a connection from the room
     pub fn leave(self: *WebSocketRoom, conn: *WebSocketConnection) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -184,7 +144,6 @@ pub const WebSocketRoom = struct {
         }
     }
 
-    /// Get the number of connections in the room
     pub fn count(self: *WebSocketRoom) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -192,8 +151,6 @@ pub const WebSocketRoom = struct {
         return self.connections.items.len;
     }
 
-    /// Check if room is empty
-    /// Thread-safe: Uses mutex protection via count()
     pub fn isEmpty(self: *WebSocketRoom) bool {
         return self.count() == 0;
     }

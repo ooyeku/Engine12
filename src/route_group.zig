@@ -3,53 +3,28 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const middleware_chain = @import("middleware.zig");
 
-/// Route group for organizing routes with a common prefix and shared middleware
-///
-/// Example:
-/// ```zig
-/// var api = app.group("/api/v1");
-/// api.usePreRequest(authMiddleware);
-/// api.get("/todos", handleTodos);  // Registers at /api/v1/todos
-/// api.post("/todos", createTodo);  // Registers at /api/v1/todos
-/// ```
 pub const RouteGroup = struct {
     const Self = @This();
 
-    /// Opaque pointer to parent engine12 instance
     engine_ptr: *anyopaque,
 
-    /// Path prefix for all routes in this group
     prefix: []const u8,
 
-    /// Shared middleware chain for this group
     middleware: middleware_chain.MiddlewareChain,
 
-    /// Type-erased route registration functions
     register_get: *const fn (*anyopaque, []const u8, anytype) anyerror!void,
     register_post: *const fn (*anyopaque, []const u8, anytype) anyerror!void,
     register_put: *const fn (*anyopaque, []const u8, anytype) anyerror!void,
     register_delete: *const fn (*anyopaque, []const u8, anytype) anyerror!void,
 
-    /// Add a pre-request middleware to this group
-    /// Middleware applies to all routes in the group
     pub fn usePreRequest(self: *Self, middleware: middleware_chain.PreRequestMiddlewareFn) !void {
         try self.middleware.addPreRequest(middleware);
     }
 
-    /// Add a response middleware to this group
-    /// Middleware applies to all routes in the group
     pub fn useResponse(self: *Self, middleware: middleware_chain.ResponseMiddlewareFn) !void {
         try self.middleware.addResponse(middleware);
     }
 
-    /// Create a nested route group with an additional prefix
-    ///
-    /// Example:
-    /// ```zig
-    /// var api = app.group("/api");
-    /// var v1 = api.group("/v1");
-    /// v1.get("/todos", handleTodos); // Registers at /api/v1/todos
-    /// ```
     pub fn group(self: *Self, additional_prefix: []const u8) Self {
         const combined_prefix = self.combinePrefix(self.prefix, additional_prefix);
         const nested = Self{
@@ -64,41 +39,28 @@ pub const RouteGroup = struct {
         return nested;
     }
 
-    /// Combine two path prefixes (simple implementation)
     fn combinePrefix(self: *const Self, prefix1: []const u8, prefix2: []const u8) []const u8 {
         _ = self;
-        // Simple logic: if prefix1 ends with / and prefix2 starts with /, remove one
-        // For now, just return prefix2 - proper implementation would allocate combined string
         if (prefix1.len == 0) return prefix2;
         if (prefix2.len == 0) return prefix1;
 
-        // Return the second prefix - actual combination would need allocation
-        // This is a limitation we'll work around by handling prefix in route registration
         return prefix2;
     }
 
-    /// Build full path by prepending prefix
-    /// Since prefix is runtime and path is comptime, we handle this at registration
     fn buildFullPath(self: *const Self, comptime path: []const u8) []const u8 {
-        // For now, return path as-is
-        // Prefix matching will be handled by checking request path starts with prefix
         _ = self;
         return path;
     }
 
-    /// Register a GET route in this group
     pub fn get(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        // Set group middleware temporarily
         const original_middleware = @import("engine12.zig").global_middleware;
         @import("engine12.zig").global_middleware = &self.middleware;
         defer @import("engine12.zig").global_middleware = original_middleware;
 
-        // Build full path: prefix + path
         const full_path = self.buildFullPath(path);
         try self.register_get(self.engine_ptr, full_path, handler);
     }
 
-    /// Register a POST route in this group
     pub fn post(self: *Self, comptime path: []const u8, handler: anytype) !void {
         const original_middleware = @import("engine12.zig").global_middleware;
         @import("engine12.zig").global_middleware = &self.middleware;
@@ -107,20 +69,10 @@ pub const RouteGroup = struct {
         try self.register_post(self.engine_ptr, full_path, handler);
     }
 
-    /// Register a POST route that does not require a request body.
-    /// Use this for action endpoints like "/todos/:id/toggle" that don't need body data.
-    ///
-    /// Example:
-    /// ```zig
-    /// var api = app.group("/api");
-    /// api.postEmpty("/todos/:id/toggle", handleToggle);
-    /// ```
     pub fn postEmpty(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        // postEmpty is the same as post but documents the intent for bodyless POST
         return self.post(path, handler);
     }
 
-    /// Register a PUT route in this group
     pub fn put(self: *Self, comptime path: []const u8, handler: anytype) !void {
         const original_middleware = @import("engine12.zig").global_middleware;
         @import("engine12.zig").global_middleware = &self.middleware;
@@ -129,7 +81,6 @@ pub const RouteGroup = struct {
         try self.register_put(self.engine_ptr, full_path, handler);
     }
 
-    /// Register a DELETE route in this group
     pub fn delete(self: *Self, comptime path: []const u8, handler: anytype) !void {
         const original_middleware = @import("engine12.zig").global_middleware;
         @import("engine12.zig").global_middleware = &self.middleware;
@@ -139,7 +90,6 @@ pub const RouteGroup = struct {
     }
 };
 
-// Tests
 test "RouteGroup usePreRequest adds middleware" {
     var group = RouteGroup{
         .engine_ptr = undefined,

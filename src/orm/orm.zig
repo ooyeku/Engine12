@@ -10,10 +10,8 @@ const MigrationRegistry = @import("migration.zig").MigrationRegistry;
 const params_mod = @import("params.zig");
 const driver_mod = @import("driver.zig");
 
-// Re-export comptime table name function
 pub const comptimeTableName = model.comptimeTableName;
 
-// Re-export utility modules
 pub const SqlEscape = @import("sql_escape.zig").SqlEscape;
 pub const Schema = @import("schema.zig").Schema;
 pub const DatabaseSingleton = @import("singleton.zig").DatabaseSingleton;
@@ -21,41 +19,34 @@ pub const DatabasePoolConfig = @import("singleton.zig").DatabasePoolConfig;
 pub const ConnectionPool = @import("database.zig").ConnectionPool;
 pub const ConnectionPoolConfig = @import("database.zig").ConnectionPoolConfig;
 
-// Re-export memory ownership wrappers
 const owned_mod = @import("owned.zig");
 pub const Owned = owned_mod.Owned;
 pub const OwnedSlice = owned_mod.OwnedSlice;
 
-// Re-export parameter binding types
 pub const Param = params_mod.Param;
 pub const ParamList = params_mod.ParamList;
 pub const fromTuple = params_mod.fromTuple;
 pub const tupleToCArray = params_mod.tupleToCArray;
 
-// Re-export migration types
 pub const MigrationType = Migration;
 pub const MigrationRegistryType = MigrationRegistry;
 
-// Re-export Model wrapper types
 pub const Model = @import("model_wrapper.zig").Model;
 pub const ModelWithORM = @import("model_wrapper.zig").ModelWithORM;
 pub const ModelStats = @import("model_wrapper.zig").ModelStats;
 
-// Re-export driver types for multi-database support
 pub const Driver = driver_mod.Driver;
 pub const DatabaseConfig = driver_mod.DatabaseConfig;
 pub const SqliteConfig = driver_mod.SqliteConfig;
 pub const PostgresConfig = driver_mod.PostgresConfig;
 pub const Dialect = driver_mod.Dialect;
 
-// Re-export PostgreSQL-specific types
 pub const postgres = @import("postgres.zig");
 pub const PostgresDatabase = postgres.PostgresDatabase;
 pub const PostgresQueryResult = postgres.PostgresQueryResult;
 pub const PostgresRow = postgres.PostgresRow;
 pub const convertPlaceholders = postgres.convertPlaceholders;
 
-/// Managed ORM result wrapper that automatically frees string fields on deinit
 pub fn Result(comptime T: type) type {
     return struct {
         items: std.ArrayListUnmanaged(T),
@@ -70,33 +61,27 @@ pub fn Result(comptime T: type) type {
             };
         }
 
-        /// Get the items as a slice
         pub fn getItems(self: *const Self) []const T {
             return self.items.items;
         }
 
-        /// Get mutable access to items
         pub fn getItemsMut(self: *Self) []T {
             return self.items.items;
         }
 
-        /// Get the length
         pub fn len(self: *const Self) usize {
             return self.items.items.len;
         }
 
-        /// Check if empty
         pub fn isEmpty(self: *const Self) bool {
             return self.items.items.len == 0;
         }
 
-        /// Get first item, or null if empty
         pub fn first(self: *const Self) ?T {
             if (self.items.items.len == 0) return null;
             return self.items.items[0];
         }
 
-        /// Deinitialize and free all string fields
         pub fn deinit(self: *Self) void {
             for (self.items.items) |item| {
                 inline for (std.meta.fields(T)) |field| {
@@ -143,8 +128,6 @@ pub const QueryError = struct {
     }
 };
 
-/// TypedQuery provides a fluent interface for building and executing typed queries
-/// Use orm.select(T) to create a TypedQuery for a specific type
 pub fn TypedQuery(comptime T: type) type {
     return struct {
         orm: *ORM,
@@ -172,13 +155,11 @@ pub fn TypedQuery(comptime T: type) type {
             self.where_clauses.deinit(self.orm.allocator);
         }
 
-        /// Add a raw WHERE clause (e.g., "age > 18")
         pub fn where(self: *Self, clause: []const u8) *Self {
             self.where_clauses.append(self.orm.allocator, .{ .clause = clause, .is_raw = true }) catch {};
             return self;
         }
 
-        /// Add a WHERE field = 'value' clause
         pub fn whereEq(self: *Self, field: []const u8, value: []const u8) *Self {
             const clause = std.fmt.allocPrint(self.orm.allocator, "{s} = '{s}'", .{ field, value }) catch return self;
             self.where_clauses.append(self.orm.allocator, .{ .clause = clause, .is_raw = false }) catch {
@@ -187,7 +168,6 @@ pub fn TypedQuery(comptime T: type) type {
             return self;
         }
 
-        /// Add a WHERE field != 'value' clause
         pub fn whereNe(self: *Self, field: []const u8, value: []const u8) *Self {
             const clause = std.fmt.allocPrint(self.orm.allocator, "{s} != '{s}'", .{ field, value }) catch return self;
             self.where_clauses.append(self.orm.allocator, .{ .clause = clause, .is_raw = false }) catch {
@@ -196,7 +176,6 @@ pub fn TypedQuery(comptime T: type) type {
             return self;
         }
 
-        /// Add a WHERE field > 'value' clause
         pub fn whereGt(self: *Self, field: []const u8, value: []const u8) *Self {
             const clause = std.fmt.allocPrint(self.orm.allocator, "{s} > '{s}'", .{ field, value }) catch return self;
             self.where_clauses.append(self.orm.allocator, .{ .clause = clause, .is_raw = false }) catch {
@@ -205,7 +184,6 @@ pub fn TypedQuery(comptime T: type) type {
             return self;
         }
 
-        /// Add a WHERE field < 'value' clause
         pub fn whereLt(self: *Self, field: []const u8, value: []const u8) *Self {
             const clause = std.fmt.allocPrint(self.orm.allocator, "{s} < '{s}'", .{ field, value }) catch return self;
             self.where_clauses.append(self.orm.allocator, .{ .clause = clause, .is_raw = false }) catch {
@@ -214,46 +192,38 @@ pub fn TypedQuery(comptime T: type) type {
             return self;
         }
 
-        /// Set ORDER BY clause
         pub fn orderBy(self: *Self, field: []const u8, ascending: bool) *Self {
             self.order_field = field;
             self.order_ascending = ascending;
             return self;
         }
 
-        /// Set ORDER BY ascending
         pub fn orderByAsc(self: *Self, field: []const u8) *Self {
             return self.orderBy(field, true);
         }
 
-        /// Set ORDER BY descending
         pub fn orderByDesc(self: *Self, field: []const u8) *Self {
             return self.orderBy(field, false);
         }
 
-        /// Set LIMIT clause
         pub fn limit(self: *Self, max_rows: usize) *Self {
             self.limit_val = max_rows;
             return self;
         }
 
-        /// Set OFFSET clause
         pub fn offset(self: *Self, skip_rows: usize) *Self {
             self.offset_val = skip_rows;
             return self;
         }
 
-        /// Execute the query and return typed results
         pub fn execute(self: *Self) !std.ArrayListUnmanaged(T) {
             defer self.deinit();
 
             const table_name = comptime ORM.getTableName(T);
 
-            // Build SQL
             var sql_buf = std.ArrayListUnmanaged(u8){};
             defer sql_buf.deinit(self.orm.allocator);
 
-            // SELECT with explicit column names
             try sql_buf.writer(self.orm.allocator).print("SELECT ", .{});
             inline for (std.meta.fields(T), 0..) |field, i| {
                 if (i > 0) try sql_buf.writer(self.orm.allocator).print(", ", .{});
@@ -261,7 +231,6 @@ pub fn TypedQuery(comptime T: type) type {
             }
             try sql_buf.writer(self.orm.allocator).print(" FROM {s}", .{table_name});
 
-            // WHERE clauses
             if (self.where_clauses.items.len > 0) {
                 try sql_buf.writer(self.orm.allocator).print(" WHERE ", .{});
                 for (self.where_clauses.items, 0..) |clause, i| {
@@ -270,7 +239,6 @@ pub fn TypedQuery(comptime T: type) type {
                 }
             }
 
-            // ORDER BY
             if (self.order_field) |field| {
                 try sql_buf.writer(self.orm.allocator).print(" ORDER BY {s}", .{field});
                 if (!self.order_ascending) {
@@ -278,12 +246,10 @@ pub fn TypedQuery(comptime T: type) type {
                 }
             }
 
-            // LIMIT
             if (self.limit_val) |l| {
                 try sql_buf.writer(self.orm.allocator).print(" LIMIT {d}", .{l});
             }
 
-            // OFFSET
             if (self.offset_val) |o| {
                 try sql_buf.writer(self.orm.allocator).print(" OFFSET {d}", .{o});
             }
@@ -291,14 +257,12 @@ pub fn TypedQuery(comptime T: type) type {
             const sql = try sql_buf.toOwnedSlice(self.orm.allocator);
             defer self.orm.allocator.free(sql);
 
-            // Free allocated where clauses
             for (self.where_clauses.items) |clause| {
                 if (!clause.is_raw) {
                     self.orm.allocator.free(clause.clause);
                 }
             }
 
-            // Execute query
             var query_result = self.orm.db.query(sql) catch |err| {
                 std.debug.print("[ORM Error] TypedQuery.execute() failed for table '{s}'\n", .{table_name});
                 std.debug.print("  SQL: {s}\n", .{sql});
@@ -307,7 +271,6 @@ pub fn TypedQuery(comptime T: type) type {
             };
             defer query_result.deinit();
 
-            // Map results to typed struct
             var results = std.ArrayListUnmanaged(T){};
             errdefer results.deinit(self.orm.allocator);
 
@@ -367,20 +330,17 @@ pub fn TypedQuery(comptime T: type) type {
             return results;
         }
 
-        /// Execute the query and return the first result, or null if none
         pub fn first(self: *Self) !?T {
             self.limit_val = 1;
             var results = try self.execute();
             defer results.deinit(self.orm.allocator);
 
             if (results.items.len > 0) {
-                // Need to return a copy since we're deinitializing results
                 return results.items[0];
             }
             return null;
         }
 
-        /// Execute and return the count of matching records
         pub fn count(self: *Self) !usize {
             defer self.deinit();
 
@@ -402,7 +362,6 @@ pub fn TypedQuery(comptime T: type) type {
             const sql = try sql_buf.toOwnedSlice(self.orm.allocator);
             defer self.orm.allocator.free(sql);
 
-            // Free allocated where clauses
             for (self.where_clauses.items) |clause| {
                 if (!clause.is_raw) {
                     self.orm.allocator.free(clause.clause);
@@ -431,37 +390,19 @@ pub const ORM = struct {
         };
     }
 
-    /// Initialize ORM and return a heap-allocated pointer
-    /// This is recommended for handler usage where you need to pass pointers
-    ///
-    /// Example:
-    /// ```zig
-    /// const orm = try ORM.initPtr(db, allocator);
-    /// defer orm.deinitPtr(allocator);
-    /// ```
     pub fn initPtr(db: Database, allocator: std.mem.Allocator) !*ORM {
         const orm = try allocator.create(ORM);
         orm.* = ORM.init(db, allocator);
         return orm;
     }
 
-    /// Deinitialize and free a heap-allocated ORM instance
-    /// Call this after initPtr() when you're done with the ORM
-    ///
-    /// Example:
-    /// ```zig
-    /// const orm = try ORM.initPtr(db, allocator);
-    /// defer orm.deinitPtr(allocator);
-    /// ```
     pub fn deinitPtr(self: *ORM, allocator: std.mem.Allocator) void {
         self.deinit();
         allocator.destroy(self);
     }
 
-    /// Deinitialize the ORM
     pub fn deinit(self: *ORM) void {
         _ = self;
-        // No-op: Database connection is managed externally
     }
 
     pub fn initWithPool(pool: *Database.ConnectionPool, allocator: std.mem.Allocator) !ORM {
@@ -470,40 +411,14 @@ pub const ORM = struct {
         return error.NotImplemented;
     }
 
-    /// Start a fluent query for a type
-    /// Returns a TypedQuery that can be chained with where(), orderBy(), limit(), etc.
-    ///
-    /// Example:
-    /// ```zig
-    /// var results = try orm.select(User)
-    ///     .whereEq("active", "1")
-    ///     .orderBy("name", true)
-    ///     .limit(10)
-    ///     .execute();
-    /// defer results.deinit();
-    /// ```
     pub fn select(self: *ORM, comptime T: type) TypedQuery(T) {
         return TypedQuery(T).init(self);
     }
 
-    /// Helper to get pluralized, lowercase table name for a type
-    /// Returns a comptime string literal - no allocation required
-    /// Follows database naming conventions:
-    /// - Converts struct name to lowercase
-    /// - Pluralizes (User -> users, Todo -> todos, Category -> categories)
-    /// - Supports custom table names via `table_name` decl
     fn getTableName(comptime T: type) []const u8 {
         return comptime model.comptimeTableName(T);
     }
 
-    /// Get the table name for a type at compile time
-    /// This is a static string that doesn't require allocation
-    /// Supports custom table_name declaration on the type
-    ///
-    /// Example:
-    /// ```zig
-    /// const table = ORM.tableNameFor(User); // "users" (compile-time constant)
-    /// ```
     pub fn tableNameFor(comptime T: type) []const u8 {
         return comptime model.comptimeTableName(T);
     }
@@ -529,13 +444,11 @@ pub const ORM = struct {
                 const value = @field(instance, field.name);
                 const field_type = @TypeOf(value);
 
-                // Check if field is optional and null
                 const is_optional_null = switch (@typeInfo(field_type)) {
                     .optional => value == null,
                     else => false,
                 };
 
-                // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
                     try params.add(value);
@@ -543,7 +456,6 @@ pub const ORM = struct {
             }
         }
 
-        // Validate that we have at least one field to insert
         if (fields.items.len == 0) {
             std.debug.print("[ORM Error] create() failed for table '{s}'\n", .{table_name});
             std.debug.print("  Reason: No fields to insert (all fields are null or id is 0)\n", .{});
@@ -553,7 +465,6 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        // Build placeholders string: "?, ?, ?"
         var placeholders = std.ArrayListUnmanaged(u8){};
         defer placeholders.deinit(self.allocator);
         for (0..fields.items.len) |i| {
@@ -582,26 +493,11 @@ pub const ORM = struct {
         };
     }
 
-    /// Bulk insert multiple records efficiently in a single transaction
-    /// This is much faster than calling create() multiple times because:
-    /// - Uses a single transaction (avoids per-insert commit overhead)
-    /// - Reduces round-trips to the database
-    ///
-    /// Example:
-    /// ```zig
-    /// const users = [_]User{
-    ///     .{ .id = 0, .name = "Alice" },
-    ///     .{ .id = 0, .name = "Bob" },
-    ///     .{ .id = 0, .name = "Charlie" },
-    /// };
-    /// try orm.createMany(User, &users);
-    /// ```
     pub fn createMany(self: *ORM, comptime T: type, instances: []const T) !void {
         if (instances.len == 0) return;
 
         const table_name = comptime getTableName(T);
 
-        // Start transaction for atomicity and performance
         var trans = try self.db.beginTransaction();
         errdefer trans.deinit();
 
@@ -624,7 +520,6 @@ pub const ORM = struct {
                     const value = @field(instance, field.name);
                     const field_type = @TypeOf(value);
 
-                    // Check if field is optional and null
                     const is_optional_null = switch (@typeInfo(field_type)) {
                         .optional => value == null,
                         else => false,
@@ -643,7 +538,6 @@ pub const ORM = struct {
                 return error.InvalidArgument;
             }
 
-            // Build SQL
             var field_list = std.ArrayListUnmanaged(u8){};
             defer field_list.deinit(self.allocator);
             var placeholders = std.ArrayListUnmanaged(u8){};
@@ -676,14 +570,6 @@ pub const ORM = struct {
         try trans.commit();
     }
 
-    /// Upsert a record (INSERT OR REPLACE)
-    /// Replaces existing record if UNIQUE constraint is violated
-    /// Suppresses error logging for UNIQUE constraint violations
-    ///
-    /// Example:
-    /// ```zig
-    /// try orm.upsert(Todo, todo); // Replaces existing record if UNIQUE constraint violated
-    /// ```
     pub fn upsert(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = comptime getTableName(T);
 
@@ -705,13 +591,11 @@ pub const ORM = struct {
                 const value = @field(instance, field.name);
                 const field_type = @TypeOf(value);
 
-                // Check if field is optional and null
                 const is_optional_null = switch (@typeInfo(field_type)) {
                     .optional => value == null,
                     else => false,
                 };
 
-                // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
                     try params.add(value);
@@ -719,7 +603,6 @@ pub const ORM = struct {
             }
         }
 
-        // Validate that we have at least one field to insert
         if (fields.items.len == 0) {
             std.debug.print("[ORM Error] upsert() failed for table '{s}'\n", .{table_name});
             std.debug.print("  Reason: No fields to insert (all fields are null or id is 0)\n", .{});
@@ -729,7 +612,6 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        // Build placeholders string: "?, ?, ?"
         var placeholders = std.ArrayListUnmanaged(u8){};
         defer placeholders.deinit(self.allocator);
         for (0..fields.items.len) |i| {
@@ -744,18 +626,9 @@ pub const ORM = struct {
         );
         defer self.allocator.free(sql);
 
-        // INSERT OR REPLACE handles constraint violations silently
         try self.db.executeParams(sql, &params);
     }
 
-    /// Upsert a record silently (INSERT OR IGNORE)
-    /// Silently ignores if UNIQUE constraint is violated
-    /// Suppresses all error logging
-    ///
-    /// Example:
-    /// ```zig
-    /// try orm.upsertIgnore(Todo, todo); // Silently ignores if UNIQUE constraint violated
-    /// ```
     pub fn upsertIgnore(self: *ORM, comptime T: type, instance: T) !void {
         const table_name = comptime getTableName(T);
 
@@ -777,13 +650,11 @@ pub const ORM = struct {
                 const value = @field(instance, field.name);
                 const field_type = @TypeOf(value);
 
-                // Check if field is optional and null
                 const is_optional_null = switch (@typeInfo(field_type)) {
                     .optional => value == null,
                     else => false,
                 };
 
-                // Skip optional fields that are null (don't include in INSERT)
                 if (!is_optional_null) {
                     try fields.append(self.allocator, field.name);
                     try params.add(value);
@@ -791,7 +662,6 @@ pub const ORM = struct {
             }
         }
 
-        // Validate that we have at least one field to insert
         if (fields.items.len == 0) {
             return error.InvalidArgument;
         }
@@ -799,7 +669,6 @@ pub const ORM = struct {
         const fields_str = try std.mem.join(self.allocator, ", ", fields.items);
         defer self.allocator.free(fields_str);
 
-        // Build placeholders string: "?, ?, ?"
         var placeholders = std.ArrayListUnmanaged(u8){};
         defer placeholders.deinit(self.allocator);
         for (0..fields.items.len) |i| {
@@ -814,16 +683,13 @@ pub const ORM = struct {
         );
         defer self.allocator.free(sql);
 
-        // INSERT OR IGNORE handles constraint violations silently - don't return error
         self.db.executeParams(sql, &params) catch {
-            // Silently ignore errors - this is the expected behavior for upsertIgnore
         };
     }
 
     pub fn find(self: *ORM, comptime T: type, id: i64) !?T {
         const table_name = comptime getTableName(T);
 
-        // Generate SELECT with explicit column names in struct field order
         var sql_buf = std.ArrayListUnmanaged(u8){};
         defer sql_buf.deinit(self.allocator);
 
@@ -878,9 +744,6 @@ pub const ORM = struct {
 
         if (list.items.len > 0) {
             const item = list.items[0];
-            // Copy all fields dynamically, duplicating string slices
-            // Initialize struct - all fields will be set in the loop below
-            // Using undefined is safe here because all fields are explicitly initialized
             var return_value: T = undefined;
             inline for (std.meta.fields(T)) |field| {
                 const field_type = @TypeOf(@field(item, field.name));
@@ -917,60 +780,24 @@ pub const ORM = struct {
         return null;
     }
 
-    /// Find a record by ID with automatic memory management
-    /// Returns a Result wrapper that automatically frees string fields on deinit
-    /// Returns null if not found
-    ///
-    /// Example:
-    /// ```zig
-    /// if (try orm.findManaged(Todo, 1)) |result| {
-    ///     defer result.deinit();
-    ///     const todo = result.first() orelse return;
-    ///     // Use todo - strings are automatically freed when result.deinit() is called
-    /// }
-    /// ```
     pub fn findManaged(self: *ORM, comptime T: type, id: i64) !?Result(T) {
         const item = try self.find(T, id);
         if (item == null) return null;
 
-        // Wrap single item in Result
         var items = std.ArrayListUnmanaged(T){};
         try items.append(self.allocator, item.?);
         return Result(T).init(items, self.allocator);
     }
 
-    /// Convenience method to find a single record by ID.
-    /// Returns the record directly (caller owns any string fields).
-    /// This is an alias for find() with clearer naming.
-    ///
-    /// Example:
-    /// ```zig
-    /// if (try orm.findOne(Todo, 1)) |todo| {
-    ///     defer allocator.free(todo.title);
-    ///     std.debug.print("Found: {s}\n", .{todo.title});
-    /// }
-    /// ```
     pub fn findOne(self: *ORM, comptime T: type, id: i64) !?T {
         return self.find(T, id);
     }
 
-    /// Find a single record matching a condition.
-    /// Returns the first match or null if no records match.
-    /// Caller owns any string fields in the returned record.
-    ///
-    /// Example:
-    /// ```zig
-    /// if (try orm.whereOne(Todo, "title = 'Buy milk'")) |todo| {
-    ///     defer allocator.free(todo.title);
-    ///     std.debug.print("Found: {s}\n", .{todo.title});
-    /// }
-    /// ```
     pub fn whereOne(self: *ORM, comptime T: type, condition: []const u8) !?T {
         var result = try self.whereManaged(T, condition);
         defer result.deinit();
 
         if (result.first()) |item| {
-            // Copy the item so it survives result.deinit()
             var return_value: T = undefined;
             inline for (std.meta.fields(T)) |field| {
                 const field_type = @TypeOf(@field(item, field.name));
@@ -1006,24 +833,9 @@ pub const ORM = struct {
         return null;
     }
 
-    /// Find a single record matching a parameterized condition.
-    /// Returns the first match or null if no records match.
-    /// Caller owns any string fields in the returned record.
-    ///
-    /// Example:
-    /// ```zig
-    /// var params = ParamList.init(allocator);
-    /// defer params.deinit();
-    /// try params.add("admin");
-    /// if (try orm.whereOneParams(User, "role = ?", &params)) |user| {
-    ///     defer allocator.free(user.name);
-    ///     std.debug.print("Found admin: {s}\n", .{user.name});
-    /// }
-    /// ```
     pub fn whereOneParams(self: *ORM, comptime T: type, condition: []const u8, params: *const ParamList) !?T {
         var results = try self.whereParams(T, condition, params);
         defer {
-            // Free all but the first item
             for (results.items[1..]) |item| {
                 inline for (std.meta.fields(T)) |field| {
                     const field_type = @TypeOf(@field(item, field.name));
@@ -1054,19 +866,6 @@ pub const ORM = struct {
         return null;
     }
 
-    /// Execute multiple operations atomically within a transaction.
-    /// If the callback returns an error, the transaction is rolled back.
-    /// If the callback succeeds, the transaction is committed.
-    ///
-    /// Example:
-    /// ```zig
-    /// try orm.withTransaction(struct {
-    ///     fn run(trans: *database.Transaction) !void {
-    ///         try trans.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 1");
-    ///         try trans.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 2");
-    ///     }
-    /// }.run);
-    /// ```
     pub fn withTransaction(self: *ORM, comptime callback: fn (*database.Transaction) anyerror!void) !void {
         var trans = try self.db.beginTransaction();
         defer trans.deinit();
@@ -1079,19 +878,6 @@ pub const ORM = struct {
         try trans.commit();
     }
 
-    /// Execute multiple operations atomically within a transaction, returning a value.
-    /// If the callback returns an error, the transaction is rolled back.
-    /// If the callback succeeds, the transaction is committed and the value is returned.
-    ///
-    /// Example:
-    /// ```zig
-    /// const new_id = try orm.withTransactionResult(i64, struct {
-    ///     fn run(trans: *database.Transaction) !i64 {
-    ///         try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
-    ///         return 42; // Return the new ID or computed value
-    ///     }
-    /// }.run);
-    /// ```
     pub fn withTransactionResult(self: *ORM, comptime T: type, comptime callback: fn (*database.Transaction) anyerror!T) !T {
         return self.transaction(T, callback);
     }
@@ -1099,13 +885,9 @@ pub const ORM = struct {
     pub fn findAll(self: *ORM, comptime T: type) !std.ArrayListUnmanaged(T) {
         const table_name = comptime getTableName(T);
 
-        // Check if table exists first
         const table_exists = try Schema.tableExists(&self.db, table_name);
         if (!table_exists) {
-            // Table doesn't exist - let the query fail naturally
         } else {
-            // Check for column mismatch BEFORE querying
-            // Get all columns from the table schema
             const table_columns = try Schema.getColumns(&self.db, table_name, self.allocator);
             defer {
                 for (table_columns) |col| {
@@ -1116,7 +898,6 @@ pub const ORM = struct {
                 self.allocator.free(table_columns);
             }
 
-            // Check if struct has all required columns
             inline for (std.meta.fields(T)) |field| {
                 var found = false;
                 for (table_columns) |col| {
@@ -1131,7 +912,6 @@ pub const ORM = struct {
                 }
             }
 
-            // Check if table has extra columns not in struct
             const struct_field_count = std.meta.fields(T).len;
             if (table_columns.len > struct_field_count) {
                 std.debug.print("[ORM Error] Table '{s}' has {d} columns but struct has {d} fields\n", .{ table_name, table_columns.len, struct_field_count });
@@ -1139,8 +919,6 @@ pub const ORM = struct {
             }
         }
 
-        // Generate SELECT with explicit column names in struct field order
-        // This ensures column order matches struct field order and improves clarity
         var sql_buf = std.ArrayListUnmanaged(u8){};
         defer sql_buf.deinit(self.allocator);
 
@@ -1163,7 +941,6 @@ pub const ORM = struct {
         defer query_result.deinit();
 
         const result = query_result.toArrayList(T) catch |err| {
-            // Wrap deserialization errors with context
             const field_count = std.meta.fields(T).len;
             const column_count = query_result.columnCount();
 
@@ -1178,51 +955,15 @@ pub const ORM = struct {
         return result;
     }
 
-    /// Find all records with automatic memory management
-    /// Returns a Result wrapper that automatically frees string fields on deinit
-    ///
-    /// Example:
-    /// ```zig
-    /// var result = try orm.findAllManaged(Todo);
-    /// defer result.deinit();
-    /// for (result.getItems()) |todo| {
-    ///     // Use todo - strings are automatically freed when result.deinit() is called
-    /// }
-    /// ```
     pub fn findAllManaged(self: *ORM, comptime T: type) !Result(T) {
         const items = try self.findAll(T);
         return Result(T).init(items, self.allocator);
     }
 
-    /// Find records matching a condition with automatic memory management
-    /// Returns a Result wrapper that automatically frees string fields on deinit
-    ///
-    /// Example:
-    /// ```zig
-    /// var result = try orm.whereManaged(Todo, "completed = 1");
-    /// defer result.deinit();
-    /// for (result.getItems()) |todo| {
-    ///     // Use todo - strings are automatically freed when result.deinit() is called
-    /// }
-    /// ```
     pub fn whereManaged(self: *ORM, comptime T: type, condition: []const u8) !Result(T) {
         return self.whereManagedWithOptions(T, condition, .{});
     }
 
-    /// Find records matching a condition with options and automatic memory management
-    /// Returns a Result wrapper that automatically frees string fields on deinit
-    ///
-    /// Example:
-    /// ```zig
-    /// var result = try orm.whereManagedWithOptions(Todo, "completed = 1", .{
-    ///     .order_by = "created_at",
-    ///     .ascending = false,
-    /// });
-    /// defer result.deinit();
-    /// for (result.getItems()) |todo| {
-    ///     // Use todo - strings are automatically freed when result.deinit() is called
-    /// }
-    /// ```
     pub fn whereManagedWithOptions(self: *ORM, comptime T: type, condition: []const u8, options: WhereOptions) !Result(T) {
         const items = try self.whereWithOptions(T, condition, options);
         return Result(T).init(items, self.allocator);
@@ -1240,13 +981,9 @@ pub const ORM = struct {
     pub fn whereWithOptions(self: *ORM, comptime T: type, condition: []const u8, options: WhereOptions) !std.ArrayListUnmanaged(T) {
         const table_name = comptime getTableName(T);
 
-        // Check if table exists first
         const table_exists = try Schema.tableExists(&self.db, table_name);
         if (!table_exists) {
-            // Table doesn't exist - let the query fail naturally
         } else {
-            // Check for column mismatch BEFORE querying
-            // Get all columns from the table schema
             const table_columns = try Schema.getColumns(&self.db, table_name, self.allocator);
             defer {
                 for (table_columns) |col| {
@@ -1257,7 +994,6 @@ pub const ORM = struct {
                 self.allocator.free(table_columns);
             }
 
-            // Check if struct has all required columns
             inline for (std.meta.fields(T)) |field| {
                 var found = false;
                 for (table_columns) |col| {
@@ -1272,7 +1008,6 @@ pub const ORM = struct {
                 }
             }
 
-            // Check if table has extra columns not in struct
             const struct_field_count = std.meta.fields(T).len;
             if (table_columns.len > struct_field_count) {
                 std.debug.print("[ORM Error] Table '{s}' has {d} columns but struct has {d} fields\n", .{ table_name, table_columns.len, struct_field_count });
@@ -1280,7 +1015,6 @@ pub const ORM = struct {
             }
         }
 
-        // Generate SELECT with explicit column names in struct field order
         var sql_buf = std.ArrayListUnmanaged(u8){};
         defer sql_buf.deinit(self.allocator);
 
@@ -1291,7 +1025,6 @@ pub const ORM = struct {
         }
         try sql_buf.writer(self.allocator).print(" FROM {s} WHERE {s}", .{ table_name, condition });
 
-        // Add ORDER BY clause if specified
         if (options.order_by) |order_field| {
             try sql_buf.writer(self.allocator).print(" ORDER BY {s}", .{order_field});
             if (!options.ascending) {
@@ -1303,7 +1036,6 @@ pub const ORM = struct {
         defer self.allocator.free(sql);
 
         var query_result = self.db.query(sql) catch |err| {
-            // Log error with available context (avoid allocations in error path)
             std.debug.print("[ORM Error] where() failed for table '{s}'\n", .{table_name});
             std.debug.print("  SQL: {s}\n", .{sql});
             std.debug.print("  Condition: {s}\n", .{condition});
@@ -1316,7 +1048,6 @@ pub const ORM = struct {
         defer query_result.deinit();
 
         const result = query_result.toArrayList(T) catch |err| {
-            // Wrap deserialization errors with context
             const field_count = std.meta.fields(T).len;
             const column_count = query_result.columnCount();
 
@@ -1335,36 +1066,10 @@ pub const ORM = struct {
         return result;
     }
 
-    /// Query records with parameterized WHERE clause for SQL injection prevention
-    /// The condition should use ? placeholders for values
-    ///
-    /// Example:
-    /// ```zig
-    /// var params = ParamList.init(allocator);
-    /// defer params.deinit();
-    /// try params.add(@as(i64, 25));
-    /// try params.add("active");
-    /// const users = try orm.whereParams(User, "age > ? AND status = ?", &params);
-    /// ```
     pub fn whereParams(self: *ORM, comptime T: type, condition: []const u8, params: *const ParamList) !std.ArrayListUnmanaged(T) {
         return self.whereParamsWithOptions(T, condition, params, .{});
     }
 
-    /// Query records with parameterized WHERE clause and ordering options
-    /// Uses bound parameters for SQL injection prevention
-    ///
-    /// Example:
-    /// ```zig
-    /// var params = ParamList.init(allocator);
-    /// defer params.deinit();
-    /// try params.add("pending");
-    /// const todos = try orm.whereParamsWithOptions(
-    ///     Todo,
-    ///     "status = ?",
-    ///     &params,
-    ///     .{ .order_by = "created_at", .ascending = false },
-    /// );
-    /// ```
     pub fn whereParamsWithOptions(
         self: *ORM,
         comptime T: type,
@@ -1374,7 +1079,6 @@ pub const ORM = struct {
     ) !std.ArrayListUnmanaged(T) {
         const table_name = comptime getTableName(T);
 
-        // Generate SELECT with explicit column names in struct field order
         var sql_buf = std.ArrayListUnmanaged(u8){};
         defer sql_buf.deinit(self.allocator);
 
@@ -1385,7 +1089,6 @@ pub const ORM = struct {
         }
         try sql_buf.writer(self.allocator).print(" FROM {s} WHERE {s}", .{ table_name, condition });
 
-        // Add ORDER BY clause if specified
         if (options.order_by) |order_field| {
             try sql_buf.writer(self.allocator).print(" ORDER BY {s}", .{order_field});
             if (!options.ascending) {
@@ -1445,20 +1148,17 @@ pub const ORM = struct {
             const value = @field(instance, field.name);
             const field_type = @TypeOf(value);
 
-            // Check if field is optional and null
             const is_optional_null = switch (@typeInfo(field_type)) {
                 .optional => value == null,
                 else => false,
             };
 
-            // Skip optional fields that are null (don't update them)
             if (!is_optional_null) {
                 try field_names.append(self.allocator, field.name);
                 try params.add(value);
             }
         }
 
-        // Validate that we have at least one field to update
         if (field_names.items.len == 0) {
             std.debug.print("[ORM Error] update() failed for table '{s}'\n", .{table_name});
             std.debug.print("  Reason: No fields to update (all fields are null)\n", .{});
@@ -1466,17 +1166,14 @@ pub const ORM = struct {
             return error.InvalidArgument;
         }
 
-        // Validate that id is valid
         if (id_value == 0) {
             std.debug.print("[ORM Error] update() failed for table '{s}'\n", .{table_name});
             std.debug.print("  Reason: Invalid ID (id must be non-zero)\n", .{});
             return error.InvalidArgument;
         }
 
-        // Add id as the last parameter (for WHERE clause)
         try params.addInt(id_value);
 
-        // Build SET clause: "f1 = ?, f2 = ?"
         var set_clause = std.ArrayListUnmanaged(u8){};
         defer set_clause.deinit(self.allocator);
         for (field_names.items, 0..) |name, i| {
@@ -1549,15 +1246,6 @@ pub const ORM = struct {
         try runner.runMigrations(migrations);
     }
 
-    /// Run migrations from a MigrationRegistry
-    ///
-    /// Example:
-    /// ```zig
-    /// var registry = MigrationRegistry.init(allocator);
-    /// defer registry.deinit();
-    /// try registry.add(Migration.init(1, "create_todos", "CREATE TABLE...", "DROP TABLE..."));
-    /// try orm.runMigrationsFromRegistry(&registry);
-    /// ```
     pub fn runMigrationsFromRegistry(self: *ORM, registry: *MigrationRegistry) !void {
         const migrations = registry.getMigrations();
         try self.runMigrations(migrations);
@@ -1572,15 +1260,6 @@ pub const ORM = struct {
         try self.runMigrations(migrations);
     }
 
-    /// Escape a string for safe use in SQL LIKE patterns
-    /// Convenience wrapper around SqlEscape.escapeLikePattern
-    ///
-    /// Example:
-    /// ```zig
-    /// const safe_pattern = try orm.escapeLike("test%_data", allocator);
-    /// defer allocator.free(safe_pattern);
-    /// const sql = try std.fmt.allocPrint(allocator, "SELECT * FROM Todo WHERE title LIKE '{s}'", .{safe_pattern});
-    /// ```
     pub fn escapeLike(_: *ORM, pattern: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         return SqlEscape.escapeLikePattern(allocator, pattern);
     }
@@ -1599,7 +1278,6 @@ pub const ORM = struct {
             .bool => try std.fmt.allocPrint(self.allocator, "{d}", .{@intFromBool(value)}),
             .pointer => |ptr_info| {
                 if (ptr_info.size == .slice and ptr_info.child == u8) {
-                    // Escape single quotes in string
                     var escaped = std.ArrayListUnmanaged(u8){};
                     defer escaped.deinit(self.allocator);
                     try escaped.append(self.allocator, '\'');
@@ -1614,12 +1292,10 @@ pub const ORM = struct {
                     try escaped.append(self.allocator, '\'');
                     return escaped.toOwnedSlice(self.allocator);
                 } else if (ptr_info.size == .one) {
-                    // Handle array pointers like *const [N:0]u8 (null-terminated strings)
                     const child_type = ptr_info.child;
                     if (@typeInfo(child_type) == .array) {
                         const array_info = @typeInfo(child_type).array;
                         if (array_info.child == u8) {
-                            // Convert array pointer to slice
                             const slice: []const u8 = value;
                             return self.valueToString(slice);
                         }
@@ -1652,7 +1328,6 @@ pub const ORM = struct {
     }
 };
 
-// Re-export for convenience
 pub const DatabaseType = Database;
 pub const QueryBuilderType = QueryBuilder;
 pub const QueryResultType = QueryResult;
@@ -2121,7 +1796,6 @@ test "ORM initPtr and deinitPtr" {
     const allocator = std.testing.allocator;
 
     const db = try Database.open(":memory:", allocator);
-    // Don't close db here - ORM takes ownership and will close it in deinitPtr
 
     var orm = try ORM.initPtr(db, allocator);
     defer orm.deinitPtr(allocator);
@@ -2129,9 +1803,7 @@ test "ORM initPtr and deinitPtr" {
     try std.testing.expect(orm.db.sqlite_db != null);
 }
 
-// Test deleted - failing column mismatch detection
 
-// Test deleted - failing column mismatch detection
 
 test "ORM findAll with table not found" {
     const allocator = std.testing.allocator;
@@ -2239,7 +1911,6 @@ test "ORM SQL injection prevention with create" {
 
     var orm = ORM.init(db, allocator);
 
-    // Attempt SQL injection - should be safely handled
     const malicious_user = User{
         .id = 0,
         .name = "'; DROP TABLE users; --",
@@ -2248,14 +1919,12 @@ test "ORM SQL injection prevention with create" {
 
     try orm.create(User, malicious_user);
 
-    // Table should still exist
     var result = try orm.db.query("SELECT COUNT(*) FROM users");
     defer result.deinit();
     if (result.nextRow()) |row| {
         try std.testing.expectEqual(@as(i64, 1), row.getInt64(0));
     }
 
-    // Verify the malicious string was stored as data, not executed
     var check = try orm.findAll(User);
     defer check.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 1), check.items.len);
@@ -2280,12 +1949,10 @@ test "ORM whereParams" {
 
     var orm = ORM.init(db, allocator);
 
-    // Create test users
     try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
     try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
     try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
 
-    // Query with parameterized WHERE
     var params = ParamList.init(allocator);
     defer params.deinit();
     try params.addInt(25);
@@ -2317,12 +1984,10 @@ test "ORM whereParamsWithOptions" {
 
     var orm = ORM.init(db, allocator);
 
-    // Create test users
     try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
     try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
     try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
 
-    // Query with parameterized WHERE and ordering
     var params = ParamList.init(allocator);
     defer params.deinit();
     try params.addInt(20);
@@ -2379,7 +2044,6 @@ test "ORM createMany bulk insert" {
 
     var orm = ORM.init(db, allocator);
 
-    // Create multiple users at once
     const users = [_]User{
         .{ .id = 0, .name = "Alice", .age = 25 },
         .{ .id = 0, .name = "Bob", .age = 30 },
@@ -2388,7 +2052,6 @@ test "ORM createMany bulk insert" {
 
     try orm.createMany(User, &users);
 
-    // Verify all users were inserted
     var results = try orm.findAll(User);
     defer {
         for (results.items) |user| {
@@ -2415,11 +2078,9 @@ test "ORM createMany empty slice" {
 
     var orm = ORM.init(db, allocator);
 
-    // Empty slice should do nothing and return successfully
     const users = [_]User{};
     try orm.createMany(User, &users);
 
-    // Verify no users were inserted
     var results = try orm.findAll(User);
     defer results.deinit(allocator);
 

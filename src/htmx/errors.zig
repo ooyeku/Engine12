@@ -1,8 +1,6 @@
 const std = @import("std");
 const Response = @import("../response.zig").Response;
 
-/// Create a standardized error fragment response
-/// Matches the error format used in the todo app
 pub fn errorFragment(message: []const u8) Response {
     var buf: [512]u8 = undefined;
     const html = std.fmt.bufPrint(&buf, "<li class=\"error\">{s}</li>", .{message}) catch {
@@ -11,7 +9,6 @@ pub fn errorFragment(message: []const u8) Response {
     return Response.fragment(html);
 }
 
-/// Create a validation error fragment for form fields
 pub fn validationErrorFragment(field: []const u8, message: []const u8) Response {
     var buf: [512]u8 = undefined;
     const html = std.fmt.bufPrint(&buf, "<li class=\"error\"><strong>{s}:</strong> {s}</li>", .{ field, message }) catch {
@@ -20,7 +17,6 @@ pub fn validationErrorFragment(field: []const u8, message: []const u8) Response 
     return Response.fragment(html).withStatus(400);
 }
 
-/// Create a not found fragment response
 pub fn notFoundFragment(resource: []const u8) Response {
     var buf: [256]u8 = undefined;
     const html = std.fmt.bufPrint(&buf, "<li class=\"error\">{s} not found</li>", .{resource}) catch {
@@ -29,19 +25,10 @@ pub fn notFoundFragment(resource: []const u8) Response {
     return Response.fragment(html).withStatus(404);
 }
 
-/// Create an error fragment with a specific status code
 pub fn errorFragmentWithStatus(message: []const u8, status: u16) Response {
     return errorFragment(message).withStatus(status);
 }
 
-/// Field-specific error that can be swapped into form field
-/// Returns error HTML that can be swapped into a specific field container
-///
-/// Example:
-/// ```zig
-/// return htmx.errors.fieldErrorFragment("title", "Title is required");
-/// // Returns: <div class="field-error" data-field="title">Title is required</div>
-/// ```
 pub fn fieldErrorFragment(field: []const u8, message: []const u8) Response {
     var buf: [512]u8 = undefined;
     const html = std.fmt.bufPrint(&buf, "<div class=\"field-error\" data-field=\"{s}\">{s}</div>", .{ field, message }) catch {
@@ -50,17 +37,6 @@ pub fn fieldErrorFragment(field: []const u8, message: []const u8) Response {
     return Response.fragment(html).withStatus(400);
 }
 
-/// Multiple validation errors in one response
-/// Returns fragment with all validation errors listed
-///
-/// Example:
-/// ```zig
-/// const errors = [_]ValidationError{
-///     .{ .field = "title", .message = "Title is required" },
-///     .{ .field = "email", .message = "Invalid email format" },
-/// };
-/// return htmx.errors.multipleValidationErrors(&errors);
-/// ```
 pub fn multipleValidationErrors(errors: []const ValidationError) Response {
     var buf: [1024]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
@@ -82,19 +58,11 @@ pub fn multipleValidationErrors(errors: []const ValidationError) Response {
     return Response.fragment(html).withStatus(400);
 }
 
-/// Validation error type for multipleValidationErrors
 pub const ValidationError = struct {
     field: []const u8,
     message: []const u8,
 };
 
-/// Error with retry action button
-/// Error fragment with retry button that triggers HTMX request
-///
-/// Example:
-/// ```zig
-/// return htmx.errors.errorWithRetry("Failed to save", "/todos");
-/// ```
 pub fn errorWithRetry(message: []const u8, retry_url: []const u8) Response {
     var buf: [512]u8 = undefined;
     const html = std.fmt.bufPrint(&buf,
@@ -108,15 +76,7 @@ pub fn errorWithRetry(message: []const u8, retry_url: []const u8) Response {
     return Response.fragment(html).withStatus(500);
 }
 
-/// Toast notification error (for non-blocking errors)
-/// Returns fragment that triggers toast notification event
-///
-/// Example:
-/// ```zig
-/// return htmx.errors.toastError("Item deleted successfully");
-/// ```
 pub fn toastError(message: []const u8) Response {
-    // Escape message for JSON
     var buf: [512]u8 = undefined;
     var escaped_buf: [512]u8 = undefined;
     var escaped_len: usize = 0;
@@ -147,14 +107,6 @@ pub fn toastError(message: []const u8) Response {
     return Response.fragment("").withHeader("HX-Trigger", event_json);
 }
 
-/// Inline field error (for form validation)
-/// Returns error that can be inserted after form field
-///
-/// Example:
-/// ```zig
-/// return htmx.errors.inlineFieldError("email", "Invalid email format");
-/// // Returns: <span class="inline-error" data-field="email">Invalid email format</span>
-/// ```
 pub fn inlineFieldError(field: []const u8, message: []const u8) Response {
     var buf: [512]u8 = undefined;
     const html = std.fmt.bufPrint(&buf, "<span class=\"inline-error\" data-field=\"{s}\">{s}</span>", .{ field, message }) catch {
@@ -163,7 +115,6 @@ pub fn inlineFieldError(field: []const u8, message: []const u8) Response {
     return Response.fragment(html).withStatus(400);
 }
 
-// Tests
 test "errorFragment" {
     const resp = errorFragment("Test error");
     try std.testing.expect(resp.getBody().len > 0);

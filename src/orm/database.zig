@@ -14,7 +14,6 @@ pub const Row = row_mod.Row;
 pub const Param = params_mod.Param;
 pub const ParamList = params_mod.ParamList;
 
-// Re-export driver types
 pub const DriverType = Driver;
 pub const Config = DatabaseConfig;
 
@@ -134,19 +133,14 @@ pub const ConnectionPool = struct {
     }
 };
 
-/// Unified Database struct that supports multiple database drivers
-/// Defaults to SQLite for backward compatibility
 pub const Database = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
 
-    // SQLite-specific handle
     sqlite_db: ?*sqlite.sqlite3 = null,
 
-    // PostgreSQL support - use opaque pointer to avoid import issues at comptime
     pg_pool: ?*anyopaque = null,
 
-    /// Capture and log SQLite error message with context
     fn captureError(db_handle: ?*sqlite.sqlite3, comptime context: []const u8, sql: ?[]const u8) void {
         const error_msg = sqlite.getErrorMessage(db_handle);
         std.debug.print("[Database Error] {s}\n", .{context});
@@ -156,12 +150,10 @@ pub const Database = struct {
         }
     }
 
-    /// Open a SQLite database (backward compatible API)
     pub fn open(path: []const u8, allocator: std.mem.Allocator) !Database {
         return openWithConfig(DatabaseConfig.sqlite(path), allocator);
     }
 
-    /// Open a database with explicit configuration
     pub fn openWithConfig(config: DatabaseConfig, allocator: std.mem.Allocator) !Database {
         return switch (config.driver) {
             .sqlite => openSqlite(config.connection.sqlite, allocator),
@@ -169,14 +161,11 @@ pub const Database = struct {
         };
     }
 
-    /// Open a SQLite database
     fn openSqlite(config: SqliteConfig, allocator: std.mem.Allocator) !Database {
         const c_path = try allocator.dupeZ(u8, config.path);
         defer allocator.free(c_path);
 
         var db_handle: ?*sqlite.sqlite3 = null;
-        // Use sqlite3_open_v2 with FULLMUTEX for thread-safe access
-        // This enables serialized mode where SQLite handles all locking internally
         const flags = sqlite.SQLITE_OPEN_READWRITE | sqlite.SQLITE_OPEN_CREATE | sqlite.SQLITE_OPEN_FULLMUTEX;
         const rc = sqlite.open_v2(c_path, &db_handle, flags, null);
 
@@ -194,7 +183,6 @@ pub const Database = struct {
             .sqlite_db = db_handle.?,
         };
 
-        // Apply SQLite performance optimizations
         if (config.wal_mode) {
             db.execute("PRAGMA journal_mode = WAL") catch |pragma_err| {
                 std.debug.print("[Database] Warning: Failed to set WAL mode: {}\n", .{pragma_err});
@@ -229,13 +217,9 @@ pub const Database = struct {
         return db;
     }
 
-    /// Open a PostgreSQL database connection pool
     fn openPostgres(config: PostgresConfig, allocator: std.mem.Allocator) !Database {
-        // Import pg.zig at runtime to create pool
         const pg = @import("pg");
 
-        // pg.Pool.init() returns a heap-allocated pointer, so we can use it directly
-        // No need to allocate ourselves - pg.zig handles the allocation
         const pool = pg.Pool.init(allocator, .{
             .size = config.pool_size,
             .connect = .{
@@ -260,7 +244,6 @@ pub const Database = struct {
         };
     }
 
-    /// Get the current driver type
     pub fn getDriver(self: *const Database) Driver {
         return self.driver;
     }
@@ -277,8 +260,6 @@ pub const Database = struct {
                 if (self.pg_pool) |pool_ptr| {
                     const pg = @import("pg");
                     const pool: *pg.Pool = @ptrCast(@alignCast(pool_ptr));
-                    // pg.Pool.deinit() handles freeing the pool's internal memory
-                    // The pool itself is allocated by pg.zig's internal allocator, not ours
                     pool.deinit();
                     self.pg_pool = null;
                 }
@@ -327,15 +308,12 @@ pub const Database = struct {
         const pg = @import("pg");
         const pool: *pg.Pool = @ptrCast(@alignCast(self.pg_pool.?));
 
-        // Check if SQL contains multiple statements (has semicolons)
-        // Split and execute each statement separately for PostgreSQL
         const statements = sql_splitter.splitStatements(sql, self.allocator) catch |err| {
             std.debug.print("[PostgreSQL Error] Failed to split SQL statements: {}\n", .{err});
             return error.QueryFailed;
         };
         defer self.allocator.free(statements);
 
-        // Execute each statement separately
         for (statements) |statement| {
             var result = pool.query(statement, .{}) catch |err| {
                 std.debug.print("[PostgreSQL Error] Failed to execute statement: {s}\n", .{statement});
@@ -344,7 +322,6 @@ pub const Database = struct {
             };
             defer result.deinit();
 
-            // Drain results - pg.zig returns error union from next()
             while (true) {
                 const row = result.next() catch break;
                 if (row == null) break;
@@ -394,7 +371,6 @@ pub const Database = struct {
 
         const pool: *pg.Pool = @ptrCast(@alignCast(self.pg_pool.?));
 
-        // Use queryOpts with column_names = true to get column names
         var result = pool.queryOpts(sql, .{}, .{ .column_names = true }) catch |err| {
             std.debug.print("[PostgreSQL Error] Failed to query: {s}\n", .{sql});
             std.debug.print("  Error: {}\n", .{err});
@@ -402,7 +378,6 @@ pub const Database = struct {
         };
         defer result.deinit();
 
-        // Collect all rows into memory
         var rows = std.ArrayListUnmanaged(row_mod.PostgresStoredRow){};
         errdefer {
             for (rows.items) |*row| {
@@ -411,10 +386,8 @@ pub const Database = struct {
             rows.deinit(self.allocator);
         }
 
-        // Get column count and names
         const num_cols = result.number_of_columns;
 
-        // Copy column names from result
         var column_names = try self.allocator.alloc([]const u8, num_cols);
         errdefer self.allocator.free(column_names);
 
@@ -427,13 +400,10 @@ pub const Database = struct {
         }
 
         while (result.next() catch null) |row| {
-            // Store row values
             var values = try self.allocator.alloc(row_mod.PostgresStoredRow.StoredValue, num_cols);
             errdefer self.allocator.free(values);
 
             for (0..num_cols) |col_idx| {
-                // pg.zig has strict type checking - must check OID first to determine correct type
-                // PostgreSQL OIDs: int2=21, int4=23, int8=20, float4=700, float8=701, bool=16, text=25, varchar=1043
                 const oid = row.oids[col_idx];
 
                 switch (oid) {
@@ -480,7 +450,6 @@ pub const Database = struct {
                         }
                     },
                     else => {
-                        // Default to text for all other types (text, varchar, etc.)
                         if (row.get(?[]const u8, col_idx)) |v| {
                             values[col_idx] = .{ .text = try self.allocator.dupe(u8, v) };
                         } else {
@@ -506,7 +475,6 @@ pub const Database = struct {
         };
     }
 
-    /// Execute a parameterized SQL statement (INSERT, UPDATE, DELETE)
     pub fn executeParams(self: *Database, sql: []const u8, params: *const ParamList) !void {
         return switch (self.driver) {
             .sqlite => try self.executeParamsSqlite(sql, params),
@@ -541,16 +509,12 @@ pub const Database = struct {
     }
 
     fn executeParamsPostgres(self: *Database, sql: []const u8, params: *const ParamList) !void {
-        // pg.zig doesn't support dynamic runtime parameters well, so we build SQL with literals
-        // This is safe because we control the parameter values through the Param type
         const literal_sql = try buildSqlWithLiterals(self.allocator, sql, params);
         defer self.allocator.free(literal_sql);
 
         try self.executePostgres(literal_sql);
     }
 
-    /// Build SQL with parameter values embedded as literals
-    /// This is used for PostgreSQL since pg.zig requires comptime-known parameter types
     fn buildSqlWithLiterals(allocator: std.mem.Allocator, sql: []const u8, params: *const ParamList) ![]u8 {
         var result = std.ArrayListUnmanaged(u8){};
         errdefer result.deinit(allocator);
@@ -560,7 +524,6 @@ pub const Database = struct {
 
         while (i < sql.len) {
             if (sql[i] == '?') {
-                // Replace ? with the literal value
                 if (param_index < params.items.items.len) {
                     const param = params.items.items[param_index];
 
@@ -577,7 +540,6 @@ pub const Database = struct {
                             try result.appendSlice(allocator, num_str);
                         },
                         .text => |v| {
-                            // Escape single quotes for PostgreSQL
                             try result.append(allocator, '\'');
                             for (v) |c| {
                                 if (c == '\'') {
@@ -589,7 +551,6 @@ pub const Database = struct {
                             try result.append(allocator, '\'');
                         },
                         .blob => |v| {
-                            // Use PostgreSQL bytea hex format
                             try result.appendSlice(allocator, "'\\x");
                             for (v) |byte| {
                                 var hex_buf: [2]u8 = undefined;
@@ -612,7 +573,6 @@ pub const Database = struct {
         return result.toOwnedSlice(allocator);
     }
 
-    /// Execute a parameterized SQL statement and return rows affected
     pub fn executeParamsWithRowsAffected(self: *Database, sql: []const u8, params: *const ParamList) !i64 {
         try self.executeParams(sql, params);
         return switch (self.driver) {
@@ -621,7 +581,6 @@ pub const Database = struct {
         };
     }
 
-    /// Execute a parameterized SELECT query
     pub fn queryParams(self: *Database, sql: []const u8, params: *const ParamList) !QueryResult {
         return switch (self.driver) {
             .sqlite => try self.queryParamsSqlite(sql, params),
@@ -655,13 +614,10 @@ pub const Database = struct {
     }
 
     fn queryParamsPostgres(self: *Database, sql: []const u8, params: *const ParamList) !QueryResult {
-        // Convert ? placeholders to $1, $2, etc.
         const postgres_mod = @import("postgres.zig");
         const pg_sql = try postgres_mod.convertPlaceholders(self.allocator, sql);
         defer self.allocator.free(pg_sql);
 
-        // For now, use non-parameterized query
-        // Full implementation would convert ParamList to pg.zig params
         _ = params;
         return self.queryPostgres(pg_sql);
     }
@@ -723,7 +679,6 @@ pub const Transaction = struct {
     }
 };
 
-// Tests
 
 test "Database open and close" {
     const allocator = std.testing.allocator;
@@ -1049,7 +1004,6 @@ test "Database openWithConfig SQLite" {
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
 }
 
-// Comprehensive edge case tests
 
 test "Database openWithConfig SQLite with custom config" {
     const allocator = std.testing.allocator;
@@ -1073,7 +1027,6 @@ test "Database double close safety" {
     const allocator = std.testing.allocator;
     var db = try Database.open(":memory:", allocator);
     db.close();
-    // Second close should not panic
     db.close();
 }
 
@@ -1082,10 +1035,8 @@ test "Database close after error" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Cause an error
     _ = db.execute("INVALID SQL") catch {};
 
-    // Close should still work
     db.close();
 }
 
@@ -1094,7 +1045,6 @@ test "Database execute empty SQL" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Empty SQL should be handled gracefully
     try db.execute("");
 }
 
@@ -1211,7 +1161,6 @@ test "Database query with ORDER BY" {
     var result = try db.query("SELECT name FROM test_order ORDER BY name");
     defer result.deinit();
 
-    // Collect names - must dupe since row data is invalidated on next iteration
     var names = std.ArrayListUnmanaged([]const u8){};
     defer {
         for (names.items) |name| {
@@ -1222,7 +1171,6 @@ test "Database query with ORDER BY" {
 
     while (result.nextRow()) |row| {
         if (row.getText(0)) |name| {
-            // Dupe the string since SQLite row data is transient
             const duped = try allocator.dupe(u8, name);
             try names.append(allocator, duped);
         }
@@ -1325,12 +1273,9 @@ test "Database transaction rollback on error" {
 
     try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
 
-    // Cause an error
     _ = trans.execute("INVALID SQL") catch {
-        // Error occurred, transaction should rollback on deinit
     };
 
-    // Transaction deinit will rollback
     trans.deinit();
 
     var result = try db.query("SELECT COUNT(*) FROM users");
@@ -1353,7 +1298,6 @@ test "Database transaction commit after rollback" {
     try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
     try trans.rollback();
 
-    // Commit after rollback should return error (transaction already rolled back)
     try std.testing.expectError(error.TransactionFailed, trans.commit());
 
     var result = try db.query("SELECT COUNT(*) FROM users");
@@ -1498,11 +1442,8 @@ test "Database queryParams parameter count mismatch" {
     var params = ParamList.init(allocator);
     defer params.deinit();
     try params.addText("Alice");
-    // Missing second parameter - SQLite will use NULL for missing parameters
-    // This is valid SQL behavior, so the query should succeed
     try db.executeParams("INSERT INTO users (name, age) VALUES (?, ?)", &params);
 
-    // Verify the insert worked with NULL for age
     var result = try db.query("SELECT name, age FROM users");
     defer result.deinit();
     if (result.nextRow()) |row| {
@@ -1526,8 +1467,6 @@ test "Database queryParams with IN clause" {
     try params.addInt(25);
     try params.addInt(35);
 
-    // Note: SQLite doesn't support parameterized IN clauses directly
-    // This test verifies the behavior with manual SQL construction
     var result = try db.query("SELECT name FROM users WHERE age IN (25, 35)");
     defer result.deinit();
 
@@ -1562,7 +1501,6 @@ test "Database lastInsertRowId with no inserts" {
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
 
     const last_id = try db.lastInsertRowId();
-    // Should return 0 if no inserts have occurred
     try std.testing.expectEqual(@as(i64, 0), last_id);
 }
 
@@ -1583,7 +1521,6 @@ test "ConnectionPool acquire and release cycle" {
     try std.testing.expect(db2.sqlite_db != null);
     pool.release(db2);
 
-    // Should reuse connection
     const db3 = try pool.acquire();
     try std.testing.expect(db3.sqlite_db != null);
     pool.release(db3);
@@ -1599,18 +1536,14 @@ test "ConnectionPool max connections limit" {
     var pool = ConnectionPool.init(":memory:", config, allocator);
     defer pool.deinit();
 
-    // Acquire two connections (the max)
     const db1 = try pool.acquire();
     const db2 = try pool.acquire();
 
-    // Verify we have max connections
     try std.testing.expectEqual(@as(usize, 2), pool.created);
 
-    // Release both before cleanup
     pool.release(db1);
     pool.release(db2);
 
-    // Verify connections are available again
     try std.testing.expectEqual(@as(usize, 2), pool.available.items.len);
 }
 
@@ -1634,7 +1567,6 @@ test "Database query with very long result set" {
 
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
-    // Insert 1000 rows
     var i: usize = 0;
     while (i < 1000) : (i += 1) {
         var buf: [64]u8 = undefined;
@@ -1660,7 +1592,6 @@ test "Database query with very long text values" {
 
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
 
-    // Create a very long string (10KB)
     var long_string = std.ArrayListUnmanaged(u8){};
     defer long_string.deinit(allocator);
     var i: usize = 0;
@@ -1820,7 +1751,6 @@ test "Database execute with DDL statements" {
     try db.execute("DROP INDEX idx_ddl_test1");
     try db.execute("DROP TABLE ddl_test2");
 
-    // Verify tables exist
     var result = try db.query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ddl_%' ORDER BY name");
     defer result.deinit();
 
@@ -1834,7 +1764,6 @@ test "Database execute with DDL statements" {
 
     while (result.nextRow()) |row| {
         if (row.getText(0)) |name| {
-            // Dupe the string since SQLite row data is transient
             const duped = try allocator.dupe(u8, name);
             try tables.append(allocator, duped);
         }

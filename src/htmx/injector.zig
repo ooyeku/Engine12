@@ -3,44 +3,35 @@ const Response = @import("../response.zig").Response;
 const config_mod = @import("config.zig");
 const HtmxConfig = config_mod.HtmxConfig;
 
-/// Global HTMX configuration (thread-safe access)
 var global_htmx_config: ?HtmxConfig = null;
 var global_htmx_config_mutex: std.Thread.Mutex = .{};
 
-/// Cached script tag to avoid rebuilding on every request
 var cached_script: ?struct {
     config_hash: u64,
     script: []const u8,
 } = null;
 var cached_script_mutex: std.Thread.Mutex = .{};
 
-/// Route exclusion list - paths that should skip HTMX injection
-/// Common API endpoints that don't need HTMX script
 var route_exclusions: std.ArrayListUnmanaged([]const u8) = std.ArrayListUnmanaged([]const u8){};
 var route_exclusions_mutex: std.Thread.Mutex = .{};
 
-/// Set the global HTMX configuration
-/// Called by Engine12.enableHtmx() or Engine12.enableHtmxWithConfig()
 pub fn setConfig(config: ?HtmxConfig) void {
     global_htmx_config_mutex.lock();
     defer global_htmx_config_mutex.unlock();
     global_htmx_config = config;
 }
 
-/// Get the global HTMX configuration (thread-safe)
 pub fn getConfig() ?HtmxConfig {
     global_htmx_config_mutex.lock();
     defer global_htmx_config_mutex.unlock();
     return global_htmx_config;
 }
 
-/// Check if HTMX is enabled
 pub fn isEnabled() bool {
     const config = getConfig() orelse return false;
     return config.enabled;
 }
 
-/// Compute a hash of the configuration for caching
 fn computeConfigHash(config: HtmxConfig) u64 {
     var hasher = std.hash.Fnv1a_64.init();
     hasher.update(config.version);
@@ -53,28 +44,22 @@ fn computeConfigHash(config: HtmxConfig) u64 {
     return hasher.final();
 }
 
-/// Build the HTMX script tag based on configuration
-/// Uses caching to avoid rebuilding the same script tag repeatedly
 fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 {
     const config_hash = computeConfigHash(config);
 
-    // Check cache first
     cached_script_mutex.lock();
     defer cached_script_mutex.unlock();
 
     if (cached_script) |cached| {
         if (cached.config_hash == config_hash) {
-            // Cache hit - duplicate the script for this request
             const script_copy = try allocator.dupe(u8, cached.script);
             return script_copy;
         }
     }
 
-    // Cache miss - build new script tag
     var script = std.ArrayListUnmanaged(u8){};
     errdefer script.deinit(allocator);
 
-    // Main HTMX script
     try script.appendSlice(allocator, "\n    <!-- HTMX (auto-injected by Engine12) -->\n");
 
     if (config.use_cdn) {
@@ -84,7 +69,6 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
         try script.appendSlice(allocator, config.version);
         try script.appendSlice(allocator, "/dist/htmx.min.js\"");
 
-        // Add custom attributes if specified
         if (config.script_attributes.len > 0) {
             try script.appendSlice(allocator, " ");
             try script.appendSlice(allocator, config.script_attributes);
@@ -92,7 +76,6 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
 
         try script.appendSlice(allocator, "></script>\n");
     } else {
-        // Local HTMX - user must serve it via static files
         try script.appendSlice(allocator, "    <script src=\"/static/js/htmx.min.js\"");
         if (config.script_attributes.len > 0) {
             try script.appendSlice(allocator, " ");
@@ -101,7 +84,6 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
         try script.appendSlice(allocator, "></script>\n");
     }
 
-    // Load extensions
     for (config.extensions) |ext_name| {
         if (config.use_cdn) {
             try script.appendSlice(allocator, "    <script src=\"");
@@ -118,7 +100,6 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
         }
     }
 
-    // Add debug mode configuration
     if (config.debug) {
         try script.appendSlice(allocator, "    <script>htmx.logAll();</script>\n");
     }
@@ -126,7 +107,6 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
     const script_slice = try script.toOwnedSlice(allocator);
     defer allocator.free(script_slice); // Free the intermediate slice
 
-    // Update cache (using persistent allocator for cached script)
     if (cached_script) |old_cached| {
         std.heap.page_allocator.free(old_cached.script);
     }
@@ -136,13 +116,10 @@ fn buildScriptTag(allocator: std.mem.Allocator, config: HtmxConfig) ![]const u8 
         .script = cached_script_copy,
     };
 
-    // Return a copy for this request
     const request_copy = try allocator.dupe(u8, script_slice);
     return request_copy;
 }
 
-/// Clear the script cache (for testing purposes)
-/// This frees any cached script memory and resets the cache
 pub fn clearCache() void {
     cached_script_mutex.lock();
     defer cached_script_mutex.unlock();
@@ -153,14 +130,6 @@ pub fn clearCache() void {
     }
 }
 
-/// Add a route pattern to the exclusion list
-/// Routes matching these patterns will skip HTMX script injection
-/// Useful for API endpoints that return JSON/plain text
-///
-/// Example:
-/// ```zig
-/// htmx.injector.addRouteExclusion("/api/");
-/// ```
 pub fn addRouteExclusion(pattern: []const u8) !void {
     route_exclusions_mutex.lock();
     defer route_exclusions_mutex.unlock();
@@ -169,7 +138,6 @@ pub fn addRouteExclusion(pattern: []const u8) !void {
     try route_exclusions.append(std.heap.page_allocator, pattern_copy);
 }
 
-/// Check if a path should be excluded from HTMX injection
 fn isExcludedPath(path: []const u8) bool {
     route_exclusions_mutex.lock();
     defer route_exclusions_mutex.unlock();
@@ -182,10 +150,7 @@ fn isExcludedPath(path: []const u8) bool {
     return false;
 }
 
-/// Check if the body represents a full HTML page (vs a fragment)
 fn isFullHtmlPage(body: []const u8) bool {
-    // Check for common full-page indicators
-    // Look in the first 500 bytes for efficiency
     const check_len = @min(body.len, 500);
     const check_body = body[0..check_len];
 
@@ -195,10 +160,7 @@ fn isFullHtmlPage(body: []const u8) bool {
         std.mem.indexOf(u8, check_body, "<HTML") != null;
 }
 
-/// Find the best injection point in the HTML
-/// Prefers </head>, falls back to </body>, then end of document
 fn findInjectionPoint(body: []const u8) ?usize {
-    // Try </head> first (best location for scripts)
     if (std.mem.indexOf(u8, body, "</head>")) |pos| {
         return pos;
     }
@@ -206,7 +168,6 @@ fn findInjectionPoint(body: []const u8) ?usize {
         return pos;
     }
 
-    // Fall back to </body>
     if (std.mem.lastIndexOf(u8, body, "</body>")) |pos| {
         return pos;
     }
@@ -217,54 +178,38 @@ fn findInjectionPoint(body: []const u8) ?usize {
     return null;
 }
 
-/// Inject HTMX script into an HTML response
-/// This is the main entry point called by the response pipeline
 pub fn injectHtmx(resp: Response) Response {
-    // Get configuration
     const config = getConfig() orelse return resp;
     if (!config.enabled) return resp;
 
-    // Check route exclusion list (if request path is available)
-    // Note: We can't easily access request path here, so this is a best-effort check
-    // For full route exclusion, users should check before calling injectHtmx
 
-    // Get response body
     const body = resp.getBody();
     if (body.len == 0) return resp;
 
-    // Check if this is a fragment response
-    // Fragments are detected by checking if the body is a full HTML page
-    // If inject_fragments is false, we only inject into full HTML pages
     if (!config.inject_fragments and !isFullHtmlPage(body)) {
         return resp;
     }
 
-    // Avoid duplicate injection
     if (std.mem.indexOf(u8, body, "htmx.org") != null or
         std.mem.indexOf(u8, body, "htmx.min.js") != null)
     {
         return resp;
     }
 
-    // Find injection point
     const injection_point = findInjectionPoint(body) orelse return resp;
 
-    // Build script tag
     const allocator = std.heap.page_allocator;
     const script = buildScriptTag(allocator, config) catch return resp;
     defer allocator.free(script);
 
-    // Allocate new body with script injected
     const new_body = allocator.alloc(u8, body.len + script.len) catch return resp;
     @memcpy(new_body[0..injection_point], body[0..injection_point]);
     @memcpy(new_body[injection_point..][0..script.len], script);
     @memcpy(new_body[injection_point + script.len ..], body[injection_point..]);
 
-    // Create new response with injected script
     return Response.html(new_body);
 }
 
-// Tests
 test "isFullHtmlPage detection" {
     try std.testing.expect(isFullHtmlPage("<!DOCTYPE html><html><body>Hello</body></html>"));
     try std.testing.expect(isFullHtmlPage("<html><head></head><body>Hello</body></html>"));
@@ -277,24 +222,19 @@ test "isFullHtmlPage detection" {
 }
 
 test "isFullHtmlPage with doctype in middle" {
-    // Should only check first 500 bytes
     var html = std.ArrayListUnmanaged(u8){};
     defer html.deinit(std.testing.allocator);
 
-    // Add 600 bytes of content before doctype
     try html.appendNTimes(std.testing.allocator, 'x', 600);
     try html.appendSlice(std.testing.allocator, "<!DOCTYPE html>");
 
-    // Should not detect doctype since it's after 500 bytes
     try std.testing.expect(!isFullHtmlPage(html.items));
 }
 
 test "findInjectionPoint" {
-    // "</head>" position: "<!DOCTYPE html><html><head><title>Test</title></head>" = 46 chars before </head>
     const html1 = "<!DOCTYPE html><html><head><title>Test</title></head><body>Hello</body></html>";
     try std.testing.expectEqual(@as(?usize, 46), findInjectionPoint(html1));
 
-    // No </head>, so falls back to </body>: "<!DOCTYPE html><html><body>Hello</body>"
     const html2 = "<!DOCTYPE html><html><body>Hello</body></html>";
     try std.testing.expectEqual(@as(?usize, 32), findInjectionPoint(html2));
 
@@ -311,11 +251,9 @@ test "findInjectionPoint case insensitive" {
 }
 
 test "findInjectionPoint multiple body tags" {
-    // Should use lastIndexOf for </body>
     const html = "<!DOCTYPE html><html><body><div>Content</div></body><script>test</script></body></html>";
     const pos = findInjectionPoint(html);
     try std.testing.expect(pos != null);
-    // Should find the last </body> tag
     try std.testing.expect(pos.? > 50);
 }
 
@@ -496,15 +434,12 @@ test "buildScriptTag caching" {
         .version = "1.9.10",
     };
 
-    // First call - cache miss
     const script1 = try buildScriptTag(std.testing.allocator, config);
     defer std.testing.allocator.free(script1);
 
-    // Second call with same config - cache hit
     const script2 = try buildScriptTag(std.testing.allocator, config);
     defer std.testing.allocator.free(script2);
 
-    // Scripts should be identical
     try std.testing.expectEqualStrings(script1, script2);
 }
 
@@ -529,7 +464,6 @@ test "buildScriptTag cache invalidation on config change" {
     const script2 = try buildScriptTag(std.testing.allocator, config2);
     defer std.testing.allocator.free(script2);
 
-    // Scripts should be different
     try std.testing.expect(!std.mem.eql(u8, script1, script2));
     try std.testing.expect(std.mem.indexOf(u8, script1, "1.9.10") != null);
     try std.testing.expect(std.mem.indexOf(u8, script2, "2.0.0") != null);
@@ -547,9 +481,6 @@ test "addRouteExclusion" {
 }
 
 test "isExcludedPath non-matching path" {
-    // Should return false for paths that don't match any exclusion pattern
-    // Note: Previous tests may have added exclusions, so we test a path
-    // that definitely won't match common patterns
     try std.testing.expect(!isExcludedPath("/unique-test-path-12345"));
 }
 
@@ -558,7 +489,6 @@ test "injectHtmx disabled" {
     const resp = Response.html("<!DOCTYPE html><html><head></head><body>Test</body></html>");
     const result = injectHtmx(resp);
 
-    // Should return unchanged response when disabled
     try std.testing.expectEqualStrings(resp.getBody(), result.getBody());
 }
 
@@ -567,7 +497,6 @@ test "injectHtmx empty body" {
     const resp = Response.html("");
     const result = injectHtmx(resp);
 
-    // Should return unchanged response for empty body
     try std.testing.expectEqualStrings("", result.getBody());
 }
 
@@ -580,7 +509,6 @@ test "injectHtmx fragment without inject_fragments" {
     const resp = Response.html("<div>Fragment</div>");
     const result = injectHtmx(resp);
 
-    // Should return unchanged fragment
     try std.testing.expectEqualStrings("<div>Fragment</div>", result.getBody());
 }
 
@@ -595,7 +523,6 @@ test "injectHtmx fragment with inject_fragments" {
     const resp = Response.html("<div>Fragment</div>");
     const result = injectHtmx(resp);
 
-    // Fragment has no injection point, so should return unchanged
     try std.testing.expectEqualStrings("<div>Fragment</div>", result.getBody());
 }
 
@@ -610,7 +537,6 @@ test "injectHtmx full page" {
     const resp = Response.html(html);
     const result = injectHtmx(resp);
 
-    // Should inject script before </head>
     try std.testing.expect(std.mem.indexOf(u8, result.getBody(), "htmx.min.js") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.getBody(), "<!-- HTMX") != null);
 }
@@ -626,7 +552,6 @@ test "injectHtmx duplicate prevention" {
     const resp = Response.html(html);
     const result = injectHtmx(resp);
 
-    // Should not inject again if already present
     const body = result.getBody();
     var count: usize = 0;
     var pos: ?usize = 0;
@@ -634,7 +559,6 @@ test "injectHtmx duplicate prevention" {
         count += 1;
         pos = found + 1;
     }
-    // Should only have one instance (the original)
     try std.testing.expect(count == 1);
 }
 
@@ -649,7 +573,6 @@ test "injectHtmx no injection point" {
     const resp = Response.html(html);
     const result = injectHtmx(resp);
 
-    // Should return unchanged if no injection point
     try std.testing.expectEqualStrings(html, result.getBody());
 }
 
@@ -668,7 +591,6 @@ test "injectHtmx injection into head" {
     const head_end = std.mem.indexOf(u8, body, "</head>") orelse return error.NotFound;
     const script_pos = std.mem.indexOf(u8, body, "htmx.min.js") orelse return error.NotFound;
 
-    // Script should be before </head>
     try std.testing.expect(script_pos < head_end);
 }
 
@@ -687,7 +609,6 @@ test "injectHtmx injection into body fallback" {
     const body_end = std.mem.lastIndexOf(u8, body, "</body>") orelse return error.NotFound;
     const script_pos = std.mem.indexOf(u8, body, "htmx.min.js") orelse return error.NotFound;
 
-    // Script should be before </body>
     try std.testing.expect(script_pos < body_end);
 }
 
@@ -720,7 +641,6 @@ test "injectHtmx preserves body content" {
     const result = injectHtmx(resp);
 
     const body = result.getBody();
-    // Original content should be preserved
     try std.testing.expect(std.mem.indexOf(u8, body, "<h1>Hello World</h1>") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "<p>Test content</p>") != null);
 }

@@ -1,18 +1,11 @@
 const std = @import("std");
 
-/// Error context information for debugging
-/// Captures file, line, function, and optionally stack trace
 pub const ErrorContext = struct {
-    /// Source file where error occurred
     file: []const u8,
-    /// Line number where error occurred
     line: u32,
-    /// Function name where error occurred
     function: []const u8,
-    /// Stack trace (only in development mode)
     stack_trace: ?[]const u8 = null,
 
-    /// Create error context from current location
     pub fn here() ErrorContext {
         return ErrorContext{
             .file = @src().file,
@@ -22,7 +15,6 @@ pub const ErrorContext = struct {
         };
     }
 
-    /// Format error context as string
     pub fn format(self: ErrorContext, allocator: std.mem.Allocator) ![]const u8 {
         var buffer = std.ArrayListUnmanaged(u8){};
         defer buffer.deinit(allocator);
@@ -36,7 +28,6 @@ pub const ErrorContext = struct {
         return try buffer.toOwnedSlice(allocator);
     }
 
-    /// Format error context as JSON (for API responses)
     pub fn toJson(self: ErrorContext, allocator: std.mem.Allocator, include_stack: bool) ![]const u8 {
         var buffer = std.ArrayListUnmanaged(u8){};
         defer buffer.deinit(allocator);
@@ -48,7 +39,6 @@ pub const ErrorContext = struct {
 
         if (include_stack) {
             if (self.stack_trace) |trace| {
-                // Escape JSON string
                 var escaped = std.ArrayListUnmanaged(u8){};
                 defer escaped.deinit(allocator);
                 for (trace) |byte| {
@@ -71,14 +61,9 @@ pub const ErrorContext = struct {
     }
 };
 
-/// Capture error context with optional stack trace
-/// Stack traces are only captured in debug builds for performance
 pub fn captureErrorContext(allocator: std.mem.Allocator, include_stack: bool) !ErrorContext {
     const ctx = ErrorContext.here();
 
-    // In debug builds, we can capture stack traces
-    // For now, we'll leave stack_trace as null since Zig's stack trace API is limited
-    // Future: Use @errorReturnTrace() or similar when available
 
     _ = allocator;
     _ = include_stack;
@@ -86,7 +71,6 @@ pub fn captureErrorContext(allocator: std.mem.Allocator, include_stack: bool) !E
     return ctx;
 }
 
-// Tests
 test "ErrorContext here captures location" {
     const ctx = ErrorContext.here();
     try std.testing.expect(ctx.file.len > 0);

@@ -1,11 +1,6 @@
 const std = @import("std");
 
-/// JSON serialization and deserialization utilities
-/// Provides comptime type-safe JSON parsing and formatting
 pub const Json = struct {
-    /// Comptime estimate of JSON size for a given type
-    /// Used for pre-allocation to avoid repeated buffer growth
-    /// Returns a conservative estimate (may be larger than actual output)
     fn estimateJsonSize(comptime T: type) usize {
         const type_info = @typeInfo(T);
 
@@ -52,22 +47,10 @@ pub const Json = struct {
         };
     }
 
-    /// Serialize a struct to JSON string
-    /// Uses comptime introspection to automatically handle all fields
-    /// Pre-allocates buffer based on type analysis to minimize reallocations
-    ///
-    /// Example:
-    /// ```zig
-    /// const Todo = struct { id: i64, title: []const u8, completed: bool };
-    /// const todo = Todo{ .id = 1, .title = "Hello", .completed = false };
-    /// const json = try Json.serialize(Todo, todo, allocator);
-    /// defer allocator.free(json);
-    /// ```
     pub fn serialize(comptime T: type, value: T, allocator: std.mem.Allocator) ![]const u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
 
-        // Pre-allocate based on comptime size estimate to minimize reallocations
         const estimated_size = comptime estimateJsonSize(T);
         try list.ensureTotalCapacity(allocator, estimated_size);
 
@@ -75,36 +58,16 @@ pub const Json = struct {
         return list.toOwnedSlice(allocator);
     }
 
-    /// Deserialize a JSON string to a struct
-    /// Uses comptime introspection to automatically parse all fields
-    ///
-    /// Example:
-    /// ```zig
-    /// const Todo = struct { id: i64, title: []const u8, completed: bool };
-    /// const json = "{\"id\":1,\"title\":\"Hello\",\"completed\":false}";
-    /// const todo = try Json.deserialize(Todo, json, allocator);
-    /// defer allocator.free(todo.title);
-    /// ```
     pub fn deserialize(comptime T: type, json_str: []const u8, allocator: std.mem.Allocator) !T {
         var parser = Parser.init(json_str, allocator);
         defer parser.deinit();
         return try parser.parseStruct(T);
     }
 
-    /// Serialize an array of structs to JSON array
-    /// Pre-allocates buffer based on type and array length to minimize reallocations
-    ///
-    /// Example:
-    /// ```zig
-    /// const todos = [_]Todo{ todo1, todo2 };
-    /// const json = try Json.serializeArray(Todo, &todos, allocator);
-    /// defer allocator.free(json);
-    /// ```
     pub fn serializeArray(comptime T: type, items: []const T, allocator: std.mem.Allocator) ![]const u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
 
-        // Pre-allocate based on comptime size estimate * item count
         const item_size = comptime estimateJsonSize(T);
         const estimated_size = 2 + (item_size + 1) * items.len; // [] + items + commas
         try list.ensureTotalCapacity(allocator, estimated_size);
@@ -121,7 +84,6 @@ pub const Json = struct {
         return list.toOwnedSlice(allocator);
     }
 
-    /// Serialize an optional value to JSON
     pub fn serializeOptional(comptime T: type, value: ?T, allocator: std.mem.Allocator) ![]const u8 {
         if (value) |v| {
             return serialize(T, v, allocator);
@@ -131,7 +93,6 @@ pub const Json = struct {
         }
     }
 
-    // Internal serialization function
     fn serializeValue(comptime T: type, value: T, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !void {
         const type_info = @typeInfo(T);
 
@@ -144,10 +105,8 @@ pub const Json = struct {
                         try list.writer(allocator).print(",", .{});
                     }
 
-                    // Field name
                     try list.writer(allocator).print("\"{s}\":", .{field.name});
 
-                    // Field value
                     const field_value = @field(value, field.name);
                     try serializeFieldValue(field.type, field_value, list, allocator);
                 }
@@ -204,10 +163,8 @@ pub const Json = struct {
             .pointer => |ptr_info| {
                 if (ptr_info.size == .slice) {
                     if (ptr_info.child == u8) {
-                        // String - escape properly
                         try escapeString(value, list, allocator);
                     } else {
-                        // Array slice
                         try list.writer(allocator).print("[", .{});
                         for (value, 0..) |item, i| {
                             if (i > 0) {
@@ -245,7 +202,6 @@ pub const Json = struct {
         try list.writer(allocator).print("\"", .{});
     }
 
-    // Parser for deserialization
     const Parser = struct {
         input: []const u8,
         pos: usize,
@@ -284,8 +240,6 @@ pub const Json = struct {
             }
             self.pos += 1;
 
-            // Initialize all fields to default values first for robustness
-            // This ensures no fields remain undefined if missing from JSON
             var result: T = undefined;
             inline for (std.meta.fields(T)) |field| {
                 const field_type = field.type;
@@ -304,17 +258,13 @@ pub const Json = struct {
                 }
             }
 
-            // Parse all JSON fields first, then match to struct fields
-            // This allows fields to appear in any order
             while (true) {
                 self.skipWhitespace();
 
-                // Check for closing brace
                 if (self.pos >= self.input.len or self.input[self.pos] == '}') {
                     break;
                 }
 
-                // Parse field name
                 const field_name = try self.parseString();
                 defer self.allocator.free(field_name);
 
@@ -326,7 +276,6 @@ pub const Json = struct {
                 self.pos += 1;
                 self.skipWhitespace();
 
-                // Find matching struct field
                 var found = false;
                 inline for (std.meta.fields(T)) |field| {
                     if (std.mem.eql(u8, field_name, field.name)) {
@@ -337,12 +286,10 @@ pub const Json = struct {
                     }
                 }
 
-                // If no matching struct field, skip the value
                 if (!found) {
                     _ = try self.skipValue();
                 }
 
-                // Check for comma before next field
                 self.skipWhitespace();
                 if (self.pos < self.input.len and self.input[self.pos] == ',') {
                     self.pos += 1;
@@ -387,10 +334,8 @@ pub const Json = struct {
                 .pointer => |ptr_info| {
                     if (ptr_info.size == .slice) {
                         if (ptr_info.child == u8) {
-                            // String ([]u8 or []const u8)
                             return try self.parseString();
                         } else {
-                            // Array of other types (e.g., [][]const u8, []SomeStruct)
                             return try self.parseArray(ptr_info.child);
                         }
                     } else {
@@ -446,7 +391,6 @@ pub const Json = struct {
             const str = self.input[start..self.pos];
             self.pos += 1; // Skip closing quote
 
-            // Unescape the string
             var result = std.ArrayListUnmanaged(u8){};
             defer result.deinit(self.allocator);
 
@@ -474,11 +418,6 @@ pub const Json = struct {
             return result.toOwnedSlice(self.allocator);
         }
 
-        /// Parse a JSON array into a slice of the given element type.
-        /// Supports nested arrays like [][]const u8 and struct arrays like []User.
-        ///
-        /// Example JSON: ["hello", "world"] -> [][]const u8
-        /// Example JSON: [{"id": 1}, {"id": 2}] -> []User
         fn parseArray(self: *Parser, comptime ElementType: type) ![]ElementType {
             self.skipWhitespace();
             if (self.pos >= self.input.len or self.input[self.pos] != '[') {
@@ -490,7 +429,6 @@ pub const Json = struct {
 
             var items = std.ArrayListUnmanaged(ElementType){};
             errdefer {
-                // Clean up on error
                 for (items.items) |item| {
                     self.freeValue(ElementType, item);
                 }
@@ -499,23 +437,19 @@ pub const Json = struct {
 
             self.skipWhitespace();
 
-            // Handle empty array
             if (self.pos < self.input.len and self.input[self.pos] == ']') {
                 self.pos += 1;
                 return items.toOwnedSlice(self.allocator);
             }
 
-            // Parse array elements
             while (true) {
                 self.skipWhitespace();
 
-                // Parse element
                 const element = try self.parseFieldValue(ElementType);
                 try items.append(self.allocator, element);
 
                 self.skipWhitespace();
 
-                // Check for comma or end of array
                 if (self.pos >= self.input.len) {
                     return error.InvalidJson;
                 }
@@ -537,17 +471,14 @@ pub const Json = struct {
             return items.toOwnedSlice(self.allocator);
         }
 
-        /// Free a value allocated during parsing (used for cleanup on error).
         fn freeValue(self: *Parser, comptime T: type, value: T) void {
             const type_info = @typeInfo(T);
             switch (type_info) {
                 .pointer => |ptr_info| {
                     if (ptr_info.size == .slice) {
                         if (ptr_info.child == u8) {
-                            // String
                             self.allocator.free(value);
                         } else {
-                            // Array of other types
                             for (value) |item| {
                                 self.freeValue(ptr_info.child, item);
                             }
@@ -556,7 +487,6 @@ pub const Json = struct {
                     }
                 },
                 .@"struct" => {
-                    // Free string fields in struct
                     inline for (std.meta.fields(T)) |field| {
                         const field_type_info = @typeInfo(field.type);
                         if (field_type_info == .pointer) {
@@ -639,7 +569,6 @@ pub const Json = struct {
 
             switch (self.input[self.pos]) {
                 '"' => {
-                    // String
                     self.pos += 1;
                     while (self.pos < self.input.len and self.input[self.pos] != '"') {
                         if (self.input[self.pos] == '\\') {
@@ -652,7 +581,6 @@ pub const Json = struct {
                     }
                 },
                 't', 'f' => {
-                    // Boolean
                     if (std.mem.startsWith(u8, self.input[self.pos..], "true")) {
                         self.pos += 4;
                     } else if (std.mem.startsWith(u8, self.input[self.pos..], "false")) {
@@ -660,13 +588,11 @@ pub const Json = struct {
                     }
                 },
                 'n' => {
-                    // Null
                     if (std.mem.startsWith(u8, self.input[self.pos..], "null")) {
                         self.pos += 4;
                     }
                 },
                 '{' => {
-                    // Object
                     self.pos += 1;
                     var depth: usize = 1;
                     while (self.pos < self.input.len and depth > 0) {
@@ -679,7 +605,6 @@ pub const Json = struct {
                     }
                 },
                 '[' => {
-                    // Array
                     self.pos += 1;
                     var depth: usize = 1;
                     while (self.pos < self.input.len and depth > 0) {
@@ -692,7 +617,6 @@ pub const Json = struct {
                     }
                 },
                 '-', '0'...'9' => {
-                    // Number
                     while (self.pos < self.input.len and ((self.input[self.pos] >= '0' and self.input[self.pos] <= '9') or self.input[self.pos] == '.' or self.input[self.pos] == '-' or self.input[self.pos] == '+' or self.input[self.pos] == 'e' or self.input[self.pos] == 'E')) {
                         self.pos += 1;
                     }
@@ -705,7 +629,6 @@ pub const Json = struct {
     };
 };
 
-// Tests
 test "Json.serialize simple struct" {
     const allocator = std.testing.allocator;
     const TestStruct = struct {
@@ -755,7 +678,6 @@ test "Json.serialize with optional" {
     const test_value1 = TestStruct{ .id = 1, .description = "test" };
     const json1 = try Json.serialize(TestStruct, test_value1, allocator);
     defer allocator.free(json1);
-    // Note: test_value1.description is a string literal, not allocated, so no need to free
 
     const test_value2 = TestStruct{ .id = 2, .description = null };
     const json2 = try Json.serialize(TestStruct, test_value2, allocator);

@@ -9,32 +9,22 @@ const error_info = @import("error_info.zig");
 const ValveErrorInfo = error_info.ValveErrorInfo;
 const ValveErrorPhase = error_info.ValveErrorPhase;
 
-/// Registry-specific errors
 pub const RegistryError = error{
     TooManyValves,
 };
 
-/// Maximum number of valves that can be registered
 pub const MAX_VALVES = 32;
 
-/// Registry for managing valve registration and lifecycle
 pub const ValveRegistry = struct {
-    /// Registered valves
     valves: std.ArrayListUnmanaged(*Valve),
-    /// Valve contexts (parallel array with valves)
     contexts: std.ArrayListUnmanaged(ValveContext),
-    /// Structured error information for valves (parallel array with valves)
     valve_error_info: std.ArrayListUnmanaged(?ValveErrorInfo),
-    /// Allocator for registry operations
     allocator: std.mem.Allocator,
-    /// Reference to Engine12 instance (for route cleanup)
     app: ?*Engine12 = null,
-    /// Mutex for thread-safe access
     mutex: std.Thread.Mutex = .{},
 
     const Self = @This();
 
-    /// Initialize a new valve registry
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .valves = std.ArrayListUnmanaged(*Valve){},
@@ -46,16 +36,7 @@ pub const ValveRegistry = struct {
         };
     }
 
-    /// Register a valve with an engine12 instance
-    /// Creates a context with granted capabilities and calls valve.init()
-    ///
-    /// Example:
-    /// ```zig
-    /// var registry = ValveRegistry.init(allocator);
-    /// try registry.register(&my_valve, &app);
-    /// ```
     pub fn register(self: *Self, valve_ptr: *Valve, app: *Engine12) !void {
-        // Input validation
         if (valve_ptr.metadata.name.len == 0) {
             std.debug.print("[ValveRegistry] Error: Attempted to register valve with empty name\n", .{});
             return error.InvalidArgument;
@@ -64,28 +45,23 @@ pub const ValveRegistry = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Store app reference if not already stored
         if (self.app == null) {
             self.app = app;
         }
 
-        // Check for duplicate registration
         for (self.valves.items) |existing| {
             if (std.mem.eql(u8, existing.metadata.name, valve_ptr.metadata.name)) {
                 return error.ValveAlreadyRegistered;
             }
         }
 
-        // Check max valves limit
         if (self.valves.items.len >= MAX_VALVES) {
             return RegistryError.TooManyValves;
         }
 
-        // Create context with granted capabilities
         var capabilities = std.ArrayListUnmanaged(ValveCapability){};
         errdefer capabilities.deinit(self.allocator);
 
-        // Grant all requested capabilities from metadata
         for (valve_ptr.metadata.required_capabilities) |cap| {
             try capabilities.append(self.allocator, cap);
         }
@@ -98,7 +74,6 @@ pub const ValveRegistry = struct {
             .state = .registered,
         };
 
-        // Initialize valve
         valve_ptr.init(valve_ptr, &ctx) catch |err| {
             ctx.state = .failed;
             const error_msg = try std.fmt.allocPrint(self.allocator, "init: {s}", .{@errorName(err)});
@@ -109,7 +84,6 @@ pub const ValveRegistry = struct {
                 @errorName(err),
                 error_msg,
             ) catch |alloc_err| {
-                // If we can't create error info, still store valve but with null error info
                 try self.valves.append(self.allocator, valve_ptr);
                 try self.contexts.append(self.allocator, ctx);
                 try self.valve_error_info.append(self.allocator, null);
@@ -122,20 +96,11 @@ pub const ValveRegistry = struct {
         };
         ctx.state = .initialized;
 
-        // Store valve and context (no error)
         try self.valves.append(self.allocator, valve_ptr);
         try self.contexts.append(self.allocator, ctx);
         try self.valve_error_info.append(self.allocator, null);
     }
 
-    /// Unregister a valve by name
-    /// Automatically cleans up all routes registered by the valve
-    /// Calls valve.deinit() and removes from registry
-    ///
-    /// Example:
-    /// ```zig
-    /// try registry.unregister("my_valve");
-    /// ```
     pub fn unregister(self: *Self, name: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -143,26 +108,21 @@ pub const ValveRegistry = struct {
         var i: usize = 0;
         while (i < self.valves.items.len) : (i += 1) {
             if (std.mem.eql(u8, self.valves.items[i].metadata.name, name)) {
-                // Get all routes registered by this valve and unregister them
                 if (self.app) |app| {
                     if (app.runtime_routes.getValveRoutes(name, self.allocator)) |valve_routes| {
                         defer self.allocator.free(valve_routes);
-                        // Unregister all routes
                         for (valve_routes) |*route| {
                             app.runtime_routes.unregister(route.method, route.path_pattern) catch |err| {
                                 std.debug.print("[Valve] Warning: Failed to unregister route {s} {s}: {}\n", .{ route.method, route.path_pattern, err });
                             };
                         }
                     } else |err| {
-                        // Log error but continue with cleanup
                         std.debug.print("[Valve] Warning: Failed to get routes for '{s}': {}\n", .{ name, err });
                     }
                 }
 
-                // Call deinit
                 self.valves.items[i].deinit(self.valves.items[i]);
 
-                // Remove from arrays
                 _ = self.valves.swapRemove(i);
                 var ctx = self.contexts.swapRemove(i);
                 ctx.deinit();
@@ -177,16 +137,6 @@ pub const ValveRegistry = struct {
         return valve.ValveError.ValveNotFound;
     }
 
-    /// Get context for a valve by name
-    /// Returns null if valve not found
-    /// Thread-safe
-    ///
-    /// Example:
-    /// ```zig
-    /// if (registry.getContext("my_valve")) |ctx| {
-    ///     try ctx.registerRoute("GET", "/test", handler);
-    /// }
-    /// ```
     pub fn getContext(self: *Self, name: []const u8) ?*ValveContext {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -200,9 +150,6 @@ pub const ValveRegistry = struct {
         return null;
     }
 
-    /// Get all registered valve names
-    /// Returns a slice of valve names (allocated with provided allocator)
-    /// Thread-safe
     pub fn getValveNames(self: *Self, allocator: std.mem.Allocator) ![]const []const u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -214,26 +161,20 @@ pub const ValveRegistry = struct {
         return names.toOwnedSlice(allocator);
     }
 
-    /// Call onAppStart for all registered valves
-    /// Called by engine12 when app starts
-    /// Collects errors and marks valves as failed if errors occur
     pub fn onAppStart(self: *Self) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         var i: usize = 0;
         while (i < self.valves.items.len) : (i += 1) {
-            // Skip valves that failed during initialization
             if (self.contexts.items[i].state == .failed) continue;
 
             if (self.valves.items[i].onAppStart) |callback| {
                 callback(self.valves.items[i], &self.contexts.items[i]) catch |err| {
                     self.contexts.items[i].state = .failed;
-                    // Free old error info if exists
                     if (self.valve_error_info.items[i]) |*old_error_info| {
                         old_error_info.deinit(self.allocator);
                     }
-                    // Create new structured error info
                     const error_msg = try std.fmt.allocPrint(self.allocator, "onAppStart: {s}", .{@errorName(err)});
                     defer self.allocator.free(error_msg);
                     const error_info_val = ValveErrorInfo.create(
@@ -250,12 +191,10 @@ pub const ValveRegistry = struct {
                     std.debug.print("[Valve] Error in onAppStart for '{s}': {}\n", .{ self.valves.items[i].metadata.name, err });
                     continue;
                 };
-                // Success - mark as started
                 if (self.contexts.items[i].state == .initialized) {
                     self.contexts.items[i].state = .started;
                 }
             } else {
-                // No onAppStart callback - mark as started if initialized
                 if (self.contexts.items[i].state == .initialized) {
                     self.contexts.items[i].state = .started;
                 }
@@ -263,8 +202,6 @@ pub const ValveRegistry = struct {
         }
     }
 
-    /// Call onAppStop for all registered valves
-    /// Called by engine12 when app stops
     pub fn onAppStop(self: *Self) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -274,29 +211,24 @@ pub const ValveRegistry = struct {
             if (self.valves.items[i].onAppStop) |callback| {
                 callback(self.valves.items[i], &self.contexts.items[i]);
             }
-            // Mark as stopped
             if (self.contexts.items[i].state != .failed) {
                 self.contexts.items[i].state = .stopped;
             }
         }
     }
 
-    /// Cleanup all valves and deinitialize registry
     pub fn deinit(self: *Self) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Call deinit on all valves
         for (self.valves.items) |v| {
             v.deinit(v);
         }
 
-        // Cleanup contexts
         for (self.contexts.items) |*ctx| {
             ctx.deinit();
         }
 
-        // Cleanup error info
         for (self.valve_error_info.items) |*error_info_opt| {
             if (error_info_opt.*) |*error_info_val| {
                 error_info_val.deinit(self.allocator);
@@ -308,8 +240,6 @@ pub const ValveRegistry = struct {
         self.valve_error_info.deinit(self.allocator);
     }
 
-    /// Get the state of a valve by name
-    /// Thread-safe
     pub fn getValveState(self: *Self, name: []const u8) ?valve.ValveState {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -323,17 +253,6 @@ pub const ValveRegistry = struct {
         return null;
     }
 
-    /// Get structured error information for a valve by name
-    /// Returns null if no error or valve not found
-    /// Thread-safe
-    ///
-    /// Example:
-    /// ```zig
-    /// if (registry.getErrorInfo("my_valve")) |error_info| {
-    ///     std.debug.print("Error phase: {}\n", .{error_info.phase});
-    ///     std.debug.print("Error type: {s}\n", .{error_info.error_type});
-    /// }
-    /// ```
     pub fn getErrorInfo(self: *Self, name: []const u8) ?ValveErrorInfo {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -350,11 +269,6 @@ pub const ValveRegistry = struct {
         return null;
     }
 
-    /// Get error message for a valve by name
-    /// Returns empty string if no error or valve not found
-    /// Returns the error message from structured error info for backward compatibility
-    /// Thread-safe
-    /// Note: For structured error information, use getErrorInfo() instead
     pub fn getValveErrors(self: *Self, name: []const u8) []const u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -363,7 +277,6 @@ pub const ValveRegistry = struct {
         while (i < self.valves.items.len) : (i += 1) {
             if (std.mem.eql(u8, self.valves.items[i].metadata.name, name)) {
                 if (self.valve_error_info.items[i]) |error_info_val| {
-                    // Return the message field directly (already allocated and stored)
                     return error_info_val.message;
                 }
                 return "";
@@ -372,8 +285,6 @@ pub const ValveRegistry = struct {
         return "";
     }
 
-    /// Check if a valve is healthy (not failed)
-    /// Thread-safe
     pub fn isValveHealthy(self: *Self, name: []const u8) bool {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -387,8 +298,6 @@ pub const ValveRegistry = struct {
         return false;
     }
 
-    /// Get all failed valve names
-    /// Thread-safe
     pub fn getFailedValves(self: *Self, allocator: std.mem.Allocator) ![]const []const u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -404,7 +313,6 @@ pub const ValveRegistry = struct {
     }
 };
 
-// Tests
 test "ValveRegistry init" {
     var registry = ValveRegistry.init(std.testing.allocator);
     defer registry.deinit();
@@ -424,7 +332,6 @@ test "ValveRegistry register and unregister" {
         deinit_called: bool = false,
 
         pub fn initFn(v: *Valve, ctx: *ValveContext) !void {
-            // Get parent struct using pointer arithmetic
             const Self = @This();
             const offset = @offsetOf(Self, "valve");
             const addr = @intFromPtr(v) - offset;
@@ -434,7 +341,6 @@ test "ValveRegistry register and unregister" {
         }
 
         pub fn deinitFn(v: *Valve) void {
-            // Get parent struct using pointer arithmetic
             const Self = @This();
             const offset = @offsetOf(Self, "valve");
             const addr = @intFromPtr(v) - offset;
@@ -537,7 +443,6 @@ test "ValveRegistry getContext" {
     try std.testing.expect(registry.getContext("nonexistent") == null);
 }
 
-// Test deleted - causes segmentation fault due to double free in capabilities deinit
 
 test "ValveRegistry structured error info" {
     var app = try Engine12.initTesting();
@@ -570,12 +475,10 @@ test "ValveRegistry structured error info" {
         },
     };
 
-    // Registration should fail and create error info
     registry.register(&failing_valve.valve, &app) catch |err| {
         try std.testing.expectEqual(err, error.TestError);
     };
 
-    // Check that error info was created
     if (registry.getErrorInfo("failing")) |err_info| {
         try std.testing.expectEqual(err_info.phase, .init);
         try std.testing.expectEqualStrings(err_info.error_type, "TestError");
@@ -585,7 +488,6 @@ test "ValveRegistry structured error info" {
         try std.testing.expect(false); // Error info should exist
     }
 
-    // Check backward-compatible error string
     const error_msg = registry.getValveErrors("failing");
     try std.testing.expect(error_msg.len > 0);
     try std.testing.expect(std.mem.indexOf(u8, error_msg, "init") != null);
@@ -621,8 +523,6 @@ test "ValveRegistry thread-safe queries" {
 
     try registry.register(&test_valve.valve, &app);
 
-    // Test concurrent queries (simulated by calling multiple methods)
-    // In a real scenario, these would be called from different threads
     const ctx1 = registry.getContext("test");
     const ctx2 = registry.getContext("test");
     const state1 = registry.getValveState("test");

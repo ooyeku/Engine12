@@ -1,17 +1,6 @@
 const std = @import("std");
 
-/// Memory management utilities for structs
-/// Provides convenient functions to free memory allocated in structs
 pub const Memory = struct {
-    /// Free all string slices in a struct
-    /// Uses comptime introspection to find and free []u8 and ?[]u8 fields
-    /// 
-    /// Example:
-    /// ```zig
-    /// const Todo = struct { id: i64, title: []const u8, description: []const u8 };
-    /// const todo = Todo{ .id = 1, .title = try allocator.dupe(u8, "test"), .description = try allocator.dupe(u8, "desc") };
-    /// defer Memory.freeStruct(Todo, todo, allocator);
-    /// ```
     pub fn freeStruct(comptime T: type, instance: T, allocator: std.mem.Allocator) void {
         inline for (std.meta.fields(T)) |field| {
             const field_type = field.type;
@@ -21,14 +10,6 @@ pub const Memory = struct {
         }
     }
 
-    /// Free all string slices in an array of structs
-    /// 
-    /// Example:
-    /// ```zig
-    /// const todos = try orm.findAll(Todo);
-    /// defer Memory.freeStructArray(Todo, todos.items, allocator);
-    /// defer todos.deinit(allocator);
-    /// ```
     pub fn freeStructArray(comptime T: type, items: []T, allocator: std.mem.Allocator) void {
         for (items) |item| {
             freeStruct(T, item, allocator);
@@ -42,10 +23,8 @@ pub const Memory = struct {
             .Pointer => |ptr_info| {
                 if (ptr_info.size == .Slice) {
                     if (ptr_info.child == u8) {
-                        // String slice - free it
                         allocator.free(value);
                     } else {
-                        // Array slice - recursively free elements
                         for (value) |item| {
                             freeFieldValue(ptr_info.child, item, allocator);
                         }
@@ -59,26 +38,22 @@ pub const Memory = struct {
                 }
             },
             .Struct => {
-                // Nested struct - recursively free its fields
                 inline for (std.meta.fields(T)) |field| {
                     const field_value = @field(value, field.name);
                     freeFieldValue(field.type, field_value, allocator);
                 }
             },
             .Array => |arr_info| {
-                // Array - free each element
                 for (value) |item| {
                     freeFieldValue(arr_info.child, item, allocator);
                 }
             },
             else => {
-                // Primitive types, etc. - nothing to free
             },
         }
     }
 };
 
-// Tests
 test "Memory.freeStruct with string fields" {
     const allocator = std.testing.allocator;
     const TestStruct = struct {
@@ -98,7 +73,6 @@ test "Memory.freeStruct with string fields" {
     
     Memory.freeStruct(TestStruct, test_value, allocator);
     
-    // Memory should be freed (no leak check in test, but this exercises the code)
 }
 
 test "Memory.freeStruct with optional string" {

@@ -1,37 +1,23 @@
 const std = @import("std");
 
-/// Phase in valve lifecycle where an error occurred
 pub const ValveErrorPhase = enum {
-    /// Error during valve initialization (init callback)
     init,
-    /// Error during app start (onAppStart callback)
     start,
-    /// Error during app stop (onAppStop callback)
     stop,
-    /// Error during runtime operation
     runtime,
 };
 
-/// Structured error information for valves
-/// Provides detailed error context for debugging and monitoring
 pub const ValveErrorInfo = struct {
-    /// Phase where the error occurred
     phase: ValveErrorPhase,
-    /// Error type name (e.g., "OutOfMemory", "FileNotFound")
     error_type: []const u8,
-    /// Human-readable error message
     message: []const u8,
-    /// Unix timestamp in milliseconds when error occurred
     timestamp: i64,
 
-    /// Clean up allocated memory
     pub fn deinit(self: *ValveErrorInfo, allocator: std.mem.Allocator) void {
         allocator.free(self.error_type);
         allocator.free(self.message);
     }
 
-    /// Create a new error info instance
-    /// Allocates strings for error_type and message
     pub fn create(
         allocator: std.mem.Allocator,
         phase: ValveErrorPhase,
@@ -54,8 +40,6 @@ pub const ValveErrorInfo = struct {
         };
     }
 
-    /// Format error info as a string
-    /// Returns a formatted string suitable for logging
     pub fn format(self: *const ValveErrorInfo, allocator: std.mem.Allocator) ![]const u8 {
         const phase_str = switch (self.phase) {
             .init => "init",
@@ -72,7 +56,6 @@ pub const ValveErrorInfo = struct {
     }
 };
 
-// Tests
 test "ValveErrorInfo create and deinit" {
     const allocator = std.testing.allocator;
 

@@ -4,8 +4,6 @@ const runtime_template = @import("runtime_template.zig");
 const fileserver = @import("../fileserver.zig");
 const websocket_room = @import("../websocket/room.zig");
 
-/// Hot reload manager for development mode
-/// Coordinates file watching, template reloading, and static file cache invalidation
 pub const HotReloadManager = struct {
     allocator: std.mem.Allocator,
     file_watcher: watcher.FileWatcher,
@@ -16,7 +14,6 @@ pub const HotReloadManager = struct {
     mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator, enabled: bool) HotReloadManager {
-        // Create WebSocket room for hot reload notifications
         const reload_room = if (enabled) allocator.create(websocket_room.WebSocketRoom) catch null else null;
         if (reload_room) |room| {
             room.* = websocket_room.WebSocketRoom.init(allocator, "hot_reload") catch {
@@ -42,13 +39,10 @@ pub const HotReloadManager = struct {
         };
     }
 
-    /// Get the WebSocket room for hot reload notifications
     pub fn getReloadRoom(self: *HotReloadManager) ?*websocket_room.WebSocketRoom {
         return self.reload_room;
     }
 
-    /// Watch a template file for changes
-    /// Returns a RuntimeTemplate that automatically reloads when the file changes
     pub fn watchTemplate(self: *HotReloadManager, template_path: []const u8) !*runtime_template.RuntimeTemplate {
         if (!self.enabled) {
             return error.HotReloadNotEnabled;
@@ -57,48 +51,30 @@ pub const HotReloadManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Check if already watching
         if (self.template_cache.get(template_path)) |existing| {
             return existing;
         }
 
-        // Create runtime template
         const rt = try runtime_template.RuntimeTemplate.init(self.allocator, template_path);
         const rt_ptr = try self.allocator.create(runtime_template.RuntimeTemplate);
         rt_ptr.* = rt;
 
-        // Store in cache
         const path_copy = try self.allocator.dupe(u8, template_path);
         try self.template_cache.put(path_copy, rt_ptr);
 
-        // Watch file for changes with callback that broadcasts reload notification
-        // Pass self as context so callback can access manager
         try self.file_watcher.watch(template_path, templateReloadCallback, self);
 
         return rt_ptr;
     }
 
-    /// Watch a Zig source file for changes
-    /// When the file changes, sends a reload notification
-    /// Note: Actual code reloading requires application restart
-    /// This is a placeholder for future dynamic module reloading support
-    ///
-    /// Example:
-    /// ```zig
-    /// try manager.watchZigFile("src/handlers.zig");
-    /// ```
     pub fn watchZigFile(self: *HotReloadManager, zig_path: []const u8) !void {
         if (!self.enabled) {
             return error.HotReloadNotEnabled;
         }
 
-        // Watch file for changes with callback that broadcasts reload notification
-        // For now, we just notify that a reload is needed (user must restart)
         try self.file_watcher.watch(zig_path, zigReloadCallback, self);
     }
 
-    /// Callback for template file changes
-    /// This is called by the file watcher when a template file changes
     fn templateReloadCallback(path: []const u8, context: ?*anyopaque) void {
         if (context) |ctx| {
             const manager = @as(*HotReloadManager, @ptrCast(@alignCast(ctx)));
@@ -106,23 +82,16 @@ pub const HotReloadManager = struct {
         }
     }
 
-    /// Callback for Zig file changes
-    /// This is called by the file watcher when a Zig source file changes
-    /// For now, just notifies that a restart is needed
     fn zigReloadCallback(path: []const u8, context: ?*anyopaque) void {
         if (context) |ctx| {
             const manager = @as(*HotReloadManager, @ptrCast(@alignCast(ctx)));
-            // Notify that backend code changed - user should restart
             std.debug.print("[HotReload] Backend code changed: {s}\n", .{path});
             std.debug.print("[HotReload] Note: Backend code reloading requires application restart\n", .{});
             manager.notifyReload(path);
         }
     }
 
-    /// Notify all connected clients that a file has changed
-    /// This is called from the file watcher thread, so we need to be thread-safe
     fn notifyReload(self: *HotReloadManager, file_path: []const u8) void {
-        // Lock mutex to ensure thread-safe access to reload_room
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -136,9 +105,6 @@ pub const HotReloadManager = struct {
         }
     }
 
-    /// Watch static file server for changes
-    /// In development mode, static files are served without cache headers
-    /// Also watches the directory for file changes and sends reload notifications
     pub fn watchStaticFiles(self: *HotReloadManager, file_server: *fileserver.FileServer) !void {
         if (!self.enabled) {
             return;
@@ -149,16 +115,11 @@ pub const HotReloadManager = struct {
         const directory = file_server.directory;
         self.mutex.unlock();
 
-        // Watch the static file directory for changes (without holding mutex)
-        // When any file in the directory changes, send a reload notification
         try self.watchDirectory(directory, staticFileReloadCallback, self);
     }
 
-    /// Watch a directory recursively for file changes
-    /// When any file changes, the callback is called with the file path
     fn watchDirectory(self: *HotReloadManager, directory_path: []const u8, callback: *const fn ([]const u8, ?*anyopaque) void, context: ?*anyopaque) !void {
         var dir = std.fs.cwd().openDir(directory_path, .{ .iterate = true }) catch {
-            // Directory doesn't exist or can't be opened, skip
             return;
         };
         defer dir.close();
@@ -169,20 +130,15 @@ pub const HotReloadManager = struct {
             defer self.allocator.free(full_path);
 
             if (entry.kind == .directory) {
-                // Recursively watch subdirectories
                 try self.watchDirectory(full_path, callback, context);
             } else {
-                // Watch individual files
                 self.file_watcher.watch(full_path, callback, context) catch |err| {
-                    // Log but don't fail - some files might not be readable
                     std.debug.print("[HotReload] Warning: Failed to watch file {s}: {}\n", .{ full_path, err });
                 };
             }
         }
     }
 
-    /// Callback for static file changes
-    /// This is called by the file watcher when a static file changes
     fn staticFileReloadCallback(path: []const u8, context: ?*anyopaque) void {
         if (context) |ctx| {
             const manager = @as(*HotReloadManager, @ptrCast(@alignCast(ctx)));
@@ -190,7 +146,6 @@ pub const HotReloadManager = struct {
         }
     }
 
-    /// Start the hot reload manager
     pub fn start(self: *HotReloadManager) !void {
         if (!self.enabled) {
             return;
@@ -199,7 +154,6 @@ pub const HotReloadManager = struct {
         try self.file_watcher.start();
     }
 
-    /// Stop the hot reload manager
     pub fn stop(self: *HotReloadManager) void {
         if (!self.enabled) {
             return;
@@ -208,14 +162,12 @@ pub const HotReloadManager = struct {
         self.file_watcher.stop();
     }
 
-    /// Clean up resources
     pub fn deinit(self: *HotReloadManager) void {
         self.stop();
 
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Clean up templates
         var it = self.template_cache.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.*.deinit();
@@ -224,10 +176,8 @@ pub const HotReloadManager = struct {
         }
         self.template_cache.deinit();
 
-        // Clean up static file servers list (servers themselves are managed elsewhere)
         self.static_file_servers.deinit(self.allocator);
 
-        // Clean up reload room
         if (self.reload_room) |room| {
             room.deinit();
             self.allocator.destroy(room);
@@ -255,7 +205,6 @@ test "HotReloadManager disabled" {
     var manager = HotReloadManager.init(allocator, false);
     defer manager.deinit();
 
-    // Should return error when trying to watch template
     const result = manager.watchTemplate("test.zt.html");
     try std.testing.expectError(error.HotReloadNotEnabled, result);
 }

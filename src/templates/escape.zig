@@ -1,13 +1,7 @@
 const std = @import("std");
 
-/// HTML escaping utilities
-/// Escapes HTML entities to prevent XSS attacks
 pub const Escape = struct {
-    /// Escape HTML entities in a string
-    /// Escapes: & < > " '
-    /// Returns a newly allocated string that must be freed
     pub fn escapeHtml(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
-        // First pass: count how many characters need escaping
         var escaped_count: usize = 0;
         for (input) |char| {
             escaped_count += switch (char) {
@@ -20,18 +14,13 @@ pub const Escape = struct {
             };
         }
 
-        // If no escaping needed, still allocate a copy since caller will free it
-        // The optimization is that we skip the escaping loop, not the allocation
-        // (Caller always frees the returned value, so we must allocate)
         if (escaped_count == input.len) {
             return try allocator.dupe(u8, input);
         }
 
-        // Allocate output buffer
         const output = try allocator.alloc(u8, escaped_count);
         var out_index: usize = 0;
 
-        // Second pass: escape characters
         for (input) |char| {
             switch (char) {
                 '&' => {
@@ -64,10 +53,7 @@ pub const Escape = struct {
         return output;
     }
 
-    /// Escape HTML entities in place (for comptime strings)
-    /// Returns a comptime string literal
     pub fn escapeHtmlComptime(comptime input: []const u8) []const u8 {
-        // For comptime, we build the escaped string
         var result: []const u8 = "";
         var i: usize = 0;
         while (i < input.len) {
@@ -86,7 +72,6 @@ pub const Escape = struct {
     }
 };
 
-// Tests
 test "escapeHtml basic" {
     const allocator = std.testing.allocator;
     const input = "<script>alert('xss')</script>";

@@ -1,13 +1,10 @@
 const std = @import("std");
 const Response = @import("../response.zig").Response;
 
-/// Form parser for application/x-www-form-urlencoded data
-/// Handles URL decoding automatically and uses arena allocator for memory safety
 pub const FormParser = struct {
     body: []const u8,
     allocator: std.mem.Allocator,
 
-    /// Initialize a form parser from request body
     pub fn init(body: []const u8, allocator: std.mem.Allocator) FormParser {
         return .{
             .body = body,
@@ -15,29 +12,23 @@ pub const FormParser = struct {
         };
     }
 
-    /// Get a form value by key (returns null if not found)
-    /// The returned value is URL-decoded and allocated in the arena allocator
     pub fn get(self: *const FormParser, key: []const u8) !?[]const u8 {
         const encoded = self.getRaw(key) orelse return null;
         return try self.urlDecode(encoded);
     }
 
-    /// Get a required form value (returns error if not found)
     pub fn getRequired(self: *const FormParser, key: []const u8) ![]const u8 {
         const value = try self.get(key);
         return value orelse error.MissingFormField;
     }
 
-    /// Get a form value as an integer
     pub fn getInt(self: *const FormParser, key: []const u8) !?i64 {
         const value = try self.get(key) orelse return null;
         defer self.allocator.free(value);
-        // Handle empty strings
         if (value.len == 0) return null;
         return std.fmt.parseInt(i64, value, 10) catch |err| return err;
     }
 
-    /// Get a form value as a boolean (true if value is "true", "1", or "yes")
     pub fn getBool(self: *const FormParser, key: []const u8) !bool {
         const value = try self.get(key) orelse return false;
         defer self.allocator.free(value);
@@ -46,7 +37,6 @@ pub const FormParser = struct {
             std.mem.eql(u8, value, "yes");
     }
 
-    /// Get a form value as a date (YYYY-MM-DD format) and convert to timestamp
     pub fn getDate(self: *const FormParser, key: []const u8) !?i64 {
         const value = try self.get(key) orelse return null;
         defer self.allocator.free(value);
@@ -56,7 +46,6 @@ pub const FormParser = struct {
         const month = std.fmt.parseInt(u8, value[5..7], 10) catch return null;
         const day = std.fmt.parseInt(u8, value[8..10], 10) catch return null;
 
-        // Calculate days since epoch
         var days: i64 = 0;
         var y: u32 = 1970;
         while (y < year) : (y += 1) {
@@ -77,7 +66,6 @@ pub const FormParser = struct {
         return days * 86400;
     }
 
-    /// Get raw (encoded) form value by key
     fn getRaw(self: *const FormParser, key: []const u8) ?[]const u8 {
         var iter = std.mem.splitSequence(u8, self.body, "&");
         while (iter.next()) |pair| {
@@ -92,9 +80,7 @@ pub const FormParser = struct {
         return null;
     }
 
-    /// URL decode a string and allocate result in arena
     fn urlDecode(self: *const FormParser, input: []const u8) ![]const u8 {
-        // First pass: calculate required length
         var required_len: usize = 0;
         var i: usize = 0;
         while (i < input.len) {
@@ -110,11 +96,9 @@ pub const FormParser = struct {
             }
         }
 
-        // Allocate buffer
         const decoded = try self.allocator.alloc(u8, required_len);
         errdefer self.allocator.free(decoded);
 
-        // Second pass: decode
         i = 0;
         var j: usize = 0;
         while (i < input.len) {
@@ -147,7 +131,6 @@ pub const FormParser = struct {
     }
 };
 
-// Tests
 test "FormParser.get" {
     const allocator = std.testing.allocator;
     var parser = FormParser.init("title=Hello+World&priority=high", allocator);
@@ -179,7 +162,6 @@ test "FormParser.getInt" {
     var parser = FormParser.init("count=42&empty=", allocator);
 
     const count = try parser.getInt("count");
-    // Note: Memory cleanup handled by testing allocator
     try std.testing.expect(count != null);
     try std.testing.expectEqual(@as(i64, 42), count.?);
 
@@ -202,8 +184,6 @@ test "FormParser.getDate" {
     var parser = FormParser.init("due_date=2024-01-15", allocator);
 
     const date = try parser.getDate("due_date");
-    // Note: Memory cleanup handled by testing allocator
     try std.testing.expect(date != null);
-    // 2024-01-15 should be approximately 54 years * 365 days + leap years + 14 days
     try std.testing.expect(date.? > 0);
 }

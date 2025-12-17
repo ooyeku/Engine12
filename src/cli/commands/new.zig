@@ -1,7 +1,6 @@
 const std = @import("std");
 const cli_utils = @import("../utils.zig");
 
-/// Template for build.zig.zon
 const BUILD_ZON_TEMPLATE =
     \\.{
     \\    .name = .{PROJECT_NAME_LITERAL},
@@ -21,7 +20,6 @@ const BUILD_ZON_TEMPLATE =
     \\}
 ;
 
-/// Template for build.zig
 const BUILD_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\
@@ -58,7 +56,6 @@ const BUILD_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for main.zig
 const MAIN_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -69,7 +66,6 @@ const MAIN_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for app.zig
 const APP_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -96,7 +92,6 @@ const APP_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for README.md
 const README_TEMPLATE =
     \\# {PROJECT_NAME}
     \\
@@ -112,7 +107,6 @@ const README_TEMPLATE =
     \\
 ;
 
-/// Template for .gitignore
 const GITIGNORE_TEMPLATE =
     \\zig-out/
     \\.zig-cache/
@@ -123,7 +117,6 @@ const GITIGNORE_TEMPLATE =
     \\.DS_Store
 ;
 
-/// Template for models.zig
 const MODELS_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -147,7 +140,6 @@ const MODELS_ZIG_TEMPLATE =
     \\pub const ItemModelORM = E12.orm.ModelWithORM(Item);
 ;
 
-/// Template for database.zig
 const DATABASE_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -192,7 +184,6 @@ const DATABASE_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for validators.zig
 const VALIDATORS_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -220,7 +211,6 @@ const VALIDATORS_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for auth.zig
 const AUTH_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -259,14 +249,12 @@ const AUTH_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for utils.zig
 const UTILS_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
     \\
 ;
 
-/// Template for handlers/search.zig
 const HANDLER_SEARCH_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -297,7 +285,6 @@ const HANDLER_SEARCH_ZIG_TEMPLATE =
     \\}
 ;
 
-/// Template for migrations/init.zig
 const MIGRATIONS_INIT_ZIG_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -318,7 +305,6 @@ const MIGRATIONS_INIT_ZIG_TEMPLATE =
     \\};
 ;
 
-/// Template for static/css/style.css
 const STATIC_CSS_TEMPLATE =
     \\/* Modern, elegant stylesheet */
     \\:root {
@@ -529,7 +515,6 @@ const STATIC_CSS_TEMPLATE =
     \\}
 ;
 
-/// Template for static/js/app.js
 const STATIC_JS_TEMPLATE =
     \\// Main application JavaScript
     \\document.addEventListener('DOMContentLoaded', function() {
@@ -570,7 +555,6 @@ const STATIC_JS_TEMPLATE =
     \\});
 ;
 
-/// Template for templates/index.zt.html
 const TEMPLATE_INDEX_ZT_HTML =
     \\<!DOCTYPE html>
     \\<html lang="en">
@@ -627,7 +611,6 @@ const TEMPLATE_INDEX_ZT_HTML =
     \\</html>
 ;
 
-/// Updated template for main.zig (recommended structure)
 const MAIN_ZIG_RECOMMENDED_TEMPLATE =
     \\const std = @import("std");
     \\const E12 = @import("engine12");
@@ -760,20 +743,16 @@ const MAIN_ZIG_RECOMMENDED_TEMPLATE =
     \\}
 ;
 
-/// Scaffold a new engine12 project
 pub fn scaffoldProject(
     allocator: std.mem.Allocator,
     project_name: []const u8,
     base_path: []const u8,
 ) !void {
-    _ = base_path; // We use cwd() directly instead
-    // Validate project name
+    _ = base_path;
     if (!cli_utils.validateProjectName(project_name)) {
         std.debug.print("Error: Project name must contain only alphanumeric characters, hyphens, and underscores\n", .{});
         return error.InvalidProjectName;
     }
-
-    // Create project directory (variable removed as it's no longer used directly)
 
     std.fs.cwd().makeDir(project_name) catch |err| {
         if (err == error.PathAlreadyExists) {
@@ -783,13 +762,11 @@ pub fn scaffoldProject(
         return err;
     };
 
-    // Create directory structure
     const src_path = try std.fmt.allocPrint(allocator, "{s}/src", .{project_name});
     std.fs.cwd().makeDir(src_path) catch |err| {
         if (err != error.PathAlreadyExists) return err;
     };
 
-    // Create subdirectories for recommended structure
     const handlers_path = try std.fmt.allocPrint(allocator, "{s}/src/handlers", .{project_name});
     std.fs.cwd().makeDir(handlers_path) catch |err| {
         if (err != error.PathAlreadyExists) return err;
@@ -820,10 +797,8 @@ pub fn scaffoldProject(
         if (err != error.PathAlreadyExists) return err;
     };
 
-    // Change to project directory for zig fetch
     const original_cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch |err| {
         std.debug.print("Error: Failed to get current directory: {}\n", .{err});
-        // Cleanup project directory
         var cleanup_path_buf: [512]u8 = undefined;
         const abs_project_path = std.fmt.bufPrint(&cleanup_path_buf, "./{s}", .{project_name}) catch {
             std.process.exit(1);
@@ -834,7 +809,6 @@ pub fn scaffoldProject(
 
     std.posix.chdir(project_name) catch |err| {
         std.debug.print("Error: Failed to change to project directory '{s}': {}\n", .{ project_name, err });
-        // Cleanup project directory
         var cleanup_path_buf: [512]u8 = undefined;
         const abs_project_path = std.fmt.bufPrint(&cleanup_path_buf, "{s}/{s}", .{ original_cwd, project_name }) catch {
             std.process.exit(1);
@@ -843,27 +817,20 @@ pub fn scaffoldProject(
         return err;
     };
 
-    // Fetch engine12 hash (we're already in the project directory)
     std.debug.print("Fetching engine12 dependency...\n", .{});
     const engine12_hash: []const u8 = cli_utils.fetchEngine12Hash(allocator, ".") catch |err| {
-        // Cleanup on failure - change directory back and delete project
         std.posix.chdir(original_cwd) catch {};
-        // Try to clean up the project directory using a fixed buffer
         var cleanup_path_buf: [512]u8 = undefined;
         const abs_project_path = std.fmt.bufPrint(&cleanup_path_buf, "{s}/{s}", .{ original_cwd, project_name }) catch |fmt_err| {
             std.debug.print("Error: Failed to fetch engine12 dependency: {}\n", .{err});
             std.debug.print("Warning: Could not construct cleanup path: {}\n", .{fmt_err});
-            // Exit immediately to avoid allocator cleanup panics
             std.process.exit(1);
         };
         std.fs.cwd().deleteTree(abs_project_path) catch {};
         std.debug.print("Error: Failed to fetch Engine12 dependency: {}\n", .{err});
-        // Exit immediately to avoid allocator cleanup panics
         std.process.exit(1);
     };
 
-    // Process templates and write files (we're already in the project directory)
-    // Note: build.zig.zon is generated by zig fetch, not templated
     const files = [_]struct { []const u8, []const u8 }{
         .{ "build.zig", BUILD_ZIG_TEMPLATE },
         .{ "src/main.zig", MAIN_ZIG_RECOMMENDED_TEMPLATE },
@@ -880,11 +847,9 @@ pub fn scaffoldProject(
         .{ ".gitignore", GITIGNORE_TEMPLATE },
     };
 
-    // Write all template files with error handling
     for (files) |file_info| {
         const processed = cli_utils.processTemplate(allocator, file_info[1], project_name, engine12_hash) catch |err| {
             std.debug.print("Error: Failed to process template for '{s}': {}\n", .{ file_info[0], err });
-            // Cleanup on failure
             std.posix.chdir(original_cwd) catch {};
             var cleanup_path_buf: [512]u8 = undefined;
             const abs_project_path = std.fmt.bufPrint(&cleanup_path_buf, "{s}/{s}", .{ original_cwd, project_name }) catch {
@@ -893,11 +858,9 @@ pub fn scaffoldProject(
             std.fs.cwd().deleteTree(abs_project_path) catch {};
             std.process.exit(1);
         };
-        // Note: processed is allocated with page_allocator, so we don't free it
 
         cli_utils.writeFile(allocator, ".", file_info[0], processed) catch |err| {
             std.debug.print("Error: Failed to write file '{s}': {}\n", .{ file_info[0], err });
-            // Cleanup on failure
             std.posix.chdir(original_cwd) catch {};
             var cleanup_path_buf: [512]u8 = undefined;
             const abs_project_path = std.fmt.bufPrint(&cleanup_path_buf, "{s}/{s}", .{ original_cwd, project_name }) catch {
@@ -908,7 +871,6 @@ pub fn scaffoldProject(
         };
     }
 
-    // Change back to original directory (defer will handle this, but explicit is clearer)
     std.posix.chdir(original_cwd) catch {};
 
     std.debug.print("Created project '{s}' successfully!\n", .{project_name});
@@ -916,6 +878,5 @@ pub fn scaffoldProject(
     std.debug.print("  cd {s}\n", .{project_name});
     std.debug.print("  zig build run\n", .{});
 
-    // Exit immediately to avoid allocator cleanup issues
     std.process.exit(0);
 }

@@ -3,7 +3,6 @@ const types = @import("types.zig");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 
-/// Health check result with details
 pub const HealthCheckResult = struct {
     status: types.HealthStatus,
     message: []const u8,
@@ -16,8 +15,6 @@ pub const HealthCheckResult = struct {
     };
 };
 
-/// Standard health check handler
-/// Returns basic health status (always healthy if server is running)
 pub fn handleHealth(req: *Request) Response {
     _ = req;
     const result = HealthCheckResult{
@@ -28,8 +25,6 @@ pub fn handleHealth(req: *Request) Response {
     return formatHealthResponse(result);
 }
 
-/// Readiness check handler
-/// Checks if the service is ready to accept traffic (database, dependencies, etc.)
 pub fn handleReady(req: *Request) Response {
     _ = req;
 
@@ -38,7 +33,6 @@ pub fn handleReady(req: *Request) Response {
 
     var overall_status: types.HealthStatus = .healthy;
 
-    // Check database connectivity (if ORM is initialized)
     const db_check = checkDatabase();
     checks.append(std.heap.page_allocator, db_check) catch {
         return Response.internalError();
@@ -47,7 +41,6 @@ pub fn handleReady(req: *Request) Response {
         overall_status = .unhealthy;
     }
 
-    // Check cache (if available)
     const cache_check = checkCache();
     checks.append(std.heap.page_allocator, cache_check) catch {
         return Response.internalError();
@@ -75,10 +68,7 @@ pub fn handleReady(req: *Request) Response {
     return resp;
 }
 
-/// Check database health
 fn checkDatabase() HealthCheckResult.CheckResult {
-    // TODO: Implement actual database connectivity check
-    // For now, assume healthy if no errors occur
     return HealthCheckResult.CheckResult{
         .name = "database",
         .status = .healthy,
@@ -86,10 +76,7 @@ fn checkDatabase() HealthCheckResult.CheckResult {
     };
 }
 
-/// Check cache health
 fn checkCache() HealthCheckResult.CheckResult {
-    // TODO: Implement actual cache connectivity check
-    // For now, assume healthy if no errors occur
     return HealthCheckResult.CheckResult{
         .name = "cache",
         .status = .healthy,
@@ -97,7 +84,6 @@ fn checkCache() HealthCheckResult.CheckResult {
     };
 }
 
-/// Format health check result as JSON response
 fn formatHealthResponse(result: HealthCheckResult) Response {
     var json_buffer = std.ArrayListUnmanaged(u8){};
     defer json_buffer.deinit(std.heap.page_allocator);
@@ -148,7 +134,6 @@ fn formatHealthResponse(result: HealthCheckResult) Response {
     return Response.json(json);
 }
 
-// Tests
 test "checkDatabaseHealth returns healthy" {
     const check = checkDatabase();
     try std.testing.expectEqual(check.status, types.HealthStatus.healthy);

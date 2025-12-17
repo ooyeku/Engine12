@@ -2,23 +2,12 @@ const std = @import("std");
 const Migration = @import("migration.zig").Migration;
 const MigrationRegistry = @import("migration.zig").MigrationRegistry;
 
-/// Discover migrations from a migrations directory
-/// First attempts to use migrations/init.zig convention (if path is provided as comptime)
-/// Falls back to scanning the directory for numbered migration files
-///
-/// Example:
-/// ```zig
-/// var registry = try discoverMigrations(allocator, "src/migrations");
-/// defer registry.deinit();
-/// try orm.runMigrationsFromRegistry(&registry);
-/// ```
 pub fn discoverMigrations(
     allocator: std.mem.Allocator,
     migrations_dir: []const u8,
 ) !MigrationRegistry {
     var registry = MigrationRegistry.init(allocator);
 
-    // Try to open the migrations directory
     var dir = std.fs.cwd().openDir(migrations_dir, .{ .iterate = true }) catch |err| {
         std.debug.print("[Engine12] Warning: Could not open migrations directory '{s}': {}\n", .{ migrations_dir, err });
         return registry; // Return empty registry gracefully
@@ -40,24 +29,19 @@ pub fn discoverMigrations(
         migration_files.deinit(allocator);
     }
 
-    // First, check for init.zig (convention-based approach)
     const init_path = try std.fmt.allocPrint(allocator, "{s}/init.zig", .{migrations_dir});
     defer allocator.free(init_path);
 
     const init_file_result = std.fs.cwd().openFile(init_path, .{});
     if (init_file_result) |init_file| {
         init_file.close();
-        // If init.zig exists, we expect the user to import it manually
-        // This function focuses on directory scanning
         std.debug.print("[Engine12] Info: migrations/init.zig found. For comptime imports, use @import(\"migrations/init.zig\") directly.\n", .{});
     } else |err| {
         if (err != error.FileNotFound) {
             std.debug.print("[Engine12] Warning: Could not read migrations/init.zig: {}\n", .{err});
         }
-        // Fall through to directory scanning
     }
 
-    // Scan directory for numbered migration files: {number}_{name}.zig
     while (try iterator.next()) |entry| {
         if (entry.kind != .file) continue;
 
@@ -65,20 +49,17 @@ pub fn discoverMigrations(
         if (!std.mem.endsWith(u8, name, ".zig")) continue;
         if (std.mem.eql(u8, name, "init.zig")) continue; // Skip init.zig
 
-        // Parse filename: {number}_{name}.zig
         const underscore_pos = std.mem.indexOfScalar(u8, name, '_') orelse {
             std.debug.print("[Engine12] Warning: Skipping migration file '{s}' (doesn't match pattern: number_name.zig)\n", .{name});
             continue;
         };
 
-        // Extract version number
         const version_str = name[0..underscore_pos];
         const version = std.fmt.parseInt(u32, version_str, 10) catch {
             std.debug.print("[Engine12] Warning: Skipping migration file '{s}' (invalid version number)\n", .{name});
             continue;
         };
 
-        // Extract migration name (remove .zig extension)
         const name_start = underscore_pos + 1;
         const name_end = name.len - 4; // Remove .zig
         const migration_name = try allocator.dupe(u8, name[name_start..name_end]);
@@ -91,14 +72,12 @@ pub fn discoverMigrations(
         });
     }
 
-    // Sort by version
     std.mem.sort(MigrationFileInfo, migration_files.items, {}, struct {
         fn lessThan(_: void, a: MigrationFileInfo, b: MigrationFileInfo) bool {
             return a.version < b.version;
         }
     }.lessThan);
 
-    // Parse each migration file
     for (migration_files.items) |file_info| {
         const migration = parseMigrationFile(allocator, file_info.path, file_info.version, file_info.name) catch |err| {
             std.debug.print("[Engine12] Warning: Failed to parse migration file '{s}': {}\n", .{ file_info.path, err });
@@ -111,16 +90,6 @@ pub fn discoverMigrations(
     return registry;
 }
 
-/// Parse a migration file to extract up and down SQL
-/// Expected format:
-/// ```zig
-/// pub const migration = Migration.init(
-///     version,
-///     "name",
-///     "UP SQL HERE",
-///     "DOWN SQL HERE"
-/// );
-/// ```
 fn parseMigrationFile(
     allocator: std.mem.Allocator,
     file_path: []const u8,
@@ -130,8 +99,6 @@ fn parseMigrationFile(
     const content = try std.fs.cwd().readFileAlloc(allocator, file_path, 10 * 1024); // 10KB max
     defer allocator.free(content);
 
-    // Simple parser: look for Migration.init(version, "name", "up_sql", "down_sql")
-    // This is a basic parser - for more complex cases, users should use init.zig
 
     const init_start = std.mem.indexOf(u8, content, "Migration.init") orelse {
         return error.InvalidMigrationFormat;
@@ -139,22 +106,18 @@ fn parseMigrationFile(
 
     var pos = init_start + "Migration.init".len;
 
-    // Skip whitespace and opening parenthesis
     while (pos < content.len and (content[pos] == ' ' or content[pos] == '\t' or content[pos] == '\n' or content[pos] == '(')) {
         pos += 1;
     }
 
-    // Skip version (we already have it)
     while (pos < content.len and (content[pos] == '0' or content[pos] == '1' or content[pos] == '2' or content[pos] == '3' or content[pos] == '4' or content[pos] == '5' or content[pos] == '6' or content[pos] == '7' or content[pos] == '8' or content[pos] == '9')) {
         pos += 1;
     }
 
-    // Skip comma and whitespace
     while (pos < content.len and (content[pos] == ',' or content[pos] == ' ' or content[pos] == '\t' or content[pos] == '\n')) {
         pos += 1;
     }
 
-    // Extract name (string literal) - we already have the name parameter, so just skip it
     if (pos >= content.len or content[pos] != '"') {
         return error.InvalidMigrationFormat;
     }
@@ -165,17 +128,14 @@ fn parseMigrationFile(
     }
     pos += 1; // Skip closing quote
 
-    // Skip comma and whitespace
     while (pos < content.len and (content[pos] == ',' or content[pos] == ' ' or content[pos] == '\t' or content[pos] == '\n')) {
         pos += 1;
     }
 
-    // Extract up SQL (string literal or raw string)
     var up_sql: []const u8 = undefined;
     var up_allocated = false;
 
     if (pos < content.len and content[pos] == '"') {
-        // Regular string
         pos += 1;
         const up_start = pos;
         while (pos < content.len and content[pos] != '"') {
@@ -185,12 +145,10 @@ fn parseMigrationFile(
         up_sql = content[up_start..pos];
         pos += 1;
     } else if (pos < content.len and std.mem.startsWith(u8, content[pos..], "\\\\")) {
-        // Zig multiline string: \\line 1\n\\line 2
         var list = std.ArrayListUnmanaged(u8){};
         defer if (!up_allocated) list.deinit(allocator); // Only deinit if we haven't transferred ownership
 
         while (pos < content.len) {
-            // Check indentation/whitespace before \\
             var line_start_check = pos;
             while (line_start_check < content.len and (content[line_start_check] == ' ' or content[line_start_check] == '\t')) {
                 line_start_check += 1;
@@ -204,7 +162,6 @@ fn parseMigrationFile(
 
                 pos = line_end;
 
-                // Check if there is a next line with \\
                 if (pos < content.len and content[pos] == '\n') {
                     pos += 1; // Skip newline
 
@@ -216,7 +173,6 @@ fn parseMigrationFile(
                     if (next_check < content.len and std.mem.startsWith(u8, content[next_check..], "\\\\")) {
                         try list.append(allocator, '\n');
                     } else {
-                        // Next line is not part of string, stop here
                         break;
                     }
                 } else {
@@ -232,12 +188,10 @@ fn parseMigrationFile(
         return error.InvalidMigrationFormat;
     }
 
-    // Skip comma and whitespace
     while (pos < content.len and (content[pos] == ',' or content[pos] == ' ' or content[pos] == '\t' or content[pos] == '\n')) {
         pos += 1;
     }
 
-    // Extract down SQL (same as up)
     var down_sql: []const u8 = undefined;
     var down_allocated = false;
 
@@ -251,7 +205,6 @@ fn parseMigrationFile(
         down_sql = content[down_start..pos];
         pos += 1;
     } else if (pos < content.len and std.mem.startsWith(u8, content[pos..], "\\\\")) {
-        // Zig multiline string
         var list = std.ArrayListUnmanaged(u8){};
         defer if (!down_allocated) list.deinit(allocator);
 
@@ -296,7 +249,6 @@ fn parseMigrationFile(
         return error.InvalidMigrationFormat;
     }
 
-    // Allocate copies of SQL strings if they weren't allocated by multiline parser
     const up_copy = if (up_allocated) up_sql else try allocator.dupe(u8, up_sql);
     const down_copy = if (down_allocated) down_sql else try allocator.dupe(u8, down_sql);
     const name_copy = try allocator.dupe(u8, name);
@@ -308,7 +260,6 @@ test "discoverMigrations with empty directory" {
     const allocator = std.testing.allocator;
     const test_dir = "test_migrations_empty";
 
-    // Create empty directory
     std.fs.cwd().makeDir(test_dir) catch |err| {
         if (err != error.PathAlreadyExists) return err;
     };
@@ -324,7 +275,6 @@ test "discoverMigrations with numbered files" {
     const allocator = std.testing.allocator;
     const test_dir = "test_migrations_numbered";
 
-    // Create test directory
     std.fs.cwd().makeDir(test_dir) catch |err| {
         if (err != error.PathAlreadyExists) {
             std.fs.cwd().deleteTree(test_dir) catch {};
@@ -333,7 +283,6 @@ test "discoverMigrations with numbered files" {
     };
     defer std.fs.cwd().deleteTree(test_dir) catch {};
 
-    // Create test migration files
     const file1_content =
         \\pub const migration = Migration.init(
         \\    1,
@@ -371,6 +320,5 @@ test "discoverMigrations with non-existent directory" {
     var registry = try discoverMigrations(allocator, "non_existent_migrations_dir_12345");
     defer registry.deinit();
 
-    // Should return empty registry gracefully
     try std.testing.expectEqual(@as(usize, 0), registry.getMigrations().len);
 }

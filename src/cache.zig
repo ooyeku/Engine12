@@ -3,33 +3,24 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const middleware_chain = @import("middleware.zig");
 
-/// Cache-specific errors
 pub const CacheError = error{
     InvalidArgument,
 };
 
-/// Cache entry storing response data and metadata
 pub const CacheEntry = struct {
-    /// Cached response body
     body: []const u8,
 
-    /// ETag value for this cache entry
     etag: []const u8,
 
-    /// Last modified timestamp (milliseconds since epoch)
     last_modified: i64,
 
-    /// Time-to-live in milliseconds
     ttl_ms: u64,
 
-    /// When this entry expires (milliseconds since epoch)
     expires_at: i64,
 
-    /// Content type
     content_type: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, body: []const u8, ttl_ms: u64, content_type: []const u8) (CacheError || std.mem.Allocator.Error || std.fmt.ParseFloatError || error{NoSpaceLeft})!CacheEntry {
-        // Input validation
         if (body.len == 0) {
             std.debug.print("[CacheEntry] Error: Attempted to create cache entry with empty body\n", .{});
             return error.InvalidArgument;
@@ -41,15 +32,12 @@ pub const CacheEntry = struct {
 
         const now = std.time.milliTimestamp();
 
-        // Generate ETag from body hash
-        // CityHash64 in Zig 0.15.x is used as a function, not a struct
         const hash = std.hash.CityHash64.hash(body);
 
         var etag_buffer: [32]u8 = undefined;
         const etag_str = try std.fmt.bufPrint(&etag_buffer, "\"{x}\"", .{hash});
         const etag = try allocator.dupe(u8, etag_str);
 
-        // Duplicate body and content type
         const body_copy = try allocator.dupe(u8, body);
         const content_type_copy = try allocator.dupe(u8, content_type);
 
@@ -74,25 +62,17 @@ pub const CacheEntry = struct {
     }
 };
 
-/// Response cache for storing and retrieving cached responses
 pub const ResponseCache = struct {
-    /// Cache entries keyed by request path
     entries: std.StringHashMap(CacheEntry),
 
-    /// Allocator for cache entries
     allocator: std.mem.Allocator,
 
-    /// Default TTL in milliseconds
     default_ttl_ms: u64,
 
-    /// Maximum number of cache entries (0 = unlimited)
     max_entries: usize = 0,
     
-    /// Insertion order tracking for FIFO eviction (simple alternative to LRU)
-    /// Stores keys in insertion order for O(1) eviction lookup
     insertion_order: std.ArrayListUnmanaged([]const u8) = .{},
 
-    /// Mutex for thread-safe access
     mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator, default_ttl_ms: u64) ResponseCache {
@@ -106,8 +86,6 @@ pub const ResponseCache = struct {
         };
     }
 
-    /// Initialize cache with maximum entry limit
-    /// When limit is reached, oldest entries are evicted (FIFO)
     pub fn initWithLimit(allocator: std.mem.Allocator, default_ttl_ms: u64, max_entries: usize) ResponseCache {
         return ResponseCache{
             .entries = std.StringHashMap(CacheEntry).init(allocator),
@@ -119,17 +97,13 @@ pub const ResponseCache = struct {
         };
     }
 
-    /// Evict the oldest entry (O(1) operation using insertion order tracking)
     fn evictOldest(self: *ResponseCache) void {
         if (self.insertion_order.items.len == 0) return;
         
-        // Get oldest key from front of insertion order
         const key = self.insertion_order.items[0];
         
-        // Remove from insertion order (shift remaining elements)
         _ = self.insertion_order.orderedRemove(0);
         
-        // Remove from entries and free entry (and key)
         if (self.entries.fetchRemove(key)) |removed| {
             var mutable_value = removed.value;
             mutable_value.deinit(self.allocator);
@@ -137,11 +111,6 @@ pub const ResponseCache = struct {
         }
     }
 
-    /// Get a cached response if available and not expired
-    /// Thread-safe: Uses mutex protection for concurrent access
-    ///
-    /// Input validation:
-    /// - Key must not be empty
     pub fn get(self: *ResponseCache, key: []const u8) ?*CacheEntry {
         if (key.len == 0) {
             return null; // Invalid key
@@ -150,13 +119,8 @@ pub const ResponseCache = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Use HashMap.getPtr() for O(1) lookup
-        // HashMap uses string equality (hash + mem.eql), not pointer equality,
-        // so this works correctly even if the key parameter is a different slice than the stored key
         if (self.entries.getPtr(key)) |entry| {
             if (entry.isExpired()) {
-                // Remove expired entry and free its key
-                // fetchRemove uses string equality, so it will find the entry by key content
                 if (self.entries.fetchRemove(key)) |removed| {
                     var mutable_value = removed.value;
                     mutable_value.deinit(self.allocator);
@@ -169,16 +133,7 @@ pub const ResponseCache = struct {
         return null;
     }
 
-    /// Store a response in the cache
-    /// Duplicates the key to ensure it persists beyond the request lifetime
-    /// Thread-safe: Uses mutex protection for concurrent access
-    ///
-    /// Input validation:
-    /// - Key must not be empty
-    /// - Body must not be empty
-    /// - Content type must not be empty
     pub fn set(self: *ResponseCache, key: []const u8, body: []const u8, ttl_ms: ?u64, content_type: []const u8) (CacheError || std.mem.Allocator.Error || std.fmt.ParseFloatError || error{NoSpaceLeft})!void {
-        // Input validation
         if (key.len == 0) {
             std.debug.print("[Cache] Error: Attempted to cache with empty key\n", .{});
             return error.InvalidArgument;
@@ -197,9 +152,7 @@ pub const ResponseCache = struct {
 
         const cache_ttl = ttl_ms orelse self.default_ttl_ms;
 
-        // Remove existing entry if present
         if (self.entries.fetchRemove(key)) |old_entry| {
-            // Remove from insertion order
             for (self.insertion_order.items, 0..) |k, i| {
                 if (std.mem.eql(u8, k, old_entry.key)) {
                     _ = self.insertion_order.orderedRemove(i);
@@ -207,18 +160,15 @@ pub const ResponseCache = struct {
                 }
             }
             
-            // Free the entry and key
             var mutable_value = old_entry.value;
             mutable_value.deinit(self.allocator);
             self.allocator.free(old_entry.key);
         }
 
-        // Enforce max entries limit - O(1) eviction using insertion order
         if (self.max_entries > 0 and self.entries.count() >= self.max_entries) {
             self.evictOldest();
         }
 
-        // Duplicate the key so it persists beyond the request lifetime
         const key_copy = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_copy);
 
@@ -230,15 +180,9 @@ pub const ResponseCache = struct {
 
         try self.entries.put(key_copy, entry);
         
-        // Add to insertion order (newest position at end)
         try self.insertion_order.append(self.allocator, key_copy);
     }
 
-    /// Invalidate a cache entry
-    /// Thread-safe: Uses mutex protection for concurrent access
-    ///
-    /// Input validation:
-    /// - Key must not be empty
     pub fn invalidate(self: *ResponseCache, key: []const u8) void {
         if (key.len == 0) {
             return; // Invalid key, nothing to invalidate
@@ -247,9 +191,7 @@ pub const ResponseCache = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        // Remove from entries and free
         if (self.entries.fetchRemove(key)) |entry| {
-            // Remove from insertion order
             for (self.insertion_order.items, 0..) |k, i| {
                 if (std.mem.eql(u8, k, entry.key)) {
                     _ = self.insertion_order.orderedRemove(i);
@@ -263,11 +205,6 @@ pub const ResponseCache = struct {
         }
     }
 
-    /// Invalidate all cache entries matching a prefix
-    /// Thread-safe: Uses mutex protection for concurrent access
-    ///
-    /// Input validation:
-    /// - Prefix must not be null (empty prefix is valid and matches nothing)
     pub fn invalidatePrefix(self: *ResponseCache, prefix: []const u8) void {
         if (prefix.len == 0) return;
 
@@ -286,9 +223,7 @@ pub const ResponseCache = struct {
             }
         }
 
-        // Remove entries and free keys
         for (keys_to_remove.items) |k| {
-            // Remove from insertion order
             for (self.insertion_order.items, 0..) |io_key, i| {
                 if (std.mem.eql(u8, io_key, k)) {
                     _ = self.insertion_order.orderedRemove(i);
@@ -301,8 +236,6 @@ pub const ResponseCache = struct {
         }
     }
 
-    /// Clean up expired entries
-    /// Thread-safe: Uses mutex protection for concurrent access
     pub fn cleanup(self: *ResponseCache) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -319,7 +252,6 @@ pub const ResponseCache = struct {
             }
         }
 
-        // Remove entries and free keys
         for (keys_to_remove.items) |key| {
             if (self.entries.fetchRemove(key)) |entry| {
                 self.allocator.free(entry.key);
@@ -327,30 +259,23 @@ pub const ResponseCache = struct {
         }
     }
 
-    /// Deinitialize cache and free all entries
-    /// Thread-safe: Uses mutex protection for concurrent access
     pub fn deinit(self: *ResponseCache) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Free all cache entries
         var iterator = self.entries.iterator();
         while (iterator.next()) |entry| {
             var mutable_value = entry.value_ptr.*;
             mutable_value.deinit(self.allocator);
-            // Free the duplicated key
             self.allocator.free(entry.key_ptr.*);
         }
         self.entries.deinit();
         
-        // Free insertion order tracking
         self.insertion_order.deinit(self.allocator);
     }
 };
 
-/// Generate ETag from response body
 pub fn generateETag(body: []const u8, allocator: std.mem.Allocator) ![]const u8 {
-    // CityHash64 in Zig 0.15.x is used as a function, not a struct
     const hash = std.hash.CityHash64.hash(body);
 
     var etag_buffer: [32]u8 = undefined;
@@ -358,27 +283,19 @@ pub fn generateETag(body: []const u8, allocator: std.mem.Allocator) ![]const u8 
     return try allocator.dupe(u8, etag_str);
 }
 
-/// Create a caching middleware that checks cache and validates ETag
-/// Uses global cache access pattern similar to rate limiting
 pub fn createCachingMiddleware(cache_ptr: *ResponseCache, comptime route: []const u8, ttl_ms: ?u64) middleware_chain.PreRequestMiddlewareFn {
     _ = cache_ptr;
     _ = ttl_ms;
     _ = route;
-    // Store cache pointer in a way accessible at runtime
-    // Use global variable pattern similar to rate limiting
     return struct {
         fn mw(req: *Request) middleware_chain.MiddlewareResult {
-            // Access global cache (would need to be set similar to rate limiter)
-            // For now, check cache using request path as key
             const cache_key = req.path();
             const global_cache = @import("engine12.zig").global_cache orelse return .proceed;
             const entry = global_cache.get(cache_key);
 
             if (entry) |cached| {
-                // Check If-None-Match header for ETag validation
                 const if_none_match = req.header("If-None-Match");
                 if (if_none_match) |etag| {
-                    // Remove quotes if present
                     const etag_clean = if (etag.len > 0 and etag[0] == '"')
                         etag[1 .. etag.len - 1]
                     else
@@ -389,14 +306,12 @@ pub fn createCachingMiddleware(cache_ptr: *ResponseCache, comptime route: []cons
                         cached.etag;
 
                     if (std.mem.eql(u8, etag_clean, cached_etag_clean)) {
-                        // ETag matches - return 304 Not Modified
                         req.context.put("cache_hit", "true") catch {};
                         req.context.put("cache_etag", cached.etag) catch {};
                         return .abort; // Will be handled by middleware chain to return 304
                     }
                 }
 
-                // Cache hit - store in context for response middleware
                 req.context.put("cache_hit", "true") catch {};
                 req.context.put("cache_body", cached.body) catch {};
                 req.context.put("cache_etag", cached.etag) catch {};
@@ -408,22 +323,17 @@ pub fn createCachingMiddleware(cache_ptr: *ResponseCache, comptime route: []cons
     }.mw;
 }
 
-/// Create a response middleware that caches responses and adds ETag headers
 pub fn createCacheResponseMiddleware(cache: *ResponseCache, route: []const u8, ttl_ms: ?u64) middleware_chain.ResponseMiddlewareFn {
     _ = route;
     _ = ttl_ms;
     _ = cache;
     return struct {
         fn mw(resp: Response) Response {
-            // Response caching and ETag generation would be handled here
-            // For now, this is a placeholder - full implementation would require
-            // access to response body which depends on ziggurat's Response API
             return resp;
         }
     }.mw;
 }
 
-// Tests
 test "ResponseCache set and get" {
     var cache = ResponseCache.init(std.testing.allocator, 1000);
     defer cache.deinit();
@@ -443,13 +353,10 @@ test "ResponseCache expiration" {
 
     try cache.set("/test", "test body", null, "text/plain");
 
-    // Entry should exist immediately
     try std.testing.expect(cache.get("/test") != null);
 
-    // Wait for expiration
     std.Thread.sleep(20 * std.time.ns_per_ms);
 
-    // Entry should be expired
     try std.testing.expect(cache.get("/test") == null);
 }
 
@@ -550,7 +457,6 @@ test "CacheEntry same body generates same ETag" {
     var entry2 = try CacheEntry.init(std.testing.allocator, "test body", 1000, "text/plain");
     defer entry2.deinit(std.testing.allocator);
 
-    // Same body should generate same hash
     try std.testing.expectEqualStrings(entry1.etag, entry2.etag);
 }
 
@@ -561,7 +467,6 @@ test "CacheEntry different body generates different ETag" {
     var entry2 = try CacheEntry.init(std.testing.allocator, "body2", 1000, "text/plain");
     defer entry2.deinit(std.testing.allocator);
 
-    // Different bodies should generate different ETags
     try std.testing.expect(!std.mem.eql(u8, entry1.etag, entry2.etag));
 }
 
@@ -582,7 +487,6 @@ test "ResponseCache invalidate non-existent key" {
     var cache = ResponseCache.init(std.testing.allocator, 1000);
     defer cache.deinit();
 
-    // Should not crash
     cache.invalidate("/nonexistent");
 }
 
@@ -592,7 +496,6 @@ test "ResponseCache invalidatePrefix empty prefix" {
 
     try cache.set("/test", "body", null, "text/plain");
 
-    // Empty prefix should not match anything
     cache.invalidatePrefix("");
 
     try std.testing.expect(cache.get("/test") != null);
@@ -603,7 +506,6 @@ test "generateETag creates valid ETag" {
     defer std.testing.allocator.free(etag);
 
     try std.testing.expect(etag.len > 0);
-    // ETag should be quoted
     try std.testing.expect(etag[0] == '"');
     try std.testing.expect(etag[etag.len - 1] == '"');
 }
@@ -670,7 +572,6 @@ test "ResponseCache max entries limit" {
     try std.testing.expect(cache.get("/test1") != null);
     try std.testing.expect(cache.get("/test2") != null);
 
-    // Adding third entry should evict first entry
     try cache.set("/test3", "body3", null, "text/plain");
     try std.testing.expect(cache.get("/test1") == null); // Evicted
     try std.testing.expect(cache.get("/test2") != null);

@@ -1,41 +1,24 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 
-/// Type inference and validation for templates
-/// Validates that context types match template requirements
 pub const TypeChecker = struct {
-    /// Infer required type from AST
-    /// Returns a struct type definition that represents required context
-    /// This is a simplified version - full implementation would generate actual struct types
     pub fn inferRequiredType(comptime ast_tree: ast.TemplateAST) type {
-        // For Phase 3, we'll use a simple approach
-        // Walk AST and collect field requirements
-        // Full implementation would use comptime type building
         _ = ast_tree;
         
-        // Placeholder - return a generic struct
-        // In full implementation, this would build a struct type at comptime
         return struct {
-            // Fields would be inferred from AST
         };
     }
     
-    /// Validate that context type matches AST requirements
-    /// This is a compile-time check
     pub fn validateContext(
         comptime ast_tree: ast.TemplateAST,
         comptime context_type: type,
     ) void {
-        // For Phase 3, we'll do basic validation
-        // Walk AST and check that all accessed fields exist in context_type
         
-        // Validate each node - use inline for to ensure comptime evaluation
         inline for (ast_tree.nodes) |node| {
             validateNode(node, context_type);
         }
     }
     
-    /// Validate a single node
     fn validateNode(
         comptime node: ast.TemplateAST.Node,
         comptime context_type: type,
@@ -59,36 +42,29 @@ pub const TypeChecker = struct {
                 validateContext(for_node.block, context_type);
             },
             .include => |_| {
-                // Includes validated separately
             },
             .text => |_| {
-                // Text nodes don't need validation
             },
         }
     }
     
-    /// Validate that a variable path exists in context type
     fn validateVariablePath(
         comptime path: []const []const u8,
         comptime context_type: type,
     ) void {
         if (path.len == 0) {
-            // Root context - always valid
             return;
         }
         
-        // Navigate through struct fields
         var current_type = context_type;
         var i: usize = 0;
         
         while (i < path.len) : (i += 1) {
             const field_name = path[i];
             
-            // Check if current_type is a struct
             const type_info = @typeInfo(current_type);
             switch (type_info) {
                 .@"struct" => |struct_info| {
-                    // Find field in struct
                     var field_found = false;
                     var field_type: type = void;
                     
@@ -101,13 +77,10 @@ pub const TypeChecker = struct {
                     }
                     
                     if (!field_found) {
-                        // Build available fields list for better error message
-                        // Note: Could list available fields here, but compile-time string building is complex
                         @compileError("Template error: Context type '" ++ @typeName(context_type) ++ "' has no field '" ++ field_name ++ "'. " ++
                             "Available fields in " ++ @typeName(context_type) ++ ": check struct definition.");
                     }
                     
-                    // Check if field is optional
                     const field_type_info = @typeInfo(field_type);
                     switch (field_type_info) {
                         .@"optional" => |optional_info| {
@@ -118,14 +91,10 @@ pub const TypeChecker = struct {
                         },
                     }
                     
-                    // If this is the last path element, check if it's accessible
                     if (i == path.len - 1) {
-                        // Field exists and is accessible
                         return;
                     }
                     
-                    // For nested paths, check if current_type supports field access
-                    // Arrays and slices are handled specially
                     const next_type_info = @typeInfo(current_type);
                     switch (next_type_info) {
                         .array, .pointer => {
@@ -146,7 +115,6 @@ pub const TypeChecker = struct {
     }
 };
 
-// Tests
 test "validate simple context" {
     comptime {
         const TestAST = ast.TemplateAST.init(&[_]ast.TemplateAST.Node{

@@ -2,14 +2,12 @@ const std = @import("std");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 
-/// Metric type
 pub const MetricType = enum {
     counter,
     histogram,
     gauge,
 };
 
-/// Metric entry
 pub const Metric = struct {
     name: []const u8,
     value: f64,
@@ -31,26 +29,21 @@ pub const Metric = struct {
         self.labels.deinit();
     }
 
-    /// Add a label to the metric
     pub fn addLabel(self: *Metric, key: []const u8, value: []const u8) !void {
         try self.labels.put(key, value);
     }
 };
 
-/// Metrics collector with thread-safe atomic counters
 pub const MetricsCollector = struct {
     metrics: std.ArrayListUnmanaged(Metric),
     allocator: std.mem.Allocator,
 
-    // Route timing data (protected by mutex for complex operations)
     route_timings: std.StringHashMap(RouteTiming),
     route_timings_mutex: std.Thread.Mutex = .{},
 
-    // Thread-safe atomic request counters
     request_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     error_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
-    // Mutex for metrics list (complex operations)
     metrics_mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) MetricsCollector {
@@ -65,34 +58,28 @@ pub const MetricsCollector = struct {
         };
     }
 
-    /// Record a metric (thread-safe)
     pub fn record(self: *MetricsCollector, metric: Metric) !void {
         self.metrics_mutex.lock();
         defer self.metrics_mutex.unlock();
         try self.metrics.append(self.allocator, metric);
     }
 
-    /// Increment request counter (lock-free, thread-safe)
     pub fn incrementRequest(self: *MetricsCollector) void {
         _ = self.request_count.fetchAdd(1, .monotonic);
     }
 
-    /// Increment error counter (lock-free, thread-safe)
     pub fn incrementError(self: *MetricsCollector) void {
         _ = self.error_count.fetchAdd(1, .monotonic);
     }
 
-    /// Get current request count (thread-safe)
     pub fn getRequestCount(self: *const MetricsCollector) u64 {
         return self.request_count.load(.monotonic);
     }
 
-    /// Get current error count (thread-safe)
     pub fn getErrorCount(self: *const MetricsCollector) u64 {
         return self.error_count.load(.monotonic);
     }
 
-    /// Record route timing (thread-safe)
     pub fn recordRouteTiming(self: *MetricsCollector, route: []const u8, duration_ms: u64) !void {
         self.route_timings_mutex.lock();
         defer self.route_timings_mutex.unlock();
@@ -104,7 +91,6 @@ pub const MetricsCollector = struct {
             if (duration_ms < timing.min_ms) timing.min_ms = duration_ms;
             if (duration_ms > timing.max_ms) timing.max_ms = duration_ms;
         } else {
-            // Duplicate the route string to prevent use-after-free when request arena is freed
             const owned_route = try self.allocator.dupe(u8, route);
             const new_timing = RouteTiming{
                 .route = owned_route,
@@ -117,18 +103,14 @@ pub const MetricsCollector = struct {
         }
     }
 
-    /// Get Prometheus format metrics (thread-safe)
     pub fn getPrometheusMetrics(self: *MetricsCollector) ![]const u8 {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(self.allocator);
 
-        // Request counter (atomic load)
         try writer.print("http_requests_total {d}\n", .{self.request_count.load(.monotonic)});
 
-        // Error counter (atomic load)
         try writer.print("http_errors_total {d}\n", .{self.error_count.load(.monotonic)});
 
-        // Route timings (mutex protected)
         self.route_timings_mutex.lock();
         defer self.route_timings_mutex.unlock();
 
@@ -152,7 +134,6 @@ pub const MetricsCollector = struct {
         }
         self.metrics.deinit(self.allocator);
 
-        // Free all duplicated route strings
         var iterator = self.route_timings.iterator();
         while (iterator.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -161,7 +142,6 @@ pub const MetricsCollector = struct {
     }
 };
 
-/// Route timing statistics
 pub const RouteTiming = struct {
     route: []const u8,
     count: u64,
@@ -170,7 +150,6 @@ pub const RouteTiming = struct {
     max_ms: u64,
 };
 
-/// Request timing context
 pub const RequestTiming = struct {
     start_time: i64,
     route: []const u8,
@@ -194,7 +173,6 @@ pub const RequestTiming = struct {
     }
 };
 
-// Tests
 test "MetricsCollector incrementRequest" {
     var collector = MetricsCollector.init(std.testing.allocator);
     defer collector.deinit();

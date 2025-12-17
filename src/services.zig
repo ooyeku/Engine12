@@ -1,7 +1,6 @@
 const std = @import("std");
 const types = @import("types.zig");
 
-/// Service state enumeration
 pub const ServiceState = enum {
     stopped,
     starting,
@@ -11,60 +10,23 @@ pub const ServiceState = enum {
     restarting,
 };
 
-/// Restart policy for services
 pub const RestartPolicy = enum {
-    /// Never restart automatically
     never,
-    /// Restart on failure only
     on_failure,
-    /// Always restart (unless explicitly stopped)
     always,
-    /// Restart up to max_retries times
     on_failure_limited,
 };
 
-/// Service configuration options
 pub const ServiceConfig = struct {
-    /// Human-readable name for the service
     name: []const u8,
-    /// Restart policy
     restart_policy: RestartPolicy = .on_failure,
-    /// Maximum restart attempts (for on_failure_limited policy)
     max_retries: u32 = 3,
-    /// Delay between restart attempts (milliseconds)
     restart_delay_ms: u64 = 1000,
-    /// Health check interval (milliseconds, 0 = disabled)
     health_check_interval_ms: u64 = 30000,
-    /// Startup timeout (milliseconds)
     startup_timeout_ms: u64 = 30000,
-    /// Shutdown timeout (milliseconds)
     shutdown_timeout_ms: u64 = 10000,
 };
 
-/// Service interface for background services/daemons.
-/// Implement this interface to create managed services that can be
-/// started, stopped, and health-checked by the ServiceRegistry.
-///
-/// Example:
-/// ```zig
-/// const MyWorker = struct {
-///     running: std.atomic.Value(bool),
-///
-///     pub fn start(self: *MyWorker) !void {
-///         self.running.store(true, .monotonic);
-///         // Start background work...
-///     }
-///
-///     pub fn stop(self: *MyWorker) void {
-///         self.running.store(false, .monotonic);
-///     }
-///
-///     pub fn healthCheck(self: *MyWorker) types.HealthStatus {
-///         if (self.running.load(.monotonic)) return .healthy;
-///         return .unhealthy;
-///     }
-/// };
-/// ```
 pub const Service = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -76,28 +38,22 @@ pub const Service = struct {
         getName: *const fn (*anyopaque) []const u8,
     };
 
-    /// Start the service
     pub fn start(self: Service) !void {
         return self.vtable.start(self.ptr);
     }
 
-    /// Stop the service
     pub fn stop(self: Service) void {
         self.vtable.stop(self.ptr);
     }
 
-    /// Check service health
     pub fn healthCheck(self: Service) types.HealthStatus {
         return self.vtable.healthCheck(self.ptr);
     }
 
-    /// Get service name
     pub fn getName(self: Service) []const u8 {
         return self.vtable.getName(self.ptr);
     }
 
-    /// Create a Service interface from a concrete type.
-    /// The type must implement start(), stop(), healthCheck(), and optionally getName().
     pub fn init(comptime T: type, ptr: *T) Service {
         const Impl = struct {
             fn start(p: *anyopaque) anyerror!void {
@@ -136,7 +92,6 @@ pub const Service = struct {
     }
 };
 
-/// Managed service entry with state tracking
 pub const ManagedService = struct {
     service: Service,
     config: ServiceConfig,
@@ -158,7 +113,6 @@ pub const ManagedService = struct {
         };
     }
 
-    /// Start the managed service with error handling
     pub fn start(self: *ManagedService) !void {
         if (self.state == .running) return;
 
@@ -173,7 +127,6 @@ pub const ManagedService = struct {
         self.restart_count = 0;
     }
 
-    /// Stop the managed service
     pub fn stop(self: *ManagedService) void {
         if (self.state == .stopped) return;
 
@@ -183,7 +136,6 @@ pub const ManagedService = struct {
         self.started_at = null;
     }
 
-    /// Check if service needs restart based on policy
     pub fn shouldRestart(self: *const ManagedService) bool {
         if (self.state != .failed) return false;
 
@@ -195,7 +147,6 @@ pub const ManagedService = struct {
         };
     }
 
-    /// Attempt to restart the service
     pub fn restart(self: *ManagedService) !void {
         if (self.state == .running) {
             self.stop();
@@ -204,7 +155,6 @@ pub const ManagedService = struct {
         self.state = .restarting;
         self.restart_count += 1;
 
-        // Wait before restart if configured
         if (self.config.restart_delay_ms > 0) {
             std.time.sleep(self.config.restart_delay_ms * std.time.ns_per_ms);
         }
@@ -212,13 +162,11 @@ pub const ManagedService = struct {
         try self.start();
     }
 
-    /// Get service health status
     pub fn getHealth(self: *ManagedService) types.HealthStatus {
         if (self.state != .running) return .unhealthy;
         return self.service.healthCheck();
     }
 
-    /// Get uptime in milliseconds (or null if not running)
     pub fn getUptime(self: *const ManagedService) ?i64 {
         if (self.started_at) |started| {
             return std.time.milliTimestamp() - started;
@@ -227,24 +175,6 @@ pub const ManagedService = struct {
     }
 };
 
-/// Service registry for managing multiple services.
-/// Provides centralized lifecycle management, health checking, and restart handling.
-///
-/// Example:
-/// ```zig
-/// var registry = ServiceRegistry.init(allocator);
-/// defer registry.deinit();
-///
-/// var worker = MyWorker{};
-/// try registry.register(Service.init(MyWorker, &worker), .{
-///     .name = "my-worker",
-///     .restart_policy = .on_failure,
-/// });
-///
-/// try registry.startAll();
-/// // ... app runs ...
-/// registry.stopAll();
-/// ```
 pub const ServiceRegistry = struct {
     services: std.StringHashMap(ManagedService),
     allocator: std.mem.Allocator,
@@ -263,13 +193,11 @@ pub const ServiceRegistry = struct {
     pub fn deinit(self: *ServiceRegistry) void {
         self.stopAll();
 
-        // Wait for health check thread if running
         self.running.store(false, .monotonic);
         if (self.health_check_thread) |thread| {
             thread.join();
         }
 
-        // Free service name copies
         var it = self.services.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -277,7 +205,6 @@ pub const ServiceRegistry = struct {
         self.services.deinit();
     }
 
-    /// Register a service with the registry.
     pub fn register(self: *ServiceRegistry, service: Service, config: ServiceConfig) !void {
         const name_copy = try self.allocator.dupe(u8, config.name);
         errdefer self.allocator.free(name_copy);
@@ -289,12 +216,10 @@ pub const ServiceRegistry = struct {
         try self.services.put(name_copy, managed);
     }
 
-    /// Get a service by name
     pub fn get(self: *ServiceRegistry, name: []const u8) ?*ManagedService {
         return self.services.getPtr(name);
     }
 
-    /// Start all registered services
     pub fn startAll(self: *ServiceRegistry) !void {
         var it = self.services.valueIterator();
         while (it.next()) |managed| {
@@ -303,12 +228,10 @@ pub const ServiceRegistry = struct {
                     managed.config.name,
                     @errorName(err),
                 });
-                // Continue starting other services
             };
         }
     }
 
-    /// Stop all registered services
     pub fn stopAll(self: *ServiceRegistry) void {
         var it = self.services.valueIterator();
         while (it.next()) |managed| {
@@ -316,7 +239,6 @@ pub const ServiceRegistry = struct {
         }
     }
 
-    /// Start a specific service by name
     pub fn startService(self: *ServiceRegistry, name: []const u8) !void {
         if (self.services.getPtr(name)) |managed| {
             try managed.start();
@@ -325,7 +247,6 @@ pub const ServiceRegistry = struct {
         }
     }
 
-    /// Stop a specific service by name
     pub fn stopService(self: *ServiceRegistry, name: []const u8) !void {
         if (self.services.getPtr(name)) |managed| {
             managed.stop();
@@ -334,7 +255,6 @@ pub const ServiceRegistry = struct {
         }
     }
 
-    /// Get overall health status (healthy only if all services are healthy)
     pub fn getOverallHealth(self: *ServiceRegistry) types.HealthStatus {
         var any_degraded = false;
 
@@ -348,7 +268,6 @@ pub const ServiceRegistry = struct {
         return if (any_degraded) .degraded else .healthy;
     }
 
-    /// Get health status for all services
     pub fn getHealthReport(self: *ServiceRegistry, allocator: std.mem.Allocator) ![]const ServiceHealthReport {
         var reports = std.ArrayListUnmanaged(ServiceHealthReport){};
         errdefer reports.deinit(allocator);
@@ -369,11 +288,9 @@ pub const ServiceRegistry = struct {
         return reports.toOwnedSlice(allocator);
     }
 
-    /// Check all services and restart failed ones according to their policy
     pub fn checkAndRestart(self: *ServiceRegistry) void {
         var it = self.services.valueIterator();
         while (it.next()) |managed| {
-            // Check health of running services
             if (managed.state == .running) {
                 const health = managed.service.healthCheck();
                 if (health == .unhealthy) {
@@ -384,7 +301,6 @@ pub const ServiceRegistry = struct {
                 }
             }
 
-            // Restart failed services according to policy
             if (managed.shouldRestart()) {
                 std.debug.print("[ServiceRegistry] Restarting service '{s}' (attempt {d})\n", .{
                     managed.config.name,
@@ -397,7 +313,6 @@ pub const ServiceRegistry = struct {
         }
     }
 
-    /// Start background health check loop
     pub fn startHealthChecks(self: *ServiceRegistry) !void {
         self.running.store(true, .monotonic);
         self.health_check_thread = try std.Thread.spawn(.{}, healthCheckLoop, .{self});
@@ -407,7 +322,6 @@ pub const ServiceRegistry = struct {
         while (self.running.load(.monotonic)) {
             self.checkAndRestart();
 
-            // Sleep for minimum health check interval among services
             var min_interval: u64 = 30000; // Default 30s
             var it = self.services.valueIterator();
             while (it.next()) |managed| {
@@ -423,7 +337,6 @@ pub const ServiceRegistry = struct {
     }
 };
 
-/// Health report for a single service
 pub const ServiceHealthReport = struct {
     name: []const u8,
     state: ServiceState,
@@ -433,11 +346,9 @@ pub const ServiceHealthReport = struct {
     last_error: ?[]const u8,
 };
 
-// Tests
 test "ServiceRegistry basic operations" {
     const allocator = std.testing.allocator;
 
-    // Create a mock service
     const MockService = struct {
         started: bool = false,
         healthy: bool = true,
@@ -506,15 +417,12 @@ test "ServiceRegistry restart policy" {
         .restart_delay_ms = 0, // No delay for tests
     });
 
-    // First start attempt will fail
     registry.startAll() catch {};
 
-    // Get the managed service
     if (registry.get("failing-service")) |managed| {
         try std.testing.expectEqual(managed.state, .failed);
         try std.testing.expect(managed.shouldRestart());
 
-        // Restart should succeed on third attempt (after 2 failures)
         try managed.restart();
         try managed.restart();
 

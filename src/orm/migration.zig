@@ -29,7 +29,6 @@ pub const MigrationRegistry = struct {
     }
 
     pub fn add(self: *MigrationRegistry, migration: Migration) !void {
-        // Check for duplicate versions
         for (self.migrations.items) |m| {
             if (m.version == migration.version) {
                 return error.DuplicateMigrationVersion;
@@ -38,7 +37,6 @@ pub const MigrationRegistry = struct {
 
         try self.migrations.append(self.allocator, migration);
 
-        // Sort by version
         std.mem.sort(Migration, self.migrations.items, {}, struct {
             fn lessThan(_: void, a: Migration, b: Migration) bool {
                 return a.version < b.version;

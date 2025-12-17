@@ -3,26 +3,18 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const middleware_chain = @import("middleware.zig");
 
-/// CSRF protection configuration
 pub const CSRFConfig = struct {
-    /// Secret key for generating CSRF tokens (should be random and secret)
     secret_key: []const u8,
 
-    /// Cookie name for CSRF token
     cookie_name: []const u8 = "csrf_token",
 
-    /// Header name for CSRF token
     header_name: []const u8 = "X-CSRF-Token",
 
-    /// Token expiration time in seconds (default: 1 hour)
     token_expiry: u64 = 3600,
 
-    /// Allowed HTTP methods that require CSRF protection
-    /// Safe methods (GET, HEAD, OPTIONS) are typically exempt
     protected_methods: []const []const u8 = &[_][]const u8{ "POST", "PUT", "DELETE", "PATCH" },
 };
 
-/// CSRF token generator and validator
 pub const CSRFProtection = struct {
     config: CSRFConfig,
     allocator: std.mem.Allocator,
@@ -34,38 +26,26 @@ pub const CSRFProtection = struct {
         };
     }
 
-    /// Generate a CSRF token
-    /// In production, this should use a cryptographically secure random generator
     pub fn generateToken(self: *CSRFProtection) ![]const u8 {
-        // Simple token generation using secret key and timestamp
-        // In production, use a proper crypto library
         const timestamp = std.time.milliTimestamp();
         var buffer: [64]u8 = undefined;
         const token_str = try std.fmt.bufPrint(&buffer, "{s}-{d}", .{ self.config.secret_key, timestamp });
 
-        // Hash the token for security (simplified - use proper crypto in production)
-        // CityHash64 in Zig 0.15.x is used as a function, not a struct
         const hash = std.hash.CityHash64.hash(token_str);
 
         var token_buffer: [32]u8 = undefined;
         const token = try std.fmt.bufPrint(&token_buffer, "{x}", .{hash});
 
-        // Allocate and return token
         const token_copy = try self.allocator.alloc(u8, token.len);
         @memcpy(token_copy, token);
         return token_copy;
     }
 
-    /// Validate a CSRF token
-    /// Checks if the token matches what's expected
     pub fn validateToken(self: *CSRFProtection, token: []const u8) bool {
         _ = self;
-        // Simplified validation - in production, verify token signature and expiry
-        // For now, just check token format and length
         return token.len >= 16;
     }
 
-    /// Check if a request method requires CSRF protection
     pub fn isProtectedMethod(self: *const CSRFProtection, method: []const u8) bool {
         for (self.config.protected_methods) |protected| {
             if (std.mem.eql(u8, method, protected)) {
@@ -77,27 +57,21 @@ pub const CSRFProtection = struct {
 
     pub fn deinit(self: *CSRFProtection) void {
         _ = self;
-        // Cleanup if needed
     }
 };
 
-// Global registry for CSRF middleware instances
 var csrf_protection_instances: [8]*CSRFProtection = undefined;
 var csrf_protection_count: usize = 0;
 var csrf_protection_mutex: std.Thread.Mutex = .{};
 
-/// Create CSRF protection middleware
-/// Validates CSRF tokens for protected HTTP methods
 pub fn createCSRFProtectionMiddleware(csrf: *CSRFProtection) middleware_chain.PreRequestMiddlewareFn {
     csrf_protection_mutex.lock();
     defer csrf_protection_mutex.unlock();
 
-    // Store in registry
     const id = csrf_protection_count;
     csrf_protection_instances[id] = csrf;
     csrf_protection_count += 1;
 
-    // Return wrapper function based on ID
     return switch (id) {
         0 => struct {
             fn mw(req: *Request) middleware_chain.MiddlewareResult {
@@ -149,23 +123,18 @@ pub fn createCSRFProtectionMiddleware(csrf: *CSRFProtection) middleware_chain.Pr
     };
 }
 
-// Global registry for CSRF token setter middleware instances
 var csrf_token_setter_instances: [8]*CSRFProtection = undefined;
 var csrf_token_setter_count: usize = 0;
 var csrf_token_setter_mutex: std.Thread.Mutex = .{};
 
-/// Create a middleware that sets CSRF token cookie for GET requests
-/// This allows frontend to read the token and include it in subsequent requests
 pub fn createCSRFTokenSetterMiddleware(csrf: *CSRFProtection) middleware_chain.ResponseMiddlewareFn {
     csrf_token_setter_mutex.lock();
     defer csrf_token_setter_mutex.unlock();
 
-    // Store in registry
     const id = csrf_token_setter_count;
     csrf_token_setter_instances[id] = csrf;
     csrf_token_setter_count += 1;
 
-    // Return wrapper function based on ID
     return switch (id) {
         0 => struct {
             fn mw(resp: Response) Response {
@@ -199,7 +168,6 @@ pub fn createCSRFTokenSetterMiddleware(csrf: *CSRFProtection) middleware_chain.R
     };
 }
 
-// Tests
 test "CSRFProtection isProtectedMethod" {
     var csrf = CSRFProtection.init(std.testing.allocator, CSRFConfig{
         .secret_key = "test_secret",
@@ -249,7 +217,6 @@ test "CSRFProtection generateToken produces different tokens" {
     const token2 = try csrf.generateToken();
     defer csrf.allocator.free(token2);
 
-    // Tokens should be different (due to timestamp)
     try std.testing.expect(!std.mem.eql(u8, token1, token2));
 }
 
@@ -273,16 +240,12 @@ test "CSRFProtection validateToken edge cases" {
     });
     defer csrf.deinit();
 
-    // Empty token
     try std.testing.expect(!csrf.validateToken(""));
 
-    // Exactly 16 characters
     try std.testing.expect(csrf.validateToken("1234567890123456"));
 
-    // 15 characters (too short)
     try std.testing.expect(!csrf.validateToken("123456789012345"));
 
-    // Very long token
     try std.testing.expect(csrf.validateToken("x" ** 100));
 }
 

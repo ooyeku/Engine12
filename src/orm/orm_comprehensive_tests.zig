@@ -2,8 +2,6 @@ const std = @import("std");
 const Database = @import("database.zig").Database;
 const ORM = @import("orm.zig").ORM;
 
-// Comprehensive test suite for ORM methods
-// This file validates all ORM operations work correctly
 
 test "ORM create - basic insert" {
     const allocator = std.testing.allocator;
@@ -17,7 +15,6 @@ test "ORM create - basic insert" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Table names are now pluralized automatically: User -> users
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
@@ -30,7 +27,6 @@ test "ORM create - basic insert" {
 
     try orm.create(User, user);
 
-    // Verify the insert worked
     var result = try orm.query("SELECT * FROM users");
     defer result.deinit();
     try std.testing.expect(result.columnCount() == 3);
@@ -52,7 +48,6 @@ test "ORM create - with auto-increment id" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Table names are now pluralized automatically: User -> users
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
 
     var orm = ORM.init(db, allocator);
@@ -101,7 +96,6 @@ test "ORM create - with optional fields (null values skipped)" {
 
     try orm.create(User, user);
 
-    // Verify only name was inserted (description should be NULL in DB)
     var result = try orm.query("SELECT name, description FROM users");
     defer result.deinit();
 
@@ -136,7 +130,6 @@ test "ORM create - with enum field" {
 
     try orm.create(User, user);
 
-    // Verify enum was stored as integer
     var result = try orm.query("SELECT status FROM users");
     defer result.deinit();
 
@@ -420,7 +413,6 @@ test "ORM update - with optional fields (null skipped)" {
 
     try orm.update(User, updated_user);
 
-    // Verify name was updated but description remains unchanged
     var result = try orm.query("SELECT name, description FROM users WHERE id = 1");
     defer result.deinit();
 
@@ -509,7 +501,6 @@ test "ORM delete - non-existent record" {
 
     var orm = ORM.init(db, allocator);
 
-    // Deleting non-existent record should not error
     try orm.delete(User, 999);
 
     var users = try orm.findAll(User);
@@ -539,11 +530,9 @@ test "ORM full CRUD cycle" {
 
     var orm = ORM.init(db, allocator);
 
-    // Create
     const user1 = User{ .id = 0, .name = "Alice", .age = 25 };
     try orm.create(User, user1);
 
-    // Read
     var users = try orm.findAll(User);
     defer {
         for (users.items) |user| {
@@ -554,21 +543,17 @@ test "ORM full CRUD cycle" {
     try std.testing.expectEqual(@as(usize, 1), users.items.len);
     const id = users.items[0].id;
 
-    // Update
     const updated = User{ .id = id, .name = "Bob", .age = 30 };
     try orm.update(User, updated);
 
-    // Verify update
     const found = try orm.find(User, id);
     defer if (found) |u| allocator.free(u.name);
     try std.testing.expect(found != null);
     try std.testing.expectEqualStrings("Bob", found.?.name);
     try std.testing.expectEqual(@as(i32, 30), found.?.age);
 
-    // Delete
     try orm.delete(User, id);
 
-    // Verify delete
     var final_users = try orm.findAll(User);
     defer {
         for (final_users.items) |user| {
@@ -590,7 +575,6 @@ test "ORM findAll - column count mismatch detection" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Create table with more columns than struct fields (now uses pluralized table name)
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);
@@ -610,7 +594,6 @@ test "ORM where - column count mismatch detection" {
     var db = try Database.open(":memory:", allocator);
     defer db.close();
 
-    // Create table with more columns than struct fields (now uses pluralized table name)
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var orm = ORM.init(db, allocator);

@@ -2,7 +2,6 @@ const std = @import("std");
 const ziggurat = @import("ziggurat");
 const Response = @import("response.zig").Response;
 
-/// FileServer struct for serving static files.  Supports caching and file size limits.
 pub const FileServer = struct {
     allocator: std.mem.Allocator,
     base_path: []const u8,
@@ -28,22 +27,14 @@ pub const FileServer = struct {
         };
     }
 
-    /// Disable cache for this file server (useful in development mode)
     pub fn disableCache(self: *FileServer) void {
         self.enable_cache = false;
     }
 
-    /// Enable cache for this file server
     pub fn enableCache(self: *FileServer) void {
         self.enable_cache = true;
     }
 
-    /// Create a handler function that serves files from this FileServer
-    /// The handler uses the route path to determine which file to serve
-    ///
-    /// WARNING: The returned handler captures a pointer to this FileServer.
-    /// The FileServer must outlive the handler's usage. If the FileServer is
-    /// stack-allocated, ensure it remains in scope while the handler is used.
     pub fn createHandler(self: *const FileServer) fn (*ziggurat.request.Request) ziggurat.response.Response {
         const self_ptr = self;
         const mount_path = self.base_path;
@@ -52,27 +43,17 @@ pub const FileServer = struct {
             const base = mount_path;
 
             fn handler(request: *ziggurat.request.Request) ziggurat.response.Response {
-                // Since ziggurat doesn't expose request.uri directly,
-                // we'll need to handle this at the route level
-                // For now, serve the index file for the base path
                 _ = request;
 
-                // If base path is "/", serve index.html
                 if (std.mem.eql(u8, base, "/")) {
                     return fs.serveFile("/").toZiggurat();
                 }
 
-                // Otherwise serve the base path
                 return fs.serveFile(base).toZiggurat();
             }
         }.handler;
     }
 
-    /// Create a handler that serves a specific file path
-    ///
-    /// WARNING: The returned handler captures a pointer to this FileServer.
-    /// The FileServer must outlive the handler's usage. If the FileServer is
-    /// stack-allocated, ensure it remains in scope while the handler is used.
     pub fn createPathHandler(self: *const FileServer, route_path: []const u8) fn (*ziggurat.request.Request) ziggurat.response.Response {
         const self_ptr = self;
         const path = route_path;
@@ -87,30 +68,24 @@ pub const FileServer = struct {
         }.handler;
     }
 
-    /// Serve a file based on the request path
     pub fn serveFile(self: *const FileServer, request_path: []const u8) Response {
-        // Remove base_path prefix if present
         var file_path = request_path;
         if (std.mem.startsWith(u8, request_path, self.base_path)) {
             file_path = request_path[self.base_path.len..];
         }
 
-        // Remove leading slash
         if (file_path.len > 0 and file_path[0] == '/') {
             file_path = file_path[1..];
         }
 
-        // If path is empty or ends with '/', serve index file
         if (file_path.len == 0 or file_path[file_path.len - 1] == '/') {
             file_path = self.index_file;
         }
 
-        // Validate path security
         if (!self.isValidPath(file_path)) {
             return self.createErrorResponse(403, "Forbidden: Invalid path");
         }
 
-        // Read file
         const contents = self.readFile(file_path) catch |err| {
             return switch (err) {
                 error.FileNotFound => self.createErrorResponse(404, "File not found"),
@@ -120,15 +95,9 @@ pub const FileServer = struct {
             };
         };
 
-        // Response stores a reference to the body string, so it must persist
-        // We use page_allocator in readFile to ensure the memory persists for async response handling
-        // The memory will not be freed - this is acceptable for static files as they're small
 
-        // Determine MIME type and use appropriate Response method
         const mime_type = self.getMimeType(file_path);
 
-        // Create response with correct Content-Type
-        // Response stores a reference to the body string, so contents must persist
         var response = if (std.mem.eql(u8, mime_type, "text/html"))
             Response.html(contents)
         else if (std.mem.eql(u8, mime_type, "text/css"))
@@ -138,7 +107,6 @@ pub const FileServer = struct {
         else
             Response.text(contents).withContentType(mime_type);
 
-        // In development mode (when cache is disabled), add no-cache headers
         if (!self.enable_cache) {
             response = response
                 .withHeader("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -149,18 +117,13 @@ pub const FileServer = struct {
         return response;
     }
 
-    /// Create an error response
-    /// Uses page_allocator for persistence - Response system will manage cleanup
     fn createErrorResponse(_: *const FileServer, status_code: u16, message: []const u8) Response {
-        // Use page_allocator for error responses to ensure they persist for async handling
         const error_json = std.fmt.allocPrint(std.heap.page_allocator, "{{\"error\":\"{s}\"}}", .{message}) catch {
             return Response.text("Internal server error").withStatus(status_code);
         };
-        // Don't free - Response stores a reference, so memory must persist
         return Response.json(error_json).withStatus(status_code);
     }
 
-    /// Get MIME type from file extension
     pub fn getMimeType(self: *const FileServer, file_path: []const u8) []const u8 {
         _ = self;
 
@@ -185,8 +148,6 @@ pub const FileServer = struct {
         return "application/octet-stream";
     }
 
-    /// Decode a single URL-encoded hex byte (e.g., "%2e" -> '.')
-    /// Returns null if the encoding is invalid
     fn decodeHexByte(hex: []const u8) ?u8 {
         if (hex.len != 2) return null;
         var value: u8 = 0;
@@ -202,9 +163,6 @@ pub const FileServer = struct {
         return value;
     }
 
-    /// Decode URL-encoded path for security validation
-    /// Decodes %XX sequences to their byte values
-    /// Uses a fixed buffer to avoid allocation issues
     fn decodeUrlPath(path: []const u8, buffer: []u8) ![]u8 {
         var pos: usize = 0;
         var i: usize = 0;
@@ -228,18 +186,9 @@ pub const FileServer = struct {
         return buffer[0..pos];
     }
 
-    /// Validate that the requested path is safe (no directory traversal)
-    /// Checks both the original path and URL-decoded version for security
-    ///
-    /// Note: This function validates paths as-is (e.g., allows leading slashes).
-    /// Path normalization (removing leading slashes, etc.) happens in `serveFile`
-    /// before actual file access. This separation allows validation to catch
-    /// security issues before normalization.
     pub fn isValidPath(self: *const FileServer, requested_path: []const u8) bool {
         _ = self;
 
-        // Check for URL-encoded directory traversal patterns directly
-        // Common patterns: %2e%2e (..), %2e%2e%2f (../), %2e%2e%5c (..\)
         const encoded_patterns = [_][]const u8{
             "%2e%2e", // ..
             "%2E%2E", // .. (uppercase)
@@ -256,25 +205,19 @@ pub const FileServer = struct {
             }
         }
 
-        // Decode URL-encoded path and check decoded version
-        // Use a fixed buffer for decoding (paths are typically short)
         var decode_buffer: [4096]u8 = undefined;
         const decoded_path = decodeUrlPath(requested_path, &decode_buffer) catch {
-            // If decoding fails (buffer too small), reject the path for safety
             return false;
         };
 
-        // Prevent directory traversal in decoded path
         if (std.mem.indexOf(u8, decoded_path, "..")) |_| {
             return false;
         }
 
-        // Prevent directory traversal in original path
         if (std.mem.indexOf(u8, requested_path, "..")) |_| {
             return false;
         }
 
-        // Prevent null bytes
         if (std.mem.indexOf(u8, requested_path, "\x00")) |_| {
             return false;
         }
@@ -282,16 +225,10 @@ pub const FileServer = struct {
             return false;
         }
 
-        // Allow leading slash for URL paths (validation happens before normalization in serveFile)
-        // The path will be normalized in serveFile before actual file access
         return true;
     }
 
-    /// Read a file from the filesystem safely
-    /// Uses buffer pool to ensure contents persist for ziggurat's async response handling
-    /// Memory will be managed by the Response system
     pub fn readFile(self: *const FileServer, file_path: []const u8) ![]const u8 {
-        // Validate path security
         if (!self.isValidPath(file_path)) {
             return error.InvalidPath;
         }
@@ -317,8 +254,6 @@ pub const FileServer = struct {
             return error.FileTooLarge;
         }
 
-        // Use page_allocator for persistent memory - Response system will manage cleanup
-        // This avoids memory leaks in tests while maintaining persistence for production
         const contents = try std.heap.page_allocator.alloc(u8, @as(usize, @intCast(stat.size)));
         errdefer std.heap.page_allocator.free(contents);
 
@@ -332,7 +267,6 @@ pub const FileServer = struct {
     }
 };
 
-// Tests
 test "FileServer init" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -430,16 +364,12 @@ test "FileServer isValidPath edge cases" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Empty path
     try std.testing.expect(server.isValidPath("") == true);
 
-    // Path with multiple ../ attempts
     try std.testing.expect(server.isValidPath("../../../etc/passwd") == false);
 
-    // Path with mixed separators
     try std.testing.expect(server.isValidPath("path/..\\file.txt") == false);
 
-    // Normal nested paths
     try std.testing.expect(server.isValidPath("subdir/file.txt") == true);
     try std.testing.expect(server.isValidPath("a/b/c/d/file.txt") == true);
 }
@@ -457,9 +387,6 @@ test "FileServer init with custom settings" {
     try std.testing.expect(server.max_file_size == FileServer.MAX_FILE_SIZE);
 }
 
-// ============================================================================
-// Bug Verification Tests
-// ============================================================================
 
 test "FileServer isValidPath - URL encoded directory traversal attacks" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -468,12 +395,9 @@ test "FileServer isValidPath - URL encoded directory traversal attacks" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Test URL-encoded directory traversal attempts - all should be rejected
-    // These patterns contain ".." in plain text, so they should be caught
     try std.testing.expect(server.isValidPath("..%2fsecret.txt") == false);
     try std.testing.expect(server.isValidPath("..%2Fsecret.txt") == false);
 
-    // These are URL-encoded and should now be caught after the fix
     const encoded_patterns = [_]struct { pattern: []const u8, description: []const u8 }{
         .{ .pattern = "%2e%2e/secret.txt", .description = "URL-encoded ../" },
         .{ .pattern = "%2e%2e%2fsecret.txt", .description = "URL-encoded ../" },
@@ -496,12 +420,10 @@ test "FileServer isValidPath - Windows-style directory traversal" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Windows backslash traversal (should be caught by ".." check, but verify)
     try std.testing.expect(server.isValidPath("..\\secret.txt") == false);
     try std.testing.expect(server.isValidPath("..\\..\\secret.txt") == false);
     try std.testing.expect(server.isValidPath("path\\..\\secret.txt") == false);
 
-    // Mixed forward/backward slashes
     try std.testing.expect(server.isValidPath("../..\\secret.txt") == false);
 }
 
@@ -512,12 +434,9 @@ test "FileServer isValidPath - path normalization edge cases" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Test leading slash behavior (BUG #6 - inconsistent validation)
-    // isValidPath allows leading slashes, but serveFile strips them
     try std.testing.expect(server.isValidPath("/normal/path.txt") == true);
     try std.testing.expect(server.isValidPath("/../secret.txt") == false); // Should catch this
 
-    // Test that leading slash doesn't bypass .. check
     try std.testing.expect(server.isValidPath("/../../etc/passwd") == false);
 }
 
@@ -526,7 +445,6 @@ test "FileServer serveFile - empty path and trailing slash handling" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Create a test directory structure
     const test_dir = "test_fileserver_dir";
     std.fs.cwd().makeDir(test_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -534,7 +452,6 @@ test "FileServer serveFile - empty path and trailing slash handling" {
     };
     defer std.fs.cwd().deleteTree(test_dir) catch {};
 
-    // Create index.html
     const index_content = "<html>Test</html>";
     const index_file = try std.fs.cwd().createFile(test_dir ++ "/index.html", .{});
     defer index_file.close();
@@ -542,17 +459,12 @@ test "FileServer serveFile - empty path and trailing slash handling" {
 
     var server = FileServer.init(allocator, "/static", test_dir);
 
-    // Test empty path (BUG #5 - redundant condition)
-    // This should serve index.html
     var empty_response = server.serveFile("");
-    // Verify response was created (can't easily check status_code as it's private)
     defer empty_response.deinit(allocator);
 
-    // Test trailing slash
     var slash_response = server.serveFile("/");
     defer slash_response.deinit(allocator);
 
-    // Test path ending with slash
     var trailing_slash_response = server.serveFile("subdir/");
     defer trailing_slash_response.deinit(allocator);
 }
@@ -571,12 +483,9 @@ test "FileServer readFile - error path memory leak prevention" {
 
     var server = FileServer.init(allocator, "/static", test_dir);
 
-    // Test that non-existent file doesn't leak memory (BUG #1)
-    // This should return FileNotFound error without leaking
     const result = server.readFile("nonexistent.txt");
     try std.testing.expectError(error.FileNotFound, result);
 
-    // Test invalid path doesn't leak
     const invalid_result = server.readFile("../secret.txt");
     try std.testing.expectError(error.InvalidPath, invalid_result);
 }
@@ -593,16 +502,13 @@ test "FileServer readFile - file too large error handling" {
     };
     defer std.fs.cwd().deleteTree(test_dir) catch {};
 
-    // Create a server with very small max_file_size
     var server = FileServer.init(allocator, "/static", test_dir);
     server.max_file_size = 10; // 10 bytes max
 
-    // Create a file larger than max_file_size
     const large_file = try std.fs.cwd().createFile(test_dir ++ "/large.txt", .{});
     defer large_file.close();
     try large_file.writeAll("This is a large file that exceeds the limit");
 
-    // Should return FileTooLarge error
     const result = server.readFile("large.txt");
     try std.testing.expectError(error.FileTooLarge, result);
 }
@@ -614,14 +520,7 @@ test "FileServer createErrorResponse - status code usage" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Test that error responses are created (BUG #9 - status_code parameter ignored)
-    // Note: We can't directly test createErrorResponse since it's private,
-    // but we can test serveFile with invalid paths which calls it
-    // The bug is that createErrorResponse accepts status_code but doesn't use it
     var forbidden_response = server.serveFile("../secret.txt");
-    // Response should be created (verifies error handling works)
-    // Note: status_code field is private, so we can't verify it's set correctly
-    // This test documents that error responses are created
     defer forbidden_response.deinit(allocator);
 
     var not_found_response = server.serveFile("nonexistent.txt");
@@ -633,17 +532,10 @@ test "FileServer createHandler - handler creation and closure safety" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Test that handler can be created (BUG #4 - dangling pointer risk)
-    // This test verifies the handler creation doesn't crash immediately
     const server = FileServer.init(allocator, "/static", "public");
 
-    // Note: createHandler returns a comptime function type, so we can't easily test it at runtime
-    // This test documents that the function exists and can be called
-    // The actual handler would need to be tested in integration tests
-    // We can't directly reference the method as a field, but we can verify the struct compiles
     _ = server;
 
-    // Verify the function signatures are correct
     const HandlerType = fn (*ziggurat.request.Request) ziggurat.response.Response;
     _ = HandlerType;
 }
@@ -660,27 +552,19 @@ test "FileServer serveFile - base path prefix removal" {
     };
     defer std.fs.cwd().deleteTree(test_dir) catch {};
 
-    // Create a test file
     const test_file = try std.fs.cwd().createFile(test_dir ++ "/test.txt", .{});
     defer test_file.close();
     try test_file.writeAll("test content");
 
     var server = FileServer.init(allocator, "/static", test_dir);
 
-    // Test that base_path prefix is removed correctly
     var response1 = server.serveFile("/static/test.txt");
-    // Verify response was created (status_code is stored in Response._status_code, not inner)
     defer response1.deinit(allocator);
 
-    // Test without base_path prefix
     var response2 = server.serveFile("test.txt");
     defer response2.deinit(allocator);
 
-    // Test with leading slash after prefix removal
     var response3 = server.serveFile("/static/subdir/file.txt");
-    // Should try to serve "subdir/file.txt"
-    // This tests the path normalization logic
-    // Note: This will likely return 404 since the file doesn't exist, but tests path handling
     defer response3.deinit(allocator);
 }
 
@@ -689,15 +573,10 @@ test "FileServer - allocator consistency check" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Test that FileServer stores allocator correctly (BUG #3)
     const server = FileServer.init(allocator, "/static", "public");
 
-    // Verify allocator is stored (can't directly compare, but verify it's not null)
-    // The allocator field should be accessible
     _ = server.allocator;
 
-    // Note: We can't easily test that readFile uses self.allocator vs page_allocator
-    // without modifying the code, but this test documents the expected behavior
 }
 
 test "FileServer isValidPath - comprehensive directory traversal tests" {
@@ -707,7 +586,6 @@ test "FileServer isValidPath - comprehensive directory traversal tests" {
 
     var server = FileServer.init(allocator, "/static", "public");
 
-    // Basic directory traversal patterns (should be caught)
     const basic_attack_patterns = [_][]const u8{
         "..",
         "../",
@@ -725,7 +603,6 @@ test "FileServer isValidPath - comprehensive directory traversal tests" {
         try std.testing.expect(server.isValidPath(pattern) == false);
     }
 
-    // URL-encoded directory traversal patterns - all should now be caught after fix
     const encoded_attack_patterns = [_][]const u8{
         "..%2f", // URL-encoded ../
         "..%2F", // URL-encoded ../ (uppercase)
@@ -742,12 +619,10 @@ test "FileServer isValidPath - comprehensive directory traversal tests" {
         "a/b/%2e%2e/%2e%2e/secret", // Nested encoded traversal
     };
 
-    // All encoded patterns should now be rejected after the fix
     for (encoded_attack_patterns) |pattern| {
         try std.testing.expect(server.isValidPath(pattern) == false);
     }
 
-    // Valid paths that should pass
     const valid_patterns = [_][]const u8{
         "index.html",
         "css/style.css",

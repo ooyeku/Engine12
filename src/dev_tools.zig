@@ -3,7 +3,6 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const types = @import("types.zig");
 
-/// Route information for introspection
 pub const RouteInfo = struct {
     method: []const u8,
     path: []const u8,
@@ -28,7 +27,6 @@ pub const RouteInfo = struct {
     }
 };
 
-/// Registry for tracking registered routes
 pub const RouteRegistry = struct {
     routes: std.ArrayListUnmanaged(RouteInfo),
     allocator: std.mem.Allocator,
@@ -40,18 +38,15 @@ pub const RouteRegistry = struct {
         };
     }
 
-    /// Register a route
     pub fn register(self: *RouteRegistry, method: []const u8, path: []const u8, handler_name: []const u8) !void {
         const route_info = try RouteInfo.init(self.allocator, method, path, handler_name);
         try self.routes.append(self.allocator, route_info);
     }
 
-    /// Get all registered routes
     pub fn getAll(self: *const RouteRegistry) []const RouteInfo {
         return self.routes.items;
     }
 
-    /// Get routes matching a method
     pub fn getByMethod(self: *const RouteRegistry, method: []const u8, matches: *std.ArrayListUnmanaged(RouteInfo)) !void {
         for (self.routes.items) |route| {
             if (std.mem.eql(u8, route.method, method)) {
@@ -60,7 +55,6 @@ pub const RouteRegistry = struct {
         }
     }
 
-    /// Format routes as JSON for API introspection
     pub fn toJson(self: *const RouteRegistry, allocator: std.mem.Allocator) ![]const u8 {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(allocator);
@@ -86,7 +80,6 @@ pub const RouteRegistry = struct {
     }
 };
 
-/// Log level for structured logging
 pub const LogLevel = enum {
     debug,
     info,
@@ -103,20 +96,17 @@ pub const LogLevel = enum {
     }
 };
 
-/// Output format for logging
 pub const OutputFormat = enum {
     json,
     human,
 };
 
-/// Log destination types
 pub const LogDestination = enum {
     stdout,
     file,
     syslog,
 };
 
-/// File handle wrapper for thread-safe file logging
 const FileHandle = struct {
     file: std.fs.File,
     mutex: std.Thread.Mutex,
@@ -151,7 +141,6 @@ const FileHandle = struct {
     }
 };
 
-/// Structured log entry with builder pattern support
 pub const LogEntry = struct {
     level: LogLevel,
     message: []const u8,
@@ -172,7 +161,6 @@ pub const LogEntry = struct {
         };
     }
 
-    /// Initialize with an already-allocated message (takes ownership, doesn't copy)
     pub fn initOwned(allocator: std.mem.Allocator, level: LogLevel, message: []const u8) !LogEntry {
         return LogEntry{
             .level = level,
@@ -184,7 +172,6 @@ pub const LogEntry = struct {
         };
     }
 
-    /// Add a string field to the log entry (builder pattern)
     pub fn field(self: *LogEntry, key: []const u8, value: []const u8) !*LogEntry {
         const key_copy = try self.allocator.dupe(u8, key);
         const value_copy = try self.allocator.dupe(u8, value);
@@ -192,7 +179,6 @@ pub const LogEntry = struct {
         return self;
     }
 
-    /// Add an integer field to the log entry (builder pattern)
     pub fn fieldInt(self: *LogEntry, key: []const u8, value: anytype) !*LogEntry {
         const key_copy = try self.allocator.dupe(u8, key);
         var buffer: [32]u8 = undefined;
@@ -202,7 +188,6 @@ pub const LogEntry = struct {
         return self;
     }
 
-    /// Add a boolean field to the log entry (builder pattern)
     pub fn fieldBool(self: *LogEntry, key: []const u8, value: bool) !*LogEntry {
         const key_copy = try self.allocator.dupe(u8, key);
         const value_str = if (value) "true" else "false";
@@ -211,24 +196,18 @@ pub const LogEntry = struct {
         return self;
     }
 
-    /// Add request context to the log entry
     pub fn withRequest(self: *LogEntry, req: *Request) !*LogEntry {
-        // Capture request ID
         const request_id = req.get("request_id") orelse "unknown";
         _ = try self.field("request_id", request_id);
 
-        // Capture HTTP method
         _ = try self.field("method", req.method());
 
-        // Capture path
         _ = try self.field("path", req.path());
 
-        // Capture User-Agent if available
         if (req.header("User-Agent")) |ua| {
             _ = try self.field("user_agent", ua);
         }
 
-        // Capture IP address if available
         if (req.header("X-Forwarded-For")) |xff| {
             const comma_pos = std.mem.indexOfScalar(u8, xff, ',') orelse xff.len;
             _ = try self.field("ip", xff[0..comma_pos]);
@@ -239,15 +218,11 @@ pub const LogEntry = struct {
         return self;
     }
 
-    /// Add response context to the log entry
-    /// Note: status_code should be passed separately as Response doesn't expose it directly
     pub fn withResponse(self: *LogEntry, status_code: ?u16, req: ?*Request) !*LogEntry {
-        // Capture status code if provided
         if (status_code) |code| {
             _ = try self.fieldInt("status_code", code);
         }
 
-        // Calculate duration if request start time is available
         if (req) |r| {
             if (r.get("request_start_time")) |start_time_str| {
                 const start_time = std.fmt.parseInt(i64, start_time_str, 10) catch {
@@ -262,21 +237,16 @@ pub const LogEntry = struct {
         return self;
     }
 
-    /// Format and output the log entry using the logger's format
-    /// After logging, the entry is automatically cleaned up
     pub fn log(self: *LogEntry) void {
-        // Store logger and allocator before cleanup
         const logger_ptr = self.logger;
         const entry_allocator = self.allocator;
         const should_destroy = logger_ptr != null;
 
-        // Skip actual logging if message is empty (below-min-level entries)
         if (logger_ptr) |logger| {
             if (self.message.len > 0) {
                 logger.printEntry(self);
             }
         } else {
-            // Fallback: use JSON format
             const json = self.toJson(self.allocator) catch {
                 self.deinit();
                 return;
@@ -285,10 +255,8 @@ pub const LogEntry = struct {
             std.debug.print("{s}\n", .{json});
         }
 
-        // Clean up after logging
         self.deinit();
 
-        // If this entry was created by Logger, destroy it
         if (should_destroy) {
             if (logger_ptr) |logger| {
                 logger.allocator.destroy(self);
@@ -296,12 +264,10 @@ pub const LogEntry = struct {
         }
     }
 
-    /// Format log entry as JSON
     pub fn toJson(self: *const LogEntry, allocator: std.mem.Allocator) ![]const u8 {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(allocator);
 
-        // Escape message for JSON
         var escaped_message = std.ArrayListUnmanaged(u8){};
         defer escaped_message.deinit(allocator);
         try escapeJsonString(self.message, &escaped_message, allocator);
@@ -319,7 +285,6 @@ pub const LogEntry = struct {
                 if (!first) try writer.print(",", .{});
                 first = false;
 
-                // Escape field value for JSON
                 var escaped_value = std.ArrayListUnmanaged(u8){};
                 defer escaped_value.deinit(allocator);
                 try escapeJsonString(entry.value_ptr.*, &escaped_value, allocator);
@@ -333,15 +298,12 @@ pub const LogEntry = struct {
         return output.toOwnedSlice(allocator);
     }
 
-    /// Format log entry as human-readable string
     pub fn toHumanReadable(self: *const LogEntry, allocator: std.mem.Allocator) ![]const u8 {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(allocator);
 
-        // Format timestamp as human-readable ISO 8601 string
         const Time = @import("utils/time.zig").Time;
         const formatted_timestamp = Time.formatTimestamp(self.timestamp, allocator) catch {
-            // Fallback to raw timestamp if formatting fails
             try writer.print("[{d}] ", .{self.timestamp});
             const level_str = switch (self.level) {
                 .debug => "DEBUG",
@@ -390,7 +352,6 @@ pub const LogEntry = struct {
     }
 };
 
-/// Escape JSON string
 fn escapeJsonString(input: []const u8, output: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !void {
     for (input) |byte| {
         switch (byte) {
@@ -404,7 +365,6 @@ fn escapeJsonString(input: []const u8, output: *std.ArrayListUnmanaged(u8), allo
     }
 }
 
-/// Structured logger
 pub const Logger = struct {
     allocator: std.mem.Allocator,
     min_level: LogLevel,
@@ -420,14 +380,11 @@ pub const Logger = struct {
             .format = .json,
             .destinations = .{},
         };
-        // Default to stdout
         logger.destinations.append(allocator, .stdout) catch {};
         return logger;
     }
 
-    /// Add a log destination
     pub fn addDestination(self: *Logger, destination: LogDestination) !void {
-        // Check if already added
         for (self.destinations.items) |dest| {
             if (dest == destination) {
                 return; // Already added
@@ -436,7 +393,6 @@ pub const Logger = struct {
         try self.destinations.append(self.allocator, destination);
     }
 
-    /// Set file destination (creates file handle)
     pub fn setFileDestination(self: *Logger, file_path: []const u8) !void {
         if (self.file_handle) |handle| {
             handle.deinit();
@@ -449,13 +405,11 @@ pub const Logger = struct {
         try self.addDestination(.file);
     }
 
-    /// Set syslog facility (0-23, see syslog.h)
     pub fn setSyslogFacility(self: *Logger, facility: u8) !void {
         self.syslog_facility = facility;
         try self.addDestination(.syslog);
     }
 
-    /// Cleanup logger resources
     pub fn deinit(self: *Logger) void {
         self.destinations.deinit(self.allocator);
         if (self.file_handle) |handle| {
@@ -464,7 +418,6 @@ pub const Logger = struct {
         }
     }
 
-    /// Create logger from environment (auto-selects format)
     pub fn fromEnvironment(allocator: std.mem.Allocator, environment: types.Environment) Logger {
         const min_level: LogLevel = switch (environment) {
             .development => .debug,
@@ -484,21 +437,16 @@ pub const Logger = struct {
             .format = format,
             .destinations = .{},
         };
-        // Default to stdout
         logger.destinations.append(allocator, .stdout) catch {};
         return logger;
     }
 
-    /// Set output format
     pub fn setFormat(self: *Logger, format: OutputFormat) void {
         self.format = format;
     }
 
-    /// Log a message at the specified level (returns builder)
     pub fn log(self: *Logger, level: LogLevel, message: []const u8) !*LogEntry {
         if (level.toInt() < self.min_level.toInt()) {
-            // Below minimum level, return empty entry that won't log
-            // Still set logger=self so the entry can be properly destroyed
             const empty_entry = try self.allocator.create(LogEntry);
             empty_entry.* = LogEntry{
                 .level = level,
@@ -518,41 +466,33 @@ pub const Logger = struct {
         return entry_ptr;
     }
 
-    /// Log debug message (returns builder)
     pub fn debug(self: *Logger, message: []const u8) !*LogEntry {
         return self.log(.debug, message);
     }
 
-    /// Log info message (returns builder)
     pub fn info(self: *Logger, message: []const u8) !*LogEntry {
         return self.log(.info, message);
     }
 
-    /// Log warning message (returns builder)
     pub fn warn(self: *Logger, message: []const u8) !*LogEntry {
         return self.log(.warn, message);
     }
 
-    /// Log error message (returns builder)
     pub fn logError(self: *Logger, message: []const u8) !*LogEntry {
         return self.log(.err, message);
     }
 
-    /// Create a log entry builder with request context pre-populated
     pub fn fromRequest(self: *Logger, req: *Request, level: LogLevel, message: []const u8) !*LogEntry {
         var entry = try self.log(level, message);
         _ = try entry.withRequest(req);
         return entry;
     }
 
-    /// Log a request (convenience method)
     pub fn logRequest(self: *Logger, req: *Request, level: LogLevel, message: []const u8) !void {
         var entry = try self.fromRequest(req, level, message);
         entry.log();
     }
 
-    /// Log a response (convenience method)
-    /// Note: status_code should be passed as Response doesn't expose it directly
     pub fn logResponse(self: *Logger, req: *Request, status_code: ?u16, level: LogLevel, message: []const u8) !void {
         var entry = try self.log(level, message);
         _ = try entry.withRequest(req);
@@ -560,7 +500,6 @@ pub const Logger = struct {
         entry.log();
     }
 
-    /// Log an error with error context (convenience method)
     pub fn logErrorWithContext(self: *Logger, message: []const u8, err: anytype) !void {
         var entry = try self.logError(message);
         const err_name = @errorName(err);
@@ -568,13 +507,7 @@ pub const Logger = struct {
         entry.log();
     }
 
-    // =========================================================================
-    // Printf-style Convenience Methods
-    // These provide simple one-liner logging without the builder pattern.
-    // =========================================================================
 
-    /// Log a formatted debug message (one-liner).
-    /// Example: logger.debugf("User {} logged in from {s}", .{user_id, ip});
     pub fn debugf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         if (LogLevel.debug.toInt() < self.min_level.toInt()) return;
         const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
@@ -591,8 +524,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a formatted info message (one-liner).
-    /// Example: logger.infof("Request processed in {d}ms", .{duration});
     pub fn infof(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         if (LogLevel.info.toInt() < self.min_level.toInt()) return;
         const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
@@ -609,8 +540,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a formatted warning message (one-liner).
-    /// Example: logger.warnf("High memory usage: {d}%", .{mem_percent});
     pub fn warnf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         if (LogLevel.warn.toInt() < self.min_level.toInt()) return;
         const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
@@ -627,8 +556,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a formatted error message (one-liner).
-    /// Example: logger.errorf("Failed to connect to {s}: {}", .{host, err});
     pub fn errorf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
         const entry = LogEntry.initOwned(self.allocator, .err, message) catch {
@@ -644,8 +571,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a simple debug message (one-liner, no formatting).
-    /// Example: logger.debugMsg("Starting initialization");
     pub fn debugMsg(self: *Logger, message: []const u8) void {
         if (LogLevel.debug.toInt() < self.min_level.toInt()) return;
         const entry = LogEntry.init(self.allocator, .debug, message) catch return;
@@ -655,8 +580,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a simple info message (one-liner, no formatting).
-    /// Example: logger.infoMsg("Server started");
     pub fn infoMsg(self: *Logger, message: []const u8) void {
         if (LogLevel.info.toInt() < self.min_level.toInt()) return;
         const entry = LogEntry.init(self.allocator, .info, message) catch return;
@@ -666,8 +589,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a simple warning message (one-liner, no formatting).
-    /// Example: logger.warnMsg("Deprecated API used");
     pub fn warnMsg(self: *Logger, message: []const u8) void {
         if (LogLevel.warn.toInt() < self.min_level.toInt()) return;
         const entry = LogEntry.init(self.allocator, .warn, message) catch return;
@@ -677,8 +598,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log a simple error message (one-liner, no formatting).
-    /// Example: logger.errorMsg("Connection failed");
     pub fn errorMsg(self: *Logger, message: []const u8) void {
         const entry = LogEntry.init(self.allocator, .err, message) catch return;
         const entry_ptr = self.allocator.create(LogEntry) catch return;
@@ -687,8 +606,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Log with structured fields (one-liner with key-value pairs).
-    /// Example: logger.infoWithFields("User action", &.{ .{"user_id", "123"}, .{"action", "login"} });
     pub fn infoWithFields(self: *Logger, message: []const u8, fields: anytype) void {
         if (LogLevel.info.toInt() < self.min_level.toInt()) return;
         const entry = LogEntry.init(self.allocator, .info, message) catch return;
@@ -696,7 +613,6 @@ pub const Logger = struct {
         entry_ptr.* = entry;
         entry_ptr.logger = self;
 
-        // Add fields from tuple array
         inline for (fields) |field_pair| {
             _ = entry_ptr.field(field_pair[0], field_pair[1]) catch {};
         }
@@ -704,10 +620,6 @@ pub const Logger = struct {
         entry_ptr.log();
     }
 
-    /// Create a child logger with additional context fields
-    /// Useful for creating loggers scoped to a user, request, etc.
-    /// Note: Context fields are not automatically added to log entries,
-    /// but can be used to create contextual loggers for specific components
     pub fn childLogger(self: *Logger, context_fields: struct {
         user_id: ?[]const u8 = null,
         request_id: ?[]const u8 = null,
@@ -722,12 +634,10 @@ pub const Logger = struct {
             .file_handle = self.file_handle,
             .syslog_facility = self.syslog_facility,
         };
-        // Copy destinations
         child.destinations.appendSlice(self.allocator, self.destinations.items) catch {};
         return child;
     }
 
-    /// Print a log entry using the logger's format to all configured destinations
     pub fn printEntry(self: *Logger, entry: *LogEntry) void {
         const formatted = switch (self.format) {
             .json => entry.toJson(self.allocator) catch return,
@@ -738,7 +648,6 @@ pub const Logger = struct {
         const formatted_with_newline = std.fmt.allocPrint(self.allocator, "{s}\n", .{formatted}) catch return;
         defer self.allocator.free(formatted_with_newline);
 
-        // Write to all configured destinations
         for (self.destinations.items) |dest| {
             switch (dest) {
                 .stdout => {
@@ -747,28 +656,22 @@ pub const Logger = struct {
                 .file => {
                     if (self.file_handle) |handle| {
                         handle.write(formatted_with_newline) catch {
-                            // Logging failure shouldn't crash - just continue
                             continue;
                         };
                     }
                 },
                 .syslog => {
-                    // Syslog support - for now, just write to stdout
-                    // Full syslog implementation would require platform-specific code
-                    // This is a placeholder that can be enhanced later
                     std.debug.print("[SYSLOG] {s}", .{formatted_with_newline});
                 },
             }
         }
     }
 
-    /// Format and print log entry (deprecated - use printEntry)
     pub fn print(self: *Logger, entry: *LogEntry) void {
         self.printEntry(entry);
     }
 };
 
-// Tests
 test "RouteRegistry register and getAll" {
     var registry = RouteRegistry.init(std.testing.allocator);
     defer registry.deinit();
@@ -826,8 +729,6 @@ test "RouteRegistry getByMethod filters correctly" {
 
     var get_routes = std.ArrayListUnmanaged(RouteInfo){};
     defer get_routes.deinit(std.testing.allocator);
-    // Note: Don't free individual routes - they're owned by the registry
-    // The registry.deinit() will free them
 
     try registry.getByMethod("GET", &get_routes);
 
@@ -1043,7 +944,6 @@ test "LogEntry withRequest captures request context" {
     var logger = Logger.init(std.testing.allocator, .info);
     defer logger.deinit();
 
-    // Create a mock request
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
     const user_data = std.StringHashMap([]const u8).init(std.testing.allocator);
@@ -1058,7 +958,6 @@ test "LogEntry withRequest captures request context" {
     var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
     defer req.deinit();
 
-    // Set request ID
     try req.set("request_id", "test-req-123");
 
     var entry = try logger.fromRequest(&req, .info, "Request handled");

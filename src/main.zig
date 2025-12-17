@@ -8,6 +8,5 @@ pub fn main() !void {
     try app.start();
     app.printStatus();
 
-    // Keep server running
     std.Thread.sleep(std.time.ns_per_min * 60);
 }

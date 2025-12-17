@@ -1,7 +1,6 @@
 const std = @import("std");
 const sqlite = @import("sqlite.zig");
 
-/// Parameter types for SQL prepared statements
 pub const ParamType = enum(u8) {
     null = 0,
     int64 = 1,
@@ -10,8 +9,6 @@ pub const ParamType = enum(u8) {
     blob = 4,
 };
 
-/// A single parameter value for SQL prepared statements
-/// Provides type-safe parameter binding to prevent SQL injection
 pub const Param = union(ParamType) {
     null: void,
     int64: i64,
@@ -19,37 +16,30 @@ pub const Param = union(ParamType) {
     text: []const u8,
     blob: []const u8,
 
-    /// Create a null parameter
     pub fn nullValue() Param {
         return Param{ .null = {} };
     }
 
-    /// Create an integer parameter
     pub fn int(value: i64) Param {
         return Param{ .int64 = value };
     }
 
-    /// Create a float parameter
     pub fn float(value: f64) Param {
         return Param{ .float64 = value };
     }
 
-    /// Create a text parameter
     pub fn string(value: []const u8) Param {
         return Param{ .text = value };
     }
 
-    /// Create a blob parameter
     pub fn bytes(value: []const u8) Param {
         return Param{ .blob = value };
     }
 
-    /// Create a boolean parameter (stored as integer 0 or 1)
     pub fn boolean(value: bool) Param {
         return Param{ .int64 = if (value) 1 else 0 };
     }
 
-    /// Convert any supported Zig type to a Param
     pub fn from(value: anytype) Param {
         const T = @TypeOf(value);
 
@@ -61,7 +51,6 @@ pub const Param = union(ParamType) {
                 if (ptr_info.size == .slice and ptr_info.child == u8) {
                     return Param{ .text = value };
                 } else if (ptr_info.size == .one) {
-                    // Handle *const [N:0]u8 (string literals)
                     const child_type = ptr_info.child;
                     if (@typeInfo(child_type) == .array) {
                         const array_info = @typeInfo(child_type).array;
@@ -87,9 +76,6 @@ pub const Param = union(ParamType) {
         };
     }
 
-    /// Bind this parameter to a SQLite prepared statement at the given index (1-based)
-    /// Note: Uses SQLITE_STATIC which requires the data to remain valid until the statement
-    /// is finalized or reset. This is safe in our ORM since ParamList data outlives query execution.
     pub fn bind(self: Param, stmt: ?*sqlite.sqlite3_stmt, index: c_int) c_int {
         return switch (self) {
             .null => sqlite.bind_null(stmt, index),
@@ -101,9 +87,6 @@ pub const Param = union(ParamType) {
     }
 };
 
-/// A list of parameters for SQL prepared statements
-/// Manages an array of parameters that can be passed to parameterized queries
-/// Works with both SQLite and PostgreSQL
 pub const ParamList = struct {
     items: std.ArrayListUnmanaged(Param),
     allocator: std.mem.Allocator,
@@ -119,21 +102,15 @@ pub const ParamList = struct {
         self.items.deinit(self.allocator);
     }
 
-    /// Get parameters as an array of values suitable for pg.zig
-    /// Returns an array of anytype values that can be used with pg.Pool.query()
-    /// Note: For PostgreSQL, you typically pass parameters directly to query() as a tuple
     pub fn toPostgresValues(self: *const ParamList) []const Param {
         return self.items.items;
     }
 
-    /// Get a specific parameter value as a variant type for PostgreSQL
     pub fn getParam(self: *const ParamList, index: usize) ?Param {
         if (index >= self.items.items.len) return null;
         return self.items.items[index];
     }
 
-    /// Add a parameter or any supported value type to the list
-    /// Accepts either a Param directly or any type that Param.from() supports
     pub fn add(self: *ParamList, value: anytype) !void {
         const T = @TypeOf(value);
         if (T == Param) {
@@ -143,43 +120,34 @@ pub const ParamList = struct {
         }
     }
 
-    /// Add a null parameter
     pub fn addNull(self: *ParamList) !void {
         try self.items.append(self.allocator, Param.nullValue());
     }
 
-    /// Add an integer parameter
     pub fn addInt(self: *ParamList, value: i64) !void {
         try self.items.append(self.allocator, Param.int(value));
     }
 
-    /// Add a float parameter
     pub fn addFloat(self: *ParamList, value: f64) !void {
         try self.items.append(self.allocator, Param.float(value));
     }
 
-    /// Add a text parameter
     pub fn addString(self: *ParamList, value: []const u8) !void {
         try self.items.append(self.allocator, Param.string(value));
     }
 
-    /// Add a boolean parameter
     pub fn addBool(self: *ParamList, value: bool) !void {
         try self.items.append(self.allocator, Param.boolean(value));
     }
 
-    /// Get the number of parameters
     pub fn len(self: *const ParamList) usize {
         return self.items.items.len;
     }
 
-    /// Get parameters as a slice
     pub fn slice(self: *const ParamList) []const Param {
         return self.items.items;
     }
 
-    /// Bind all parameters to a SQLite prepared statement
-    /// Parameters are bound starting at index 1 (SQLite's convention)
     pub fn bindAll(self: *const ParamList, stmt: ?*sqlite.sqlite3_stmt) c_int {
         for (self.items.items, 0..) |param, i| {
             const index: c_int = @intCast(i + 1); // SQLite uses 1-based indexing
@@ -191,19 +159,15 @@ pub const ParamList = struct {
         return sqlite.SQLITE_OK;
     }
 
-    /// Add a text parameter (alias for addString for compatibility)
     pub fn addText(self: *ParamList, value: []const u8) !void {
         try self.addString(value);
     }
 
-    /// Reset the parameter list (clear all parameters)
     pub fn reset(self: *ParamList) void {
         self.items.clearRetainingCapacity();
     }
 };
 
-/// Create a parameter list from a tuple of values
-/// Example: params.fromTuple(.{ 1, "hello", true })
 pub fn fromTuple(allocator: std.mem.Allocator, tuple: anytype) !ParamList {
     var list = ParamList.init(allocator);
     errdefer list.deinit();
@@ -216,9 +180,6 @@ pub fn fromTuple(allocator: std.mem.Allocator, tuple: anytype) !ParamList {
     return list;
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
 
 test "Param.from integer" {
     const p = Param.from(@as(i32, 42));

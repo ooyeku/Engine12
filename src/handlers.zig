@@ -20,7 +20,6 @@ pub fn handleReadyEndpoint(request: *Request) Response {
 
 pub fn handleMetricsEndpoint(request: *Request) Response {
     _ = request;
-    // Access global metrics collector
     const metrics_collector = @import("engine12.zig").global_metrics;
 
     if (metrics_collector) |mc| {
@@ -34,11 +33,9 @@ pub fn handleMetricsEndpoint(request: *Request) Response {
         return resp;
     }
 
-    // Fallback if metrics collector not available
     return Response.json("{\"metrics\":{\"uptime_ms\":0,\"requests_total\":0}}");
 }
 
-// Tests
 test "handleDefaultRoot returns correct JSON" {
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
@@ -75,4 +72,3 @@ test "handleHealthEndpoint returns correct JSON" {
     _ = resp;
 }
 
-// Test deleted - causes segmentation fault when accessing global_metrics

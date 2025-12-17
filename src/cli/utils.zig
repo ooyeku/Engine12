@@ -1,15 +1,11 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-/// Engine12 version - extracted from build.zig.zon via build options
-/// Falls back to "unknown" if version cannot be determined (should never happen in normal builds)
 pub const ENGINE12_VERSION = if (@hasDecl(build_options, "version"))
     build_options.version
 else
     "unknown";
 
-/// Process a template string by replacing placeholders
-/// Placeholders: {PROJECT_NAME}, {ENGINE12_HASH}, {ENGINE12_VERSION}
 pub fn processTemplate(
     allocator: std.mem.Allocator,
     template_content: []const u8,
@@ -22,7 +18,6 @@ pub fn processTemplate(
     var i: usize = 0;
     while (i < template_content.len) {
         if (i < template_content.len - 1 and template_content[i] == '{') {
-            // Check for placeholder
             const placeholder_start = i;
             var placeholder_end = i + 1;
             while (placeholder_end < template_content.len and template_content[placeholder_end] != '}') {
@@ -34,7 +29,7 @@ pub fn processTemplate(
                 const replacement: ?[]const u8 = if (std.mem.eql(u8, placeholder, "PROJECT_NAME"))
                     project_name
                 else if (std.mem.eql(u8, placeholder, "PROJECT_NAME_LITERAL"))
-                    project_name // Used as enum literal (e.g., .my_project_name)
+                    project_name
                 else if (std.mem.eql(u8, placeholder, "ENGINE12_HASH"))
                     engine12_hash
                 else if (std.mem.eql(u8, placeholder, "ENGINE12_VERSION"))
@@ -57,19 +52,14 @@ pub fn processTemplate(
     return try result.toOwnedSlice(allocator);
 }
 
-/// Execute zig fetch and parse the hash from the output
-/// Returns the hash string in format: Engine12-<version>-<hash>
-/// NOTE: This function is minimal to work around allocator issues
 pub fn fetchEngine12Hash(
     allocator: std.mem.Allocator,
     project_path: []const u8,
 ) ![]const u8 {
-    // Create build.zig first (zig fetch will create/update build.zig.zon)
     {
         var cwd = try std.fs.cwd().openDir(project_path, .{});
         defer cwd.close();
 
-        // Create build.zig if it doesn't exist
         _ = cwd.access("build.zig", .{}) catch {
             const minimal_build_zig =
                 \\const std = @import("std");
@@ -86,7 +76,6 @@ pub fn fetchEngine12Hash(
         };
     }
 
-    // Execute zig fetch - capture stderr to see what went wrong
     const zig_fetch_args = [_][]const u8{ "zig", "fetch", "--save", "git+https://github.com/ooyeku/Engine12.git" };
 
     var process = std.process.Child.init(&zig_fetch_args, std.heap.page_allocator);
@@ -99,7 +88,6 @@ pub fn fetchEngine12Hash(
 
     try process.spawn();
 
-    // Read and print any error output
     if (process.stderr) |stderr| {
         var buf: [1024]u8 = undefined;
         const bytes_read = stderr.readAll(&buf) catch 0;
@@ -131,14 +119,11 @@ pub fn fetchEngine12Hash(
         return error.FetchFailed;
     }
 
-    // Read and parse build.zig.zon - use page allocator for file content
     var cwd = try std.fs.cwd().openDir(project_path, .{});
     defer cwd.close();
 
     const build_zon_content = try cwd.readFileAlloc(std.heap.page_allocator, "build.zig.zon", 1024 * 1024);
-    // Note: page_allocator doesn't support free(), so we don't defer it
 
-    // Find and extract the hash value with robust error handling
     const engine12_prefix = ".engine12 =";
     const engine12_start = std.mem.indexOf(u8, build_zon_content, engine12_prefix) orelse {
         std.debug.print("Error: Could not find '.engine12 =' dependency in build.zig.zon\n", .{});
@@ -179,8 +164,6 @@ pub fn fetchEngine12Hash(
     return try allocator.dupe(u8, hash);
 }
 
-/// Write a file, creating parent directories if needed
-/// Returns error if file cannot be written
 pub fn writeFile(
     _: std.mem.Allocator,
     base_path: []const u8,
@@ -193,7 +176,6 @@ pub fn writeFile(
     };
     defer base_dir.close();
 
-    // Split file path into directory and filename
     const last_slash = std.mem.lastIndexOfScalar(u8, file_path, '/');
     if (last_slash) |slash_idx| {
         const dir_path = file_path[0..slash_idx];
@@ -204,7 +186,6 @@ pub fn writeFile(
             return error.InvalidPath;
         }
 
-        // Create directory structure
         var dir = base_dir;
         var path_iter = std.mem.splitScalar(u8, dir_path, '/');
         while (path_iter.next()) |segment| {
@@ -228,7 +209,6 @@ pub fn writeFile(
         };
         dir.close();
     } else {
-        // No directory, just write file
         if (file_path.len == 0) {
             std.debug.print("Error: Invalid file path (empty)\n", .{});
             return error.InvalidPath;
@@ -240,7 +220,6 @@ pub fn writeFile(
     }
 }
 
-/// Validate project name (alphanumeric, hyphens, underscores)
 pub fn validateProjectName(name: []const u8) bool {
     if (name.len == 0) return false;
 

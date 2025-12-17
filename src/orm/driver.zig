@@ -1,28 +1,20 @@
-// Driver abstraction for multi-database support
-// Allows runtime selection between SQLite and PostgreSQL
 
 const std = @import("std");
 
-/// Supported database drivers
 pub const Driver = enum {
     sqlite,
     postgresql,
 
-    /// Get the placeholder syntax for this driver
     pub fn placeholder(self: Driver, index: usize) []const u8 {
         return switch (self) {
             .sqlite => "?",
             .postgresql => blk: {
-                // PostgreSQL uses $1, $2, etc.
-                // This is a simplified version - actual implementation
-                // will format dynamically
                 _ = index;
                 break :blk "$";
             },
         };
     }
 
-    /// Get the auto-increment syntax for primary keys
     pub fn autoIncrementType(self: Driver) []const u8 {
         return switch (self) {
             .sqlite => "INTEGER PRIMARY KEY AUTOINCREMENT",
@@ -30,7 +22,6 @@ pub const Driver = enum {
         };
     }
 
-    /// Get the boolean type name
     pub fn booleanType(self: Driver) []const u8 {
         return switch (self) {
             .sqlite => "INTEGER",
@@ -38,7 +29,6 @@ pub const Driver = enum {
         };
     }
 
-    /// Check if RETURNING clause is supported/needed for last insert ID
     pub fn needsReturning(self: Driver) bool {
         return switch (self) {
             .sqlite => false,
@@ -47,43 +37,26 @@ pub const Driver = enum {
     }
 };
 
-/// SQLite-specific connection configuration
 pub const SqliteConfig = struct {
-    /// Path to the database file
     path: []const u8,
-    /// Enable WAL mode (recommended for concurrency)
     wal_mode: bool = true,
-    /// Cache size in KB (negative means KB, positive means pages)
     cache_size_kb: i32 = 256000,
-    /// Busy timeout in milliseconds
     busy_timeout_ms: u32 = 10000,
 };
 
-/// PostgreSQL-specific connection configuration
 pub const PostgresConfig = struct {
-    /// Database host
     host: []const u8 = "127.0.0.1",
-    /// Database port
     port: u16 = 5432,
-    /// Database name
     database: []const u8,
-    /// Username for authentication
     username: []const u8,
-    /// Password for authentication (optional for trust auth)
     password: ?[]const u8 = null,
-    /// Connection pool size
     pool_size: u16 = 5,
-    /// Connection timeout in milliseconds
     connect_timeout_ms: u32 = 10000,
-    /// Authentication timeout in milliseconds
     auth_timeout_ms: u32 = 10000,
 };
 
-/// Unified database configuration
 pub const DatabaseConfig = struct {
-    /// Which driver to use
     driver: Driver,
-    /// Driver-specific connection settings
     connection: ConnectionUnion,
 
     pub const ConnectionUnion = union(Driver) {
@@ -91,7 +64,6 @@ pub const DatabaseConfig = struct {
         postgresql: PostgresConfig,
     };
 
-    /// Create a SQLite configuration with a path
     pub fn sqlite(path: []const u8) DatabaseConfig {
         return .{
             .driver = .sqlite,
@@ -99,7 +71,6 @@ pub const DatabaseConfig = struct {
         };
     }
 
-    /// Create a SQLite configuration with full options
     pub fn sqliteWithOptions(config: SqliteConfig) DatabaseConfig {
         return .{
             .driver = .sqlite,
@@ -107,7 +78,6 @@ pub const DatabaseConfig = struct {
         };
     }
 
-    /// Create a PostgreSQL configuration
     pub fn postgresql(config: PostgresConfig) DatabaseConfig {
         return .{
             .driver = .postgresql,
@@ -115,12 +85,9 @@ pub const DatabaseConfig = struct {
         };
     }
 
-    /// Create a PostgreSQL configuration from a connection string
-    /// Format: postgresql://user:password@host:port/database
     pub fn postgresqlFromUri(uri_string: []const u8, allocator: std.mem.Allocator) !DatabaseConfig {
         const uri = try std.Uri.parse(uri_string);
 
-        // Extract components
         const host = if (uri.host) |h| switch (h) {
             .raw => |raw| raw,
             .percent_encoded => |pe| pe,
@@ -128,15 +95,12 @@ pub const DatabaseConfig = struct {
 
         const port: u16 = uri.port orelse 5432;
 
-        // Path contains the database name (without leading /)
         const database = if (uri.path.len > 1) uri.path[1..] else "";
 
-        // User info contains username:password
         var username: []const u8 = "postgres";
         var password: ?[]const u8 = null;
 
         if (uri.user) |user_info| {
-            // Parse username
             username = switch (user_info.raw) {
                 .raw => |raw| raw,
                 .percent_encoded => |pe| pe,
@@ -165,7 +129,6 @@ pub const DatabaseConfig = struct {
     }
 };
 
-/// SQL dialect utilities for query generation
 pub const Dialect = struct {
     driver: Driver,
 
@@ -173,7 +136,6 @@ pub const Dialect = struct {
         return .{ .driver = driver };
     }
 
-    /// Format a placeholder for the given parameter index (1-based)
     pub fn formatPlaceholder(self: Dialect, buffer: []u8, index: usize) []const u8 {
         return switch (self.driver) {
             .sqlite => {
@@ -181,14 +143,11 @@ pub const Dialect = struct {
                 return buffer[0..1];
             },
             .postgresql => {
-                // Format as $1, $2, etc.
                 return std.fmt.bufPrint(buffer, "${d}", .{index}) catch buffer[0..1];
             },
         };
     }
 
-    /// Get the LIMIT/OFFSET syntax
-    /// Both SQLite and PostgreSQL use standard syntax, but this allows for future expansion
     pub fn formatLimitOffset(self: Dialect, buffer: []u8, limit: ?usize, offset_val: ?usize) []const u8 {
         _ = self;
         var len: usize = 0;
@@ -206,12 +165,10 @@ pub const Dialect = struct {
         return buffer[0..len];
     }
 
-    /// Check if a SQL type name needs translation
     pub fn translateType(self: Dialect, sql_type: []const u8) []const u8 {
         return switch (self.driver) {
             .sqlite => sql_type,
             .postgresql => {
-                // Handle common SQLite to PostgreSQL type mappings
                 if (std.mem.eql(u8, sql_type, "INTEGER PRIMARY KEY AUTOINCREMENT")) {
                     return "SERIAL PRIMARY KEY";
                 }

@@ -3,31 +3,21 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const middleware_chain = @import("middleware.zig");
 
-/// Request body size limit configuration
 pub const BodySizeLimit = struct {
-    /// Maximum body size in bytes
     max_bytes: u64,
-
-    /// Custom error message when limit is exceeded
     error_message: []const u8 = "Request body too large",
 };
 
-/// Default body size limits
 pub const DefaultLimits = struct {
-    /// Default limit for JSON requests (1MB)
     pub const json: u64 = 1024 * 1024;
 
-    /// Default limit for form data (10MB)
     pub const form_data: u64 = 10 * 1024 * 1024;
 
-    /// Default limit for file uploads (50MB)
     pub const file_upload: u64 = 50 * 1024 * 1024;
 
-    /// Default limit for general requests (5MB)
     pub const general: u64 = 5 * 1024 * 1024;
 };
 
-/// Middleware wrapper that holds body size limit config
 const BodySizeLimitMiddleware = struct {
     limit: BodySizeLimit,
 
@@ -35,7 +25,6 @@ const BodySizeLimitMiddleware = struct {
         const body = req.body();
 
         if (body.len > self.limit.max_bytes) {
-            // Mark request as having exceeded body size limit
             req.context.put("body_size_exceeded", "true") catch {};
             const limit_str = std.fmt.allocPrint(req.arena.allocator(), "{d}", .{self.limit.max_bytes}) catch "unknown";
             req.context.put("body_size_limit", limit_str) catch {};
@@ -46,20 +35,14 @@ const BodySizeLimitMiddleware = struct {
     }
 };
 
-// Global registry for body size limit middleware instances
 var body_size_limit_instances: [8]*const BodySizeLimitMiddleware = undefined;
 var body_size_limit_count: usize = 0;
 var body_size_limit_mutex: std.Thread.Mutex = .{};
 
-/// Create a body size limit middleware
-/// Checks request body size before processing
-/// Returns .abort if body exceeds limit
 pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreRequestMiddlewareFn {
     body_size_limit_mutex.lock();
     defer body_size_limit_mutex.unlock();
 
-    // Allocate middleware instance
-    // If allocation fails, return a no-op middleware that allows all requests
     const instance = std.heap.page_allocator.create(BodySizeLimitMiddleware) catch {
         return struct {
             fn mw(_: *Request) middleware_chain.MiddlewareResult {
@@ -69,12 +52,10 @@ pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreR
     };
     instance.* = BodySizeLimitMiddleware{ .limit = limit };
 
-    // Store in registry
     const id = body_size_limit_count;
     body_size_limit_instances[id] = instance;
     body_size_limit_count += 1;
 
-    // Return wrapper function based on ID
     return switch (id) {
         0 => struct {
             fn mw(req: *Request) middleware_chain.MiddlewareResult {
@@ -120,7 +101,6 @@ pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreR
     };
 }
 
-/// Create a body size limit middleware with default limits based on content type
 pub fn createContentTypeBodySizeLimitMiddleware() middleware_chain.PreRequestMiddlewareFn {
     return struct {
         fn mw(req: *Request) middleware_chain.MiddlewareResult {
@@ -129,7 +109,6 @@ pub fn createContentTypeBodySizeLimitMiddleware() middleware_chain.PreRequestMid
 
             var limit: u64 = DefaultLimits.general;
 
-            // Check content type and set appropriate limit
             if (std.mem.indexOf(u8, content_type, "application/json") != null) {
                 limit = DefaultLimits.json;
             } else if (std.mem.indexOf(u8, content_type, "multipart/form-data") != null) {
@@ -150,7 +129,6 @@ pub fn createContentTypeBodySizeLimitMiddleware() middleware_chain.PreRequestMid
     }.mw;
 }
 
-// Tests
 test "createBodySizeLimitMiddleware allows requests within limit" {
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
@@ -194,7 +172,6 @@ test "createBodySizeLimitMiddleware rejects requests exceeding limit" {
     const result = mw(&req);
     try std.testing.expectEqual(result, .abort);
 
-    // Verify context was set
     try std.testing.expect(req.context.get("body_size_exceeded") != null);
 }
 
@@ -344,11 +321,8 @@ test "createContentTypeBodySizeLimitMiddleware detects JSON content type" {
     var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
     defer req.deinit();
 
-    // Set Content-Type header via context since header() currently returns null
-    // For now, test that it falls back to general limit
     const mw = createContentTypeBodySizeLimitMiddleware();
     const result = mw(&req);
-    // Should abort because body exceeds general limit
     try std.testing.expectEqual(result, .abort);
 }
 
@@ -387,7 +361,6 @@ test "createContentTypeBodySizeLimitMiddleware handles empty Content-Type" {
 
     const mw = createContentTypeBodySizeLimitMiddleware();
     const result = mw(&req);
-    // Should use general limit
     try std.testing.expectEqual(result, .proceed);
 }
 

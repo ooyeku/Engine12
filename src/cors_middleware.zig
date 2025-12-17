@@ -3,97 +3,63 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const middleware = @import("middleware.zig");
 
-/// CORS configuration options
 pub const CorsConfig = struct {
-    /// Allowed origins (use "*" for all origins, or specific origins)
     allowed_origins: []const []const u8 = &[_][]const u8{"*"},
     
-    /// Allowed HTTP methods
     allowed_methods: []const []const u8 = &[_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" },
     
-    /// Allowed headers
     allowed_headers: []const []const u8 = &[_][]const u8{"Content-Type", "Authorization"},
     
-    /// Max age for preflight cache (in seconds)
     max_age: u32 = 3600,
     
-    /// Allow credentials (cookies, authorization headers)
     allow_credentials: bool = false,
     
-    /// Exposed headers (headers that can be accessed by JavaScript)
     exposed_headers: []const []const u8 = &[_][]const u8{},
 };
 
-/// Global CORS config storage (thread-safe)
 var global_cors_config: ?CorsConfig = null;
 var global_cors_config_mutex: std.Thread.Mutex = .{};
 
-/// CORS middleware for handling Cross-Origin Resource Sharing
-/// Uses request context to store CORS info, which is then processed in executeResponse
 pub const CorsMiddleware = struct {
     config: CorsConfig,
     
-    /// Initialize CORS middleware with configuration
-    /// 
-    /// Example:
-    /// ```zig
-    /// const cors = CorsMiddleware.init(.{
-    ///     .allowed_origins = &[_][]const u8{"http://localhost:3000"},
-    ///     .allowed_methods = &[_][]const u8{"GET", "POST"},
-    ///     .max_age = 3600,
-    /// });
-    /// try chain.addPreRequest(&cors.preflightMwFn());
-    /// // CORS headers are added automatically in executeResponse
-    /// ```
     pub fn init(config: CorsConfig) CorsMiddleware {
         return CorsMiddleware{ .config = config };
     }
     
-    /// Set the global CORS config (must be called before using middleware)
     pub fn setGlobalConfig(self: *const CorsMiddleware) void {
         global_cors_config_mutex.lock();
         defer global_cors_config_mutex.unlock();
         global_cors_config = self.config;
     }
     
-    /// Pre-request middleware to handle OPTIONS preflight requests and store config
     fn preflightMiddleware(req: *Request) middleware.MiddlewareResult {
-        // Get config from global storage
         global_cors_config_mutex.lock();
         const config = global_cors_config orelse {
             global_cors_config_mutex.unlock();
             return .proceed; // No CORS config set
         };
         global_cors_config_mutex.unlock();
-        // Store config in request context (as JSON string for simplicity)
-        // We'll serialize the key config values
         const origin = req.header("Origin") orelse {
             return .proceed; // No origin header, not a CORS request
         };
         
-        // Check if origin is allowed
         if (!isOriginAllowed(&config, origin)) {
             return .proceed; // Origin not allowed
         }
         
-        // Store origin in context for response middleware
         req.set("cors_origin", origin) catch {};
         
-        // Handle OPTIONS preflight requests
         if (std.mem.eql(u8, req.method(), "OPTIONS")) {
-            // Get requested method and headers
             const requested_method = req.header("Access-Control-Request-Method") orelse "";
             const requested_headers = req.header("Access-Control-Request-Headers") orelse "";
             
-            // Check if method and headers are allowed
             const method_allowed = isMethodAllowed(&config, requested_method);
             const headers_allowed = areHeadersAllowed(&config, requested_headers);
             
             if (method_allowed and headers_allowed) {
-                // Store preflight info in context
                 req.set("cors_preflight", "true") catch {};
                 
-                // Store config values in context
                 var methods_buf: [256]u8 = undefined;
                 var methods_fba = std.heap.FixedBufferAllocator.init(&methods_buf);
                 var methods_list = std.ArrayListUnmanaged(u8){};
@@ -141,7 +107,6 @@ pub const CorsMiddleware = struct {
                 }
             }
         } else {
-            // Regular request - store config for response headers
             if (config.allow_credentials) {
                 req.set("cors_allow_credentials", "true") catch {};
             }
@@ -163,7 +128,6 @@ pub const CorsMiddleware = struct {
         return .proceed;
     }
     
-    /// Check if origin is allowed
     fn isOriginAllowed(config: *const CorsConfig, origin: []const u8) bool {
         for (config.allowed_origins) |allowed| {
             if (std.mem.eql(u8, allowed, "*")) {
@@ -176,7 +140,6 @@ pub const CorsMiddleware = struct {
         return false;
     }
     
-    /// Check if method is allowed
     fn isMethodAllowed(config: *const CorsConfig, method: []const u8) bool {
         for (config.allowed_methods) |allowed| {
             if (std.mem.eql(u8, allowed, method)) {
@@ -186,7 +149,6 @@ pub const CorsMiddleware = struct {
         return false;
     }
     
-    /// Check if headers are allowed
     fn areHeadersAllowed(config: *const CorsConfig, headers_str: []const u8) bool {
         if (headers_str.len == 0) return true;
         
@@ -207,7 +169,6 @@ pub const CorsMiddleware = struct {
         return true;
     }
     
-    /// Create pre-request middleware function pointer
     pub fn preflightMwFn(_: *const CorsMiddleware) middleware.PreRequestMiddlewareFn {
         const Self = @This();
         return struct {
@@ -218,7 +179,6 @@ pub const CorsMiddleware = struct {
     }
 };
 
-// Tests
 test "CorsMiddleware init" {
     const cors = CorsMiddleware.init(.{
         .allowed_origins = &[_][]const u8{"http://localhost:3000"},

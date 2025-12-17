@@ -3,43 +3,24 @@ const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const types = @import("types.zig");
 
-/// Middleware result indicating whether to continue processing
 pub const MiddlewareResult = enum {
     proceed, // Continue to next middleware/handler
     abort, // Stop processing and return response
 };
 
-/// Pre-request middleware that can short-circuit
-/// Returns MiddlewareResult to indicate whether to continue
-/// If abort is returned, the provided response is used instead of calling the handler
 pub const PreRequestMiddlewareFn = *const fn (*Request) MiddlewareResult;
 
-/// Response middleware that transforms responses
 pub const ResponseMiddlewareFn = *const fn (Response) Response;
 
-/// Middleware chain for managing multiple middleware functions
 pub const MiddlewareChain = struct {
     pub const MAX_MIDDLEWARE = 16;
 
-    /// Pre-request middleware functions (executed before handler)
     pre_request_middleware: [MAX_MIDDLEWARE]?PreRequestMiddlewareFn = [_]?PreRequestMiddlewareFn{null} ** MAX_MIDDLEWARE,
     pre_request_count: usize = 0,
 
-    /// Response middleware functions (executed after handler)
     response_middleware: [MAX_MIDDLEWARE]?ResponseMiddlewareFn = [_]?ResponseMiddlewareFn{null} ** MAX_MIDDLEWARE,
     response_count: usize = 0,
 
-    /// Execute all pre-request middleware in order
-    /// Returns null if all middleware allow processing to continue
-    /// Returns a response if any middleware short-circuits (aborts)
-    ///
-    /// Example:
-    /// ```zig
-    /// if (chain.executePreRequest(&req)) |response| {
-    ///     return response; // Middleware aborted
-    /// }
-    /// // Continue to handler
-    /// ```
     pub fn executePreRequest(self: *const MiddlewareChain, req: *Request) ?Response {
         for (self.pre_request_middleware[0..self.pre_request_count]) |maybe_middleware| {
             if (maybe_middleware) |middleware| {
@@ -47,35 +28,27 @@ pub const MiddlewareChain = struct {
                 switch (result) {
                     .proceed => continue,
                     .abort => {
-                        // Middleware aborted - check if this is a rate limit scenario
                         if (req.context.get("rate_limited")) |_| {
                             return Response.json(
                                 \\{"error":"Rate limit exceeded","message":"Too many requests"}
                             ).withStatus(429);
                         }
-                        // Check if body size exceeded
                         if (req.context.get("body_size_exceeded")) |_| {
                             const limit_str = req.context.get("body_size_limit") orelse "unknown";
-                            // Create error message with limit info
-                            // Note: error_msg is allocated in request arena, so it will be cleaned up automatically
                             const error_msg = std.fmt.allocPrint(req.arena.allocator(),
                                 \\{{"error":"Request body too large","message":"Request body exceeds maximum size of {s} bytes","code":"REQUEST_TOO_LARGE"}}
                             , .{limit_str}) catch {
-                                // If allocation fails, return generic error (request arena will still be cleaned up)
                                 return Response.json(
                                     \\{"error":"Request body too large","message":"Request body exceeds maximum allowed size"}
                                 ).withStatus(413);
                             };
-                            // error_msg will be freed when request arena is deinitialized
                             return Response.json(error_msg).withStatus(413);
                         }
-                        // Check if CSRF validation failed
                         if (req.context.get("csrf_error")) |_| {
                             return Response.json(
                                 \\{"error":"CSRF validation failed","message":"Invalid or missing CSRF token","code":"CSRF_ERROR"}
                             ).withStatus(403);
                         }
-                        // Check if cache hit with matching ETag (304 Not Modified)
                         if (req.context.get("cache_hit")) |_| {
                             const etag = req.context.get("cache_etag") orelse "";
                             var resp = Response.status(304);
@@ -83,7 +56,6 @@ pub const MiddlewareChain = struct {
                             resp = resp.withHeader("Cache-Control", "public, max-age=3600");
                             return resp;
                         }
-                        // Default abort response
                         return Response.unauthorized();
                     },
                 }
@@ -92,15 +64,6 @@ pub const MiddlewareChain = struct {
         return null;
     }
 
-    /// Execute all response middleware in order
-    /// Transforms the response through each middleware
-    ///
-    /// Example:
-    /// ```zig
-    /// var response = handler(&req);
-    /// response = chain.executeResponse(response);
-    /// return response;
-    /// ```
     pub fn executeResponse(self: *const MiddlewareChain, response: Response, req: ?*Request) Response {
         var transformed_response = response;
         for (self.response_middleware[0..self.response_count]) |maybe_middleware| {
@@ -109,7 +72,6 @@ pub const MiddlewareChain = struct {
             }
         }
 
-        // Add cache headers if cache hit
         if (req) |request| {
             if (request.context.get("cache_hit")) |hit| {
                 if (std.mem.eql(u8, hit, "true")) {
@@ -120,7 +82,6 @@ pub const MiddlewareChain = struct {
                 }
             }
 
-            // Add CORS headers if CORS is enabled
             if (request.context.get("cors_origin")) |origin| {
                 transformed_response = transformed_response.withHeader("Access-Control-Allow-Origin", origin);
 
@@ -128,7 +89,6 @@ pub const MiddlewareChain = struct {
                     transformed_response = transformed_response.withHeader("Access-Control-Allow-Credentials", "true");
                 }
 
-                // Handle preflight OPTIONS request
                 if (request.context.get("cors_preflight")) |_| {
                     if (request.context.get("cors_allowed_methods")) |methods| {
                         transformed_response = transformed_response.withHeader("Access-Control-Allow-Methods", methods);
@@ -139,17 +99,14 @@ pub const MiddlewareChain = struct {
                     if (request.context.get("cors_max_age")) |max_age| {
                         transformed_response = transformed_response.withHeader("Access-Control-Max-Age", max_age);
                     }
-                    // Return empty 204 for preflight
                     return Response.status(204);
                 }
 
-                // Add exposed headers if any
                 if (request.context.get("cors_exposed_headers")) |exposed| {
                     transformed_response = transformed_response.withHeader("Access-Control-Expose-Headers", exposed);
                 }
             }
 
-            // Add request ID header if configured
             if (request.context.get("request_id_header")) |header_name| {
                 if (request.requestId()) |req_id| {
                     transformed_response = transformed_response.withHeader(header_name, req_id);
@@ -160,14 +117,6 @@ pub const MiddlewareChain = struct {
         return transformed_response;
     }
 
-    /// Add a pre-request middleware to the chain
-    /// Middleware are executed in the order they are added
-    ///
-    /// Example:
-    /// ```zig
-    /// chain.addPreRequest(authMiddleware);
-    /// chain.addPreRequest(loggingMiddleware);
-    /// ```
     pub fn addPreRequest(self: *MiddlewareChain, middleware: PreRequestMiddlewareFn) !void {
         if (self.pre_request_count >= MAX_MIDDLEWARE) {
             return error.TooManyMiddleware;
@@ -176,14 +125,6 @@ pub const MiddlewareChain = struct {
         self.pre_request_count += 1;
     }
 
-    /// Add a response middleware to the chain
-    /// Middleware are executed in the order they are added
-    ///
-    /// Example:
-    /// ```zig
-    /// chain.addResponse(corsMiddleware);
-    /// chain.addResponse(loggingMiddleware);
-    /// ```
     pub fn addResponse(self: *MiddlewareChain, middleware: ResponseMiddlewareFn) !void {
         if (self.response_count >= MAX_MIDDLEWARE) {
             return error.TooManyMiddleware;
@@ -192,7 +133,6 @@ pub const MiddlewareChain = struct {
         self.response_count += 1;
     }
 
-    /// Clear all middleware
     pub fn clear(self: *MiddlewareChain) void {
         self.pre_request_count = 0;
         self.response_count = 0;
@@ -201,7 +141,6 @@ pub const MiddlewareChain = struct {
     }
 };
 
-// Tests
 fn createTestZigguratRequest(path: []const u8, method: @import("ziggurat").request.Method, body: []const u8) @import("ziggurat").request.Request {
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
@@ -279,7 +218,6 @@ test "MiddlewareChain short-circuit on abort" {
 test "MiddlewareChain execute multiple middleware in order" {
     var chain = MiddlewareChain{};
 
-    // Add two middleware functions
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
             _ = req;
@@ -313,7 +251,6 @@ test "MiddlewareChain execute multiple middleware in order" {
 
     _ = chain.executePreRequest(&req);
 
-    // Verify middleware were added and executed
     try std.testing.expect(chain.pre_request_count == 2);
 }
 
@@ -346,13 +283,11 @@ test "MiddlewareChain addPreRequest fails when max exceeded" {
         }
     };
 
-    // Fill up to max
     var i: usize = 0;
     while (i < MiddlewareChain.MAX_MIDDLEWARE) : (i += 1) {
         try chain.addPreRequest(&mw.mw);
     }
 
-    // Should fail on next add
     try std.testing.expectError(error.TooManyMiddleware, chain.addPreRequest(&mw.mw));
 }
 
@@ -365,13 +300,11 @@ test "MiddlewareChain addResponse fails when max exceeded" {
         }
     };
 
-    // Fill up to max
     var i: usize = 0;
     while (i < MiddlewareChain.MAX_MIDDLEWARE) : (i += 1) {
         try chain.addResponse(&mw.mw);
     }
 
-    // Should fail on next add
     try std.testing.expectError(error.TooManyMiddleware, chain.addResponse(&mw.mw));
 }
 
@@ -403,7 +336,6 @@ test "MiddlewareChain clear removes all middleware" {
 test "MiddlewareChain execute multiple pre-request middleware in order" {
     var chain = MiddlewareChain{};
 
-    // Track calls via request context
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
             req.context.put("mw1_called", "true") catch {};
@@ -445,7 +377,6 @@ test "MiddlewareChain execute multiple pre-request middleware in order" {
 
     _ = chain.executePreRequest(&req);
 
-    // Verify all middleware were called
     try std.testing.expect(req.context.get("mw1_called") != null);
     try std.testing.expect(req.context.get("mw2_called") != null);
     try std.testing.expect(req.context.get("mw3_called") != null);

@@ -21,7 +21,6 @@ pub const OpenApiSchema = struct {
     required: ?std.ArrayListUnmanaged([]const u8) = null,
     nullable: bool = false,
 
-    // For serialization (custom since we have hashmaps/pointers)
     pub fn toJson(self: OpenApiSchema, allocator: std.mem.Allocator) ![]const u8 {
         var list = std.ArrayListUnmanaged(u8){};
         defer list.deinit(allocator);
@@ -143,8 +142,6 @@ pub const OpenApiDoc = struct {
 
         var path_it = self.paths.iterator();
         while (path_it.next()) |entry| {
-            // Deep free path items would be needed for a complete implementation
-            // For now assume arena allocation or simplified memory model
             _ = entry;
         }
         self.paths.deinit(self.allocator);
@@ -161,7 +158,6 @@ pub const OpenApiDoc = struct {
     fn serialize(self: *OpenApiDoc, list: *std.ArrayListUnmanaged(u8)) !void {
         try list.writer(self.allocator).print("{{\"openapi\":\"3.0.0\"", .{});
 
-        // Info
         try list.writer(self.allocator).print(",\"info\":{{", .{});
         try list.writer(self.allocator).print("\"title\":\"{s}\"", .{self.info.title});
         try list.writer(self.allocator).print(",\"version\":\"{s}\"", .{self.info.version});
@@ -170,7 +166,6 @@ pub const OpenApiDoc = struct {
         }
         try list.writer(self.allocator).print("}}", .{});
 
-        // Paths
         try list.writer(self.allocator).print(",\"paths\":{{", .{});
         var path_it = self.paths.iterator();
         var i: usize = 0;
@@ -208,7 +203,6 @@ pub const OpenApiDoc = struct {
         }
         try list.writer(self.allocator).print("}}", .{});
 
-        // Components (Schemas)
         if (self.components.schemas.count() > 0) {
             try list.writer(self.allocator).print(",\"components\":{{\"schemas\":{{", .{});
             var schema_it = self.components.schemas.iterator();
@@ -359,9 +353,7 @@ pub const OpenAPIGenerator = struct {
                 return OpenApiSchema{ .type = "string" }; // Fallback
             },
             .@"struct" => {
-                // Check if already registered in components (simple check by name)
                 const name = @typeName(T);
-                // Simple mangling cleanup for name
                 var safe_name_buf: [64]u8 = undefined;
                 var safe_name_len: usize = 0;
 
@@ -379,9 +371,6 @@ pub const OpenAPIGenerator = struct {
                 const safe_name = try self.allocator.dupe(u8, safe_name_buf[0..safe_name_len]);
 
                 if (self.doc.components.schemas.contains(safe_name)) {
-                    // Return reference
-                    // Note: For now we return the full schema directly rather than a $ref to avoid complexity
-                    // A real implementation would use a union type to support both inline schemas and references
                 }
 
                 var properties = std.StringHashMapUnmanaged(OpenApiSchema){};
@@ -391,7 +380,6 @@ pub const OpenAPIGenerator = struct {
                     const field_schema = try self.generateSchema(field.type);
                     try properties.put(self.allocator, field.name, field_schema);
 
-                    // Assume non-optional fields are required
                     if (@typeInfo(field.type) != .optional) {
                         try required.append(self.allocator, field.name);
                     }
@@ -403,14 +391,8 @@ pub const OpenAPIGenerator = struct {
                     .required = required,
                 };
 
-                // Register in components
                 try self.doc.components.schemas.put(self.allocator, safe_name, schema);
 
-                // Return reference
-                // const ref = try std.fmt.allocPrint(self.allocator, "#/components/schemas/{s}", .{safe_name});
-                // For simplicity in this POC, we return a ref object (using type="" as marker for $ref if we had it, but here we just rely on direct embedding or simple types)
-                // Ideally we'd return { "$ref": ... }
-                // Let's actually just return the schema directly for now to ensure it works without dealing with ref complexity in serialization
                 return schema;
             },
             else => return OpenApiSchema{ .type = "string" },
@@ -420,11 +402,9 @@ pub const OpenAPIGenerator = struct {
     pub fn registerResource(self: *OpenAPIGenerator, prefix: []const u8, comptime Model: type) !void {
         const schema = try self.generateSchema(Model);
         const model_name = @typeName(Model);
-        // Get last part of type name
         const last_dot = std.mem.lastIndexOfScalar(u8, model_name, '.');
         const simple_name = if (last_dot) |idx| model_name[idx + 1 ..] else model_name;
 
-        // Define common parameter: ID
         var id_param = std.ArrayListUnmanaged(OpenApiParameter){};
         try id_param.append(self.allocator, OpenApiParameter{
             .name = "id",
@@ -433,13 +413,11 @@ pub const OpenAPIGenerator = struct {
             .schema = OpenApiSchema{ .type = "integer", .format = "int64" },
         });
 
-        // Define responses
         var success_resp = std.StringHashMapUnmanaged(OpenApiResponse){};
         var json_content = std.StringHashMapUnmanaged(OpenApiMediaType){};
         try json_content.put(self.allocator, "application/json", OpenApiMediaType{ .schema = schema });
         try success_resp.put(self.allocator, "200", OpenApiResponse{ .description = "Successful operation", .content = json_content });
 
-        // Define list responses (array)
         var list_resp = std.StringHashMapUnmanaged(OpenApiResponse){};
         var list_json_content = std.StringHashMapUnmanaged(OpenApiMediaType){};
 
@@ -450,21 +428,17 @@ pub const OpenAPIGenerator = struct {
         try list_json_content.put(self.allocator, "application/json", OpenApiMediaType{ .schema = array_schema });
         try list_resp.put(self.allocator, "200", OpenApiResponse{ .description = "List of items", .content = list_json_content });
 
-        // Define tags
         var tags = std.ArrayListUnmanaged([]const u8){};
         try tags.append(self.allocator, simple_name);
 
-        // Path: /prefix
         var path_item = OpenApiPathItem{};
 
-        // GET /prefix
         path_item.get = OpenApiOperation{
             .summary = "List items",
             .tags = try tags.clone(self.allocator),
             .responses = list_resp,
         };
 
-        // POST /prefix
         const create_req_body = OpenApiRequestBody{
             .required = true,
             .content = try json_content.clone(self.allocator),
@@ -478,11 +452,9 @@ pub const OpenAPIGenerator = struct {
 
         try self.doc.paths.put(self.allocator, prefix, path_item);
 
-        // Path: /prefix/{id}
         const detail_path = try std.fmt.allocPrint(self.allocator, "{s}/{{id}}", .{prefix});
         var detail_item = OpenApiPathItem{};
 
-        // GET /prefix/{id}
         detail_item.get = OpenApiOperation{
             .summary = "Get item by ID",
             .tags = try tags.clone(self.allocator),
@@ -490,7 +462,6 @@ pub const OpenAPIGenerator = struct {
             .responses = try success_resp.clone(self.allocator),
         };
 
-        // PUT /prefix/{id}
         detail_item.put = OpenApiOperation{
             .summary = "Update item",
             .tags = try tags.clone(self.allocator),
@@ -502,7 +473,6 @@ pub const OpenAPIGenerator = struct {
             .responses = try success_resp.clone(self.allocator),
         };
 
-        // DELETE /prefix/{id}
         var delete_resp = std.StringHashMapUnmanaged(OpenApiResponse){};
         try delete_resp.put(self.allocator, "204", OpenApiResponse{ .description = "Deleted successfully" });
 

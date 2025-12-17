@@ -1,8 +1,6 @@
 const std = @import("std");
 
-/// Built-in template filters
 pub const Filters = struct {
-    /// Convert string to uppercase
     pub fn uppercase(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         const upper = try allocator.alloc(u8, value.len);
         for (value, 0..) |char, i| {
@@ -11,7 +9,6 @@ pub const Filters = struct {
         return upper;
     }
 
-    /// Convert string to lowercase
     pub fn lowercase(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         const lower = try allocator.alloc(u8, value.len);
         for (value, 0..) |char, i| {
@@ -20,13 +17,11 @@ pub const Filters = struct {
         return lower;
     }
 
-    /// Trim whitespace from string
     pub fn trim(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         const trimmed = std.mem.trim(u8, value, " \t\n\r");
         return try allocator.dupe(u8, trimmed);
     }
 
-    /// Default value if input is null or empty
     pub fn default(value: ?[]const u8, default_val: []const u8) []const u8 {
         if (value) |v| {
             if (v.len == 0) {
@@ -37,7 +32,6 @@ pub const Filters = struct {
         return default_val;
     }
 
-    /// Get length of value
     pub fn length(value: anytype) usize {
         return switch (@typeInfo(@TypeOf(value))) {
             .Pointer => |ptr_info| switch (ptr_info.size) {
@@ -49,13 +43,11 @@ pub const Filters = struct {
         };
     }
 
-    /// Format value with format string
     pub fn format(value: anytype, comptime fmt: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         return try std.fmt.allocPrint(allocator, fmt, .{value});
     }
 };
 
-// Tests
 test "uppercase filter" {
     const allocator = std.testing.allocator;
     const result = try Filters.uppercase("hello", allocator);

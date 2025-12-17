@@ -1,7 +1,6 @@
 const std = @import("std");
 const Request = @import("request.zig").Request;
 
-/// Pagination metadata for JSON responses
 pub const PaginationMeta = struct {
     page: u32,
     limit: u32,
@@ -9,50 +8,27 @@ pub const PaginationMeta = struct {
     total_pages: u32,
 };
 
-/// Pagination helper for parsing and generating pagination info
 pub const Pagination = struct {
     page: u32,
     limit: u32,
     offset: u32,
     
-    /// Create pagination from request query parameters
-    /// Defaults: page=1, limit=20
-    /// Validates: page >= 1, limit between 1 and 100
-    /// 
-    /// Example:
-    /// ```zig
-    /// const pagination = Pagination.fromRequest(request);
-    /// const todos = try orm.findAllWithLimit(Todo, pagination.limit, pagination.offset);
-    /// ```
     pub fn fromRequest(req: *Request) !Pagination {
         return fromRequestWithDefaults(req, 20, 100);
     }
 
-    /// Create pagination from request query parameters with configurable defaults
-    /// Allows customizing the default limit and maximum allowed limit per resource
-    /// Validates: page >= 1, limit between 1 and max_limit
-    /// 
-    /// Example:
-    /// ```zig
-    /// // Default to 50 items, max 200
-    /// const pagination = Pagination.fromRequestWithDefaults(request, 50, 200);
-    /// const todos = try orm.findAllWithLimit(Todo, pagination.limit, pagination.offset);
-    /// ```
     pub fn fromRequestWithDefaults(req: *Request, default_limit: u32, max_limit: u32) !Pagination {
         const page = (req.queryParamTyped(u32, "page") catch null) orelse 1;
         var limit = (req.queryParamTyped(u32, "limit") catch null) orelse default_limit;
         
-        // Validate page
         if (page < 1) {
             return error.InvalidArgument;
         }
         
-        // Validate limit (between 1 and max_limit)
         if (limit < 1) {
             return error.InvalidArgument;
         }
         
-        // Clamp limit to max_limit to prevent excessive data transfer
         if (limit > max_limit) {
             limit = max_limit;
         }
@@ -66,16 +42,6 @@ pub const Pagination = struct {
         };
     }
     
-    /// Generate pagination metadata for JSON responses
-    /// 
-    /// Example:
-    /// ```zig
-    /// const pagination = Pagination.fromRequest(request);
-    /// const todos = try orm.findAllWithLimit(Todo, pagination.limit, pagination.offset);
-    /// const total = try orm.count(Todo);
-    /// const meta = pagination.toResponse(total);
-    /// return Response.jsonFrom(PaginatedResponse(Todo){ .data = todos, .meta = meta }, allocator);
-    /// ```
     pub fn toResponse(self: Pagination, total: u32) PaginationMeta {
         const total_pages = if (total == 0) 0 else ((total - 1) / self.limit) + 1;
         
@@ -88,7 +54,6 @@ pub const Pagination = struct {
     }
 };
 
-// Tests
 test "Pagination fromRequest with defaults" {
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);

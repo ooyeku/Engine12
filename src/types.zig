@@ -50,51 +50,21 @@ pub const ServerProfile_Testing = ServerProfile{
     .max_concurrent_tasks = 2,
 };
 
-// HTTP Handler type - uses engine12 Request/Response types
 pub const HttpHandler = fn (*Request) Response;
 
-/// Fallible HTTP Handler type - returns errors instead of requiring catch blocks.
-/// Use with wrapTryHandler() to convert to a standard HttpHandler.
-///
-/// Example:
-/// ```zig
-/// fn myHandler(req: *Request) !Response {
-///     const data = try orm.find(Todo, 1); // Errors propagate automatically
-///     return Response.jsonFrom(Todo, data, req.allocator());
-/// }
-///
-/// // Register using the try wrapper:
-/// try app.get("/api/todo", wrapTryHandler(myHandler));
-/// ```
 pub const TryHttpHandler = fn (*Request) anyerror!Response;
 
-/// Wrap a TryHttpHandler (fn returning !Response) into a standard HttpHandler.
-/// Errors are automatically converted to 500 Internal Server Error responses.
-///
-/// Example:
-/// ```zig
-/// try app.get("/api/todos", wrapTryHandler(struct {
-///     fn handler(req: *Request) !Response {
-///         const todos = try orm.findAll(Todo);
-///         return Response.fromStructArray(Todo, todos.items, req.allocator());
-///     }
-/// }.handler));
-/// ```
 pub fn wrapTryHandler(comptime handler: TryHttpHandler) HttpHandler {
     return struct {
         fn wrapped(req: *Request) Response {
             return handler(req) catch |err| {
-                // Log the error
                 std.debug.print("[Handler Error] {s}\n", .{@errorName(err)});
-                // Return a 500 error response
                 return Response.serverError(@errorName(err));
             };
         }
     }.wrapped;
 }
 
-/// Wrap a TryHttpHandler with custom error handling.
-/// Allows specifying a custom error-to-response converter.
 pub fn wrapTryHandlerCustom(
     comptime handler: TryHttpHandler,
     comptime errorToResponse: fn (anyerror) Response,
@@ -108,26 +78,19 @@ pub fn wrapTryHandlerCustom(
     }.wrapped;
 }
 
-// Background task type
 pub const BackgroundTask = *const fn () void;
 
-// Health check function type
 pub const HealthCheckFn = *const fn () HealthStatus;
 
-// Pre-request middleware
 pub const PreRequestMiddleware = fn (*Request) bool;
 
-// Response transformer middleware
 pub const ResponseTransformMiddleware = fn (Response) Response;
 
-// WebSocket handler type
 pub const WebSocketHandler = *const fn (*@import("websocket/connection.zig").WebSocketConnection) void;
 
-// Internal route and task storage
 pub const Route = struct {
     path: []const u8,
     method: []const u8, // "GET", "POST", "PUT", "DELETE"
-    // Note: handler is stored as a pointer for tracking, but registration happens immediately
     handler_ptr: *const HttpHandler,
 };
 
@@ -137,20 +100,12 @@ pub const BackgroundWorker = struct {
     interval_ms: ?u32,
 };
 
-// WebSocket route storage
 pub const WebSocketRoute = struct {
     path: []const u8,
     handler_ptr: WebSocketHandler, // Store function pointer value directly, not a pointer to it
 };
 
-// Hot reload error types
-// Note: These errors are defined here for documentation purposes
-// Actual error definitions are in the hot_reload module files
-// HotReloadNotEnabled - Hot reload operation attempted when disabled
-// TemplateReloadFailed - Failed to reload template
-// FileWatchFailed - Failed to watch file
 
-// Tests
 test "Environment enum values" {
     try std.testing.expectEqual(Environment.development, .development);
     try std.testing.expectEqual(Environment.staging, .staging);

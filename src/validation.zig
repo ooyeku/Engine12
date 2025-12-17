@@ -2,14 +2,12 @@ const std = @import("std");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 
-/// Validation error for a specific field
 pub const FieldError = struct {
     field: []const u8,
     message: []const u8,
     code: []const u8,
 };
 
-/// Collection of validation errors
 pub const ValidationErrors = struct {
     errors: std.ArrayListUnmanaged(FieldError),
     allocator: std.mem.Allocator,
@@ -21,7 +19,6 @@ pub const ValidationErrors = struct {
         };
     }
     
-    /// Add a validation error
     pub fn add(self: *ValidationErrors, field: []const u8, message: []const u8, code: []const u8) !void {
         try self.errors.append(self.allocator, FieldError{
             .field = field,
@@ -30,17 +27,14 @@ pub const ValidationErrors = struct {
         });
     }
     
-    /// Check if there are any errors
     pub fn isEmpty(self: *const ValidationErrors) bool {
         return self.errors.items.len == 0;
     }
     
-    /// Get all errors
     pub fn getAll(self: *const ValidationErrors) []const FieldError {
         return self.errors.items;
     }
     
-    /// Convert errors to JSON response
     pub fn toJson(self: *const ValidationErrors) ![]const u8 {
         var json = std.ArrayListUnmanaged(u8){};
         const writer = json.writer(self.allocator);
@@ -63,10 +57,8 @@ pub const ValidationErrors = struct {
     }
 };
 
-/// Validation rule function type
 pub const ValidationRule = *const fn ([]const u8, std.mem.Allocator) ?[]const u8;
 
-/// Parameterized validation rule data
 pub const ParameterizedRule = union(enum) {
     min_length: usize,
     max_length: usize,
@@ -74,7 +66,6 @@ pub const ParameterizedRule = union(enum) {
     range: struct { min: i64, max: i64 },
 };
 
-/// Field validator with rules
 pub const FieldValidator = struct {
     field_name: []const u8,
     value: []const u8,
@@ -92,41 +83,33 @@ pub const FieldValidator = struct {
         };
     }
     
-    /// Add a validation rule
     pub fn rule(self: *FieldValidator, rule_fn: ValidationRule) !void {
         try self.rules.append(self.allocator, rule_fn);
     }
     
-    /// Add a minLength validation rule with parameter
     pub fn minLength(self: *FieldValidator, min_val: usize) !void {
         try self.param_rules.append(self.allocator, .{ .min_length = min_val });
     }
     
-    /// Add a maxLength validation rule with parameter
     pub fn maxLength(self: *FieldValidator, max_val: usize) !void {
         try self.param_rules.append(self.allocator, .{ .max_length = max_val });
     }
     
-    /// Add a oneOf validation rule
     pub fn oneOf(self: *FieldValidator, allowed: []const []const u8) !void {
         try self.param_rules.append(self.allocator, .{ .one_of = allowed });
     }
     
-    /// Add a range validation rule for numeric values
     pub fn range(self: *FieldValidator, min_val: i64, max_val: i64) !void {
         try self.param_rules.append(self.allocator, .{ .range = .{ .min = min_val, .max = max_val } });
     }
     
-    /// Validate the field against all rules
     pub fn validate(self: *FieldValidator) ?[]const u8 {
-        // Check standard rules first
         for (self.rules.items) |rule_fn| {
             if (rule_fn(self.value, self.allocator)) |error_msg| {
                 return error_msg;
             }
         }
         
-        // Check parameterized rules
         for (self.param_rules.items) |param_rule| {
             switch (param_rule) {
                 .min_length => |min_val| {
@@ -182,7 +165,6 @@ pub const FieldValidator = struct {
     }
 };
 
-/// Validation schema for request validation
 pub const ValidationSchema = struct {
     validators: std.ArrayListUnmanaged(FieldValidator),
     allocator: std.mem.Allocator,
@@ -194,14 +176,12 @@ pub const ValidationSchema = struct {
         };
     }
     
-    /// Add a field validator
     pub fn field(self: *ValidationSchema, field_name: []const u8, value: []const u8) !*FieldValidator {
         const validator = FieldValidator.init(self.allocator, field_name, value);
         try self.validators.append(self.allocator, validator);
         return &self.validators.items[self.validators.items.len - 1];
     }
     
-    /// Validate all fields
     pub fn validate(self: *const ValidationSchema) !ValidationErrors {
         var errors = ValidationErrors.init(self.allocator);
         
@@ -222,9 +202,7 @@ pub const ValidationSchema = struct {
     }
 };
 
-/// Common validation rules
 
-/// Required field validation
 pub fn required(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     _ = allocator;
     if (value.len == 0) {
@@ -233,7 +211,6 @@ pub fn required(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     return null;
 }
 
-/// Minimum length validation (8 characters)
 pub fn minLength8(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     _ = allocator;
     if (value.len < 8) {
@@ -242,7 +219,6 @@ pub fn minLength8(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     return null;
 }
 
-/// Maximum length validation (100 characters)
 pub fn maxLength100(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     _ = allocator;
     if (value.len > 100) {
@@ -252,7 +228,6 @@ pub fn maxLength100(value: []const u8, allocator: std.mem.Allocator) ?[]const u8
 }
 
 
-/// Email validation (simple)
 pub fn email(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     _ = allocator;
     if (value.len == 0) return null; // Empty is handled by required()
@@ -262,7 +237,6 @@ pub fn email(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     return null;
 }
 
-/// Integer validation
 pub fn isInt(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     _ = allocator;
     if (value.len == 0) return null;
@@ -270,17 +244,13 @@ pub fn isInt(value: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
     return null;
 }
 
-/// Helper function to validate request body
 pub fn validateRequest(req: *Request, schema: *ValidationSchema) !ValidationErrors {
-    // Get form data or JSON body
     const form_data = try req.formBody();
     defer form_data.deinit();
     
-    // Run validation
     return try schema.validate();
 }
 
-// Tests
 test "ValidationErrors add and isEmpty" {
     var errors = ValidationErrors.init(std.testing.allocator);
     defer errors.deinit();
@@ -385,7 +355,6 @@ test "FieldValidator multiple rules" {
     
     const err = validator.validate();
     try std.testing.expect(err != null);
-    // Should return first error (required passes, minLength fails)
 }
 
 test "FieldValidator all rules pass" {
@@ -461,7 +430,6 @@ test "FieldValidator email rule empty email" {
     
     try validator.rule(&email);
     
-    // Empty email should pass (handled by required rule)
     const err = validator.validate();
     try std.testing.expect(err == null);
 }

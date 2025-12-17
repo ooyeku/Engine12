@@ -4,7 +4,6 @@ const pg = @import("pg");
 const driver_mod = @import("driver.zig");
 const Driver = driver_mod.Driver;
 
-// Error types for ORM operations
 pub const ORMError = error{
     ColumnMismatch,
     TypeMismatch,
@@ -13,7 +12,6 @@ pub const ORMError = error{
     DeserializationFailed,
 };
 
-/// SQLite-specific row implementation
 pub const SqliteRow = struct {
     stmt: *sqlite.sqlite3_stmt,
 
@@ -39,7 +37,6 @@ pub const SqliteRow = struct {
     }
 };
 
-/// PostgreSQL row wrapper that stores column values in memory
 pub const PostgresStoredRow = struct {
     values: []StoredValue,
     allocator: std.mem.Allocator,
@@ -56,7 +53,6 @@ pub const PostgresStoredRow = struct {
         if (col_index >= self.values.len) return null;
         return switch (self.values[col_index]) {
             .text => |t| t,
-            // For other types, return null - caller should use appropriate getter
             else => null,
         };
     }
@@ -95,8 +91,6 @@ pub const PostgresStoredRow = struct {
         self.allocator.free(self.values);
     }
 
-    /// Deep copy this row so it owns its own memory
-    /// This is needed when returning rows from QueryResult.nextRow() to prevent use-after-free
     pub fn copy(self: PostgresStoredRow, allocator: std.mem.Allocator) !PostgresStoredRow {
         const copied_values = try allocator.alloc(StoredValue, self.values.len);
         errdefer allocator.free(copied_values);
@@ -118,8 +112,6 @@ pub const PostgresStoredRow = struct {
     }
 };
 
-/// Unified row representation that works with any database driver
-/// Provides a driver-agnostic interface for accessing column values
 pub const Row = struct {
     driver: Driver,
     data: RowData,
@@ -129,7 +121,6 @@ pub const Row = struct {
         postgres: PostgresStoredRow,
     };
 
-    /// Create a Row from a SQLite row
     pub fn fromSqlite(sqlite_row: SqliteRow) Row {
         return Row{
             .driver = .sqlite,
@@ -137,7 +128,6 @@ pub const Row = struct {
         };
     }
 
-    /// Create a Row from a PostgreSQL stored row
     pub fn fromPostgres(postgres_row: PostgresStoredRow) Row {
         return Row{
             .driver = .postgresql,
@@ -145,7 +135,6 @@ pub const Row = struct {
         };
     }
 
-    /// Get text value at column index
     pub fn getText(self: Row, col_index: usize) ?[]const u8 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getText(@intCast(col_index)),
@@ -153,7 +142,6 @@ pub const Row = struct {
         };
     }
 
-    /// Get integer value at column index
     pub fn getInt64(self: Row, col_index: usize) i64 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getInt64(@intCast(col_index)),
@@ -161,7 +149,6 @@ pub const Row = struct {
         };
     }
 
-    /// Get float value at column index
     pub fn getDouble(self: Row, col_index: usize) f64 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getDouble(@intCast(col_index)),
@@ -169,7 +156,6 @@ pub const Row = struct {
         };
     }
 
-    /// Check if column value is null
     pub fn isNull(self: Row, col_index: usize) bool {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.isNull(@intCast(col_index)),
@@ -177,13 +163,11 @@ pub const Row = struct {
         };
     }
 
-    /// Get text value with allocation (caller owns memory)
     pub fn getTextAlloc(self: Row, allocator: std.mem.Allocator, col_index: usize) !?[]u8 {
         const text = self.getText(col_index) orelse return null;
         return try allocator.dupe(u8, text);
     }
 
-    // Legacy accessors using c_int for backward compatibility with SQLite code
     pub fn getTextLegacy(self: Row, col_index: c_int) ?[]const u8 {
         return self.getText(@intCast(col_index));
     }
@@ -201,8 +185,6 @@ pub const Row = struct {
     }
 };
 
-/// Represents the result of a SQL query
-/// Works with both SQLite and PostgreSQL drivers
 pub const QueryResult = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
@@ -210,15 +192,12 @@ pub const QueryResult = struct {
     _column_map: ?std.StringHashMap(c_int) = null,
     owns_stmt: bool = true,
 
-    // SQLite-specific data
     sqlite_stmt: ?*sqlite.sqlite3_stmt = null,
 
-    // PostgreSQL-specific data - stored rows and column names
     pg_rows: ?std.ArrayListUnmanaged(PostgresStoredRow) = null,
     pg_column_names: ?[][]const u8 = null,
     pg_row_index: usize = 0,
 
-    /// Initialize a QueryResult for SQLite
     pub fn initSqlite(stmt: *sqlite.sqlite3_stmt, allocator: std.mem.Allocator) QueryResult {
         return QueryResult{
             .driver = .sqlite,
@@ -230,7 +209,6 @@ pub const QueryResult = struct {
         };
     }
 
-    /// Initialize a QueryResult for PostgreSQL with stored rows
     pub fn initPostgres(
         rows: std.ArrayListUnmanaged(PostgresStoredRow),
         column_names: [][]const u8,
@@ -248,12 +226,10 @@ pub const QueryResult = struct {
         };
     }
 
-    /// Legacy init for backward compatibility (defaults to SQLite)
     pub fn init(stmt: *sqlite.sqlite3_stmt, allocator: std.mem.Allocator) QueryResult {
         return initSqlite(stmt, allocator);
     }
 
-    /// Build column name -> index mapping (lazy initialization)
     fn buildColumnMap(self: *QueryResult) !std.StringHashMap(c_int) {
         if (self._column_map) |*map| {
             return map.*;
@@ -274,18 +250,15 @@ pub const QueryResult = struct {
         return column_map;
     }
 
-    /// Get column index by name
     fn getColumnIndex(self: *QueryResult, field_name: []const u8) !?c_int {
         const column_map = try self.buildColumnMap();
         return column_map.get(field_name);
     }
 
-    /// Get the number of columns in the result
     pub fn columnCount(self: QueryResult) c_int {
         return self.column_count_val;
     }
 
-    /// Get the name of a column by index
     pub fn columnName(self: QueryResult, col_index: c_int) ?[]const u8 {
         return switch (self.driver) {
             .sqlite => if (self.sqlite_stmt) |stmt| sqlite.getColumnName(stmt, col_index) else null,
@@ -301,7 +274,6 @@ pub const QueryResult = struct {
         };
     }
 
-    /// Get the next row from the result set
     pub fn nextRow(self: *QueryResult) ?Row {
         return switch (self.driver) {
             .sqlite => {
@@ -318,10 +290,7 @@ pub const QueryResult = struct {
                     if (self.pg_row_index < rows.items.len) {
                         const source_row = rows.items[self.pg_row_index];
                         self.pg_row_index += 1;
-                        // Deep copy the row so it owns its own memory
-                        // This prevents use-after-free if QueryResult is deinited while Row is still in use
                         const copied_row = source_row.copy(self.allocator) catch {
-                            // If allocation fails, return null
                             return null;
                         };
                         return Row.fromPostgres(copied_row);
@@ -332,7 +301,6 @@ pub const QueryResult = struct {
         };
     }
 
-    /// Release resources
     pub fn deinit(self: *QueryResult) void {
         if (self._column_map) |*map| {
             var iterator = map.iterator();
@@ -351,14 +319,12 @@ pub const QueryResult = struct {
                 }
             },
             .postgresql => {
-                // Free PostgreSQL stored rows
                 if (self.pg_rows) |*rows| {
                     for (rows.items) |*row| {
                         row.deinit();
                     }
                     rows.deinit(self.allocator);
                 }
-                // Free column names
                 if (self.pg_column_names) |names| {
                     for (names) |name| {
                         self.allocator.free(name);
@@ -369,14 +335,12 @@ pub const QueryResult = struct {
         }
     }
 
-    /// Convert result rows to an ArrayList of structs
     pub fn toArrayList(self: *QueryResult, comptime T: type) !std.ArrayListUnmanaged(T) {
         var list = std.ArrayListUnmanaged(T){};
         errdefer list.deinit(self.allocator);
 
         const column_map = try self.buildColumnMap();
 
-        // Validate that all struct fields have corresponding columns
         var missing_fields = std.ArrayListUnmanaged([]const u8){};
         defer missing_fields.deinit(self.allocator);
 
@@ -399,7 +363,6 @@ pub const QueryResult = struct {
             return error.ColumnMismatch;
         }
 
-        // Check for extra columns
         const struct_field_count = std.meta.fields(T).len;
         if (column_map.count() > struct_field_count) {
             std.debug.print("[ORM Error] Extra columns in query result that don't match struct fields:\n", .{});
@@ -520,7 +483,6 @@ pub const QueryResult = struct {
     }
 };
 
-// Tests
 
 test "Row getText" {
     const allocator = std.testing.allocator;
@@ -856,7 +818,6 @@ test "QueryResult toArrayList with reordered columns in SELECT" {
     }
 }
 
-// Comprehensive edge case tests
 
 test "Row getText with NULL value" {
     const allocator = std.testing.allocator;
@@ -892,7 +853,6 @@ test "Row getInt64 with NULL value" {
 
     if (result.nextRow()) |row| {
         try std.testing.expect(row.isNull(0));
-        // getInt64 should return 0 for NULL
         try std.testing.expectEqual(@as(i64, 0), row.getInt64(0));
     }
 }
@@ -912,7 +872,6 @@ test "Row getDouble with NULL value" {
 
     if (result.nextRow()) |row| {
         try std.testing.expect(row.isNull(0));
-        // getDouble should return 0.0 for NULL
         try std.testing.expectEqual(@as(f64, 0.0), row.getDouble(0));
     }
 }
@@ -931,7 +890,6 @@ test "Row getInt64 with text column" {
     defer result.deinit();
 
     if (result.nextRow()) |row| {
-        // getInt64 should parse text as integer
         try std.testing.expectEqual(@as(i64, 123), row.getInt64(0));
     }
 }
@@ -950,7 +908,6 @@ test "Row getDouble with integer column" {
     defer result.deinit();
 
     if (result.nextRow()) |row| {
-        // getDouble should convert integer to float
         const float_val = row.getDouble(0);
         try std.testing.expect(float_val > 41.9 and float_val < 42.1);
     }
@@ -1030,7 +987,6 @@ test "QueryResult nextRow with empty result" {
     defer result.deinit();
 
     try std.testing.expect(result.nextRow() == null);
-    // Calling nextRow again should still return null
     try std.testing.expect(result.nextRow() == null);
 }
 
@@ -1047,15 +1003,12 @@ test "QueryResult nextRow returns null after exhaustion" {
     var result = try db.query("SELECT value FROM test_exhaust");
     defer result.deinit();
 
-    // First call should return a row
     const row1 = result.nextRow();
     try std.testing.expect(row1 != null);
 
-    // Second call should return null (no more rows)
     const row2 = result.nextRow();
     try std.testing.expect(row2 == null);
 
-    // Further calls should also return null
     const row3 = result.nextRow();
     try std.testing.expect(row3 == null);
 }
@@ -1087,9 +1040,7 @@ test "QueryResult columnName with invalid index" {
     var result = try db.query("SELECT id FROM test");
     defer result.deinit();
 
-    // Valid index
     try std.testing.expect(result.columnName(0) != null);
-    // Invalid index (out of bounds)
     try std.testing.expect(result.columnName(999) == null);
     try std.testing.expect(result.columnName(-1) == null);
 }
@@ -1136,7 +1087,6 @@ test "QueryResult toArrayList with many rows" {
 
     try db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
-    // Insert 100 rows
     var i: usize = 0;
     while (i < 100) : (i += 1) {
         var buf: [64]u8 = undefined;
@@ -1295,15 +1245,12 @@ test "PostgresStoredRow copy deep copy" {
     };
     defer original.deinit();
 
-    // Copy the row
     var copied = try original.copy(allocator);
     defer copied.deinit();
 
-    // Copied should have same values as original
     try std.testing.expectEqualStrings("test", copied.values[0].text);
     try std.testing.expectEqual(@as(i64, 42), copied.values[1].int);
 
-    // Verify they are independent copies (different pointers)
     try std.testing.expect(original.values[0].text.ptr != copied.values[0].text.ptr);
 }
 
@@ -1319,7 +1266,6 @@ test "PostgresStoredRow getText with int value" {
     };
     defer row.deinit();
 
-    // getText should return null for int value
     try std.testing.expect(row.getText(0) == null);
 }
 
@@ -1335,7 +1281,6 @@ test "PostgresStoredRow getInt64 with text value" {
     };
     defer row.deinit();
 
-    // getInt64 should parse text as integer
     try std.testing.expectEqual(@as(i64, 123), row.getInt64(0));
 }
 
@@ -1399,7 +1344,6 @@ test "PostgresStoredRow isNull with out of bounds" {
     };
     defer row.deinit();
 
-    // Out of bounds should return true (null)
     try std.testing.expect(row.isNull(999));
 }
 
@@ -1415,7 +1359,6 @@ test "PostgresStoredRow getText with out of bounds" {
     };
     defer row.deinit();
 
-    // Out of bounds should return null
     try std.testing.expect(row.getText(999) == null);
 }
 
@@ -1453,7 +1396,6 @@ test "QueryResult toArrayList with wrong column count" {
     var result = try db.query("SELECT id, name FROM users");
     defer result.deinit();
 
-    // Should error because struct has 3 fields but query returns 2
     try std.testing.expectError(error.ColumnMismatch, result.toArrayList(User));
 }
 
@@ -1473,7 +1415,6 @@ test "QueryResult toArrayList with extra columns" {
     var result = try db.query("SELECT id, name FROM users");
     defer result.deinit();
 
-    // Should error because query returns 2 columns but struct has 1
     try std.testing.expectError(error.ColumnMismatch, result.toArrayList(User));
 }
 
@@ -1495,7 +1436,6 @@ test "QueryResult toArrayList with mismatched types" {
     var result = try db.query("SELECT id, name FROM users");
     defer result.deinit();
 
-    // This should work - id will be converted to string
     var users = try result.toArrayList(User);
     defer {
         for (users.items) |user| {
@@ -1506,7 +1446,6 @@ test "QueryResult toArrayList with mismatched types" {
     }
 
     try std.testing.expectEqual(@as(usize, 1), users.items.len);
-    // ID should be converted to string
     try std.testing.expect(users.items[0].id.len > 0);
 }
 
@@ -1533,7 +1472,6 @@ test "QueryResult multiple iterations" {
         values.deinit(allocator);
     }
 
-    // First iteration - must dupe strings since SQLite row data is transient
     while (result.nextRow()) |row| {
         if (row.getText(0)) |val| {
             const duped = try allocator.dupe(u8, val);
@@ -1547,5 +1485,3 @@ test "QueryResult multiple iterations" {
     try std.testing.expectEqualStrings("C", values.items[2]);
 }
 
-// Note: Zero-width types (void) are not supported by toArrayList
-// This test is removed as void fields cause compile errors in the ORM

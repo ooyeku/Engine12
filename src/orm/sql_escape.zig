@@ -1,29 +1,14 @@
 const std = @import("std");
 
-/// SQL injection prevention utilities
-/// Provides safe escaping for SQL strings, LIKE patterns, and identifiers
-/// Currently supports SQLite dialect (can be extended for other databases)
 pub const SqlEscape = struct {
-    /// Escape a string for safe use in SQL queries
-    /// SQLite escapes single quotes by doubling them: ' becomes ''
-    /// 
-    /// Example:
-    /// ```zig
-    /// const user_input = "O'Brien";
-    /// const safe = try SqlEscape.escapeString(allocator, user_input);
-    /// defer allocator.free(safe);
-    /// // safe == "O''Brien"
-    /// ```
     pub fn escapeString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
         var result = std.ArrayListUnmanaged(u8){};
         defer result.deinit(allocator);
         
-        // Pre-allocate approximate capacity (worst case: all quotes)
         try result.ensureTotalCapacity(allocator, input.len * 2);
         
         for (input) |char| {
             if (char == '\'') {
-                // SQLite escapes by doubling single quotes
                 try result.append(allocator, '\'');
                 try result.append(allocator, '\'');
             } else {
@@ -34,42 +19,27 @@ pub const SqlEscape = struct {
         return result.toOwnedSlice(allocator);
     }
 
-    /// Escape a string for safe use in SQL LIKE patterns
-    /// Escapes both single quotes and LIKE wildcards (% and _)
-    /// 
-    /// Example:
-    /// ```zig
-    /// const user_input = "test%_data";
-    /// const safe = try SqlEscape.escapeLikePattern(allocator, user_input);
-    /// defer allocator.free(safe);
-    /// // safe == "test\\%\\_data"
-    /// ```
     pub fn escapeLikePattern(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
         var result = std.ArrayListUnmanaged(u8){};
         defer result.deinit(allocator);
         
-        // Pre-allocate approximate capacity
         try result.ensureTotalCapacity(allocator, input.len * 3);
         
         for (input) |char| {
             switch (char) {
                 '\'' => {
-                    // SQLite escapes by doubling single quotes
                     try result.append(allocator, '\'');
                     try result.append(allocator, '\'');
                 },
                 '%' => {
-                    // Escape LIKE wildcard
                     try result.append(allocator, '\\');
                     try result.append(allocator, '%');
                 },
                 '_' => {
-                    // Escape LIKE wildcard
                     try result.append(allocator, '\\');
                     try result.append(allocator, '_');
                 },
                 '\\' => {
-                    // Escape backslash itself
                     try result.append(allocator, '\\');
                     try result.append(allocator, '\\');
                 },
@@ -83,7 +53,6 @@ pub const SqlEscape = struct {
     }
 };
 
-// Tests
 test "SqlEscape.escapeString basic" {
     const allocator = std.testing.allocator;
     const input = "hello";
