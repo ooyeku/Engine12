@@ -77,6 +77,27 @@ pub var global_active_request_tracker: ?*shutdown_utils.ActiveRequestTracker = n
 
 var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 
+// Global Engine12 pointer for signal handling
+var global_engine12_instance: ?*Engine12 = null;
+var shutdown_triggered: bool = false;
+
+// Signal handler for graceful shutdown on SIGINT (Ctrl+C)
+fn handleSigint(_: c_int) callconv(.c) void {
+    if (shutdown_triggered) {
+        // Second Ctrl+C - force exit immediately
+        std.process.exit(1);
+    }
+    shutdown_triggered = true;
+
+    if (global_engine12_instance) |engine| {
+        engine.is_running = false;
+        // Signal the connection queue to shutdown
+        if (global_connection_queue) |queue| {
+            queue.signalShutdown();
+        }
+    }
+}
+
 const ConnectionQueue = struct {
     const Self = @This();
     const MAX_QUEUE_SIZE = 4096;
@@ -584,7 +605,6 @@ pub const Engine12 = struct {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
     }
 
-
     pub fn enableHtmx(self: *Engine12) void {
         const config = if (self.profile.environment == .production)
             htmx_mod.production_config
@@ -616,7 +636,6 @@ pub const Engine12 = struct {
     pub fn isHtmxEnabled(self: *const Engine12) bool {
         return self.htmx_config != null and self.htmx_config.?.enabled and !self.htmx_registration_failed;
     }
-
 
     pub fn configure(self: *Engine12, config: ServerConfig) void {
         self.server_config = config;
@@ -1037,10 +1056,7 @@ pub const Engine12 = struct {
         }.handler);
 
         try self.get(mount_path, struct {
-
             fn handler(_: *Request) Response {
-
-
                 const html =
                     \\<!DOCTYPE html>
                     \\<html lang="en">
@@ -1497,9 +1513,6 @@ pub const Engine12 = struct {
                     }
                 }.handler;
 
-
-
-
                 try server.get(mount_path_copy, wrapper);
 
                 if (std.mem.eql(u8, mount_path_copy, "/css")) {
@@ -1514,8 +1527,7 @@ pub const Engine12 = struct {
                     try server.get("/images/:file", wrapper);
                 } else if (std.mem.eql(u8, mount_path_copy, "/fonts")) {
                     try server.get("/fonts/:file", wrapper);
-                } else {
-                }
+                } else {}
             }
         }
     }
@@ -1643,18 +1655,48 @@ pub const Engine12 = struct {
     }
 
     pub fn listen(self: *Engine12) !void {
+        // Store global reference for signal handler
+        global_engine12_instance = self;
+
+        // Install SIGINT handler for graceful shutdown on Ctrl+C
+        const act = posix.Sigaction{
+            .handler = .{ .handler = handleSigint },
+            .mask = posix.sigemptyset(),
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.INT, &act, null);
+
         try self.start();
         self.printStatus();
+        std.debug.print("Press Ctrl+C to stop the server...\n\n", .{});
 
         while (self.is_running) {
             std.Thread.sleep(100 * std.time.ns_per_ms);
         }
+
+        // Graceful shutdown triggered by signal
+        self.stop() catch |err| {
+            std.debug.print("[System] Error during shutdown: {}\n", .{err});
+        };
+
+        // Clear global reference
+        global_engine12_instance = null;
     }
 
     pub fn stop(self: *Engine12) !void {
         std.debug.print("\n[System] Initiating graceful shutdown...\n", .{});
 
         self.is_running = false;
+
+        // Immediately signal connection queue to stop accepting new connections
+        if (global_connection_queue) |queue| {
+            queue.signalShutdown();
+        }
+
+        // Close the listener socket to unblock the accept thread
+        if (self.built_server) |*server| {
+            posix.close(server.inner.listener);
+        }
 
         const timeout_ms = self.profile.graceful_shutdown_timeout_ms;
         const active_count = self.active_request_tracker.get();
@@ -1682,6 +1724,9 @@ pub const Engine12 = struct {
 
         const uptime = self.getUptimeMs();
         std.debug.print("[System] Shutdown complete. Uptime: {d}ms\n", .{uptime});
+
+        // Brief pause to allow output to flush before returning to shell
+        std.Thread.sleep(50 * std.time.ns_per_ms);
     }
 
     pub fn registerShutdownHook(self: *Engine12, hook: shutdown_utils.ShutdownHook) !void {
@@ -1785,8 +1830,8 @@ pub const Engine12 = struct {
 
     fn stopBackgroundTasks(self: *Engine12) void {
         if (self.supervisor) |*sup| {
-            std.debug.print("[Tasks] Stopping all background tasks...\n", .{});
-            sup.stop();
+            std.debug.print("[Tasks] Stopping background tasks.\n", .{});
+            // Just deinit without waiting for tasks to finish - they'll terminate when process exits
             sup.deinit();
             self.supervisor = null;
         }
@@ -1941,7 +1986,6 @@ test "Engine12 initTesting" {
     defer app.deinit();
     try std.testing.expectEqual(app.profile.environment, types.Environment.staging);
 }
-
 
 test "Engine12 runTask registration" {
     var app = try Engine12.initTesting();
@@ -2109,7 +2153,6 @@ test "Engine12 registerValve" {
     try std.testing.expect(test_valve.init_called);
     try std.testing.expect(app.valve_registry != null);
 }
-
 
 var static_file_registry: [4]?fileserver.FileServer = [_]?fileserver.FileServer{null} ** 4;
 var static_file_registry_count: usize = 0;

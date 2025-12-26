@@ -3771,15 +3771,110 @@ const context = Context{
 
 ### Template Syntax
 
+#### Variables
 - `{{ .field }}` - Output field value (HTML escaped)
 - `{{! .field }}` - Output field value (raw, not escaped)
 - `{{ .nested.field }}` - Access nested fields
-- `{% for .items |item| %}...{% endfor %}` - Iterate over arrays/slices
-  - Available loop variables: `.item`, `.index`, `.first`, `.last`
-  - Access parent context: `{{ ../parent.field }}`
-- `{% if .condition %}...{% else %}...{% endif %}` - Conditional rendering
-  - Supports truthy/falsy evaluation
-  - Handles empty strings, null, false, 0 as falsy
+
+#### Comments
+- `{# This is a comment #}` - Comments are stripped from output
+
+#### Filters
+Apply filters with the pipe `|` syntax:
+
+```html
+{{ .name | uppercase }}
+{{ .title | capitalize }}
+{{ .text | truncate:50 }}
+{{ .content | replace:old:new }}
+```
+
+**Available Filters:**
+
+| Filter | Usage | Description |
+|--------|-------|-------------|
+| `uppercase` | `{{ .x \| uppercase }}` | Convert to uppercase |
+| `lowercase` | `{{ .x \| lowercase }}` | Convert to lowercase |
+| `capitalize` | `{{ .x \| capitalize }}` | Capitalize first letter |
+| `trim` | `{{ .x \| trim }}` | Remove leading/trailing whitespace |
+| `truncate` | `{{ .x \| truncate:50 }}` | Truncate with "..." |
+| `replace` | `{{ .x \| replace:a:b }}` | Replace all occurrences |
+| `default` | `{{ .x \| default:value }}` | Default if empty/null |
+| `length` | `{{ .x \| length }}` | Get length of string/array |
+| `json` | `{{ .x \| json }}` | JSON string encoding |
+| `nl2br` | `{{ .x \| nl2br }}` | Convert \n to `<br>` |
+| `escape_js` | `{{ .x \| escape_js }}` | JavaScript escaping |
+| `escape_url` | `{{ .x \| escape_url }}` | URL percent-encoding |
+
+**Chaining filters:**
+```html
+{{ .name | lowercase | trim }}
+```
+
+#### Conditionals
+```html
+{% if .condition %}...{% endif %}
+{% if .condition %}...{% else %}...{% endif %}
+{% if .condition %}...{% elif .other %}...{% else %}...{% endif %}
+```
+
+**Comparison operators:**
+```html
+{% if .count > 0 %}Has items{% endif %}
+{% if .status == "active" %}Active{% endif %}
+{% if .price != 0 %}Paid{% endif %}
+{% if .age >= 18 %}Adult{% endif %}
+```
+
+**Negation:**
+```html
+{% if not .hidden %}Visible{% endif %}
+```
+
+#### Loops
+```html
+{% for .items |item| %}
+    {{ .item.name }}
+{% endfor %}
+```
+
+**Loop variables:**
+- `{{ index }}` - Current index (0-based)
+- `{{ first }}` - "true" if first item
+- `{{ last }}` - "true" if last item
+- `{{ length }}` - Total number of items
+- `{{ revindex }}` - Reverse index (0 = last item)
+
+**Empty loop fallback:**
+```html
+{% for .items |item| %}
+    {{ .item.name }}
+{% else %}
+    No items found
+{% endfor %}
+```
+
+#### Template Inheritance
+```html
+{# base.zt.html #}
+<html>
+<body>
+{% block content %}Default content{% endblock %}
+</body>
+</html>
+
+{# page.zt.html #}
+{% extends "base.zt.html" %}
+{% block content %}
+    <h1>My Page</h1>
+{% endblock %}
+```
+
+#### Include
+```html
+{% include "header.zt.html" %}
+```
+
 
 ## File Server
 

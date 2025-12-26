@@ -28,7 +28,7 @@ pub const ServerProfile_Development = ServerProfile{
     .enable_request_logging = true,
     .enable_metrics = false,
     .enable_health_checks = true,
-    .graceful_shutdown_timeout_ms = 5000,
+    .graceful_shutdown_timeout_ms = 100,
     .max_concurrent_tasks = 4,
 };
 
@@ -37,7 +37,7 @@ pub const ServerProfile_Production = ServerProfile{
     .enable_request_logging = true,
     .enable_metrics = true,
     .enable_health_checks = true,
-    .graceful_shutdown_timeout_ms = 30000,
+    .graceful_shutdown_timeout_ms = 300,
     .max_concurrent_tasks = 32,
 };
 
@@ -46,7 +46,7 @@ pub const ServerProfile_Testing = ServerProfile{
     .enable_request_logging = false,
     .enable_metrics = false,
     .enable_health_checks = true,
-    .graceful_shutdown_timeout_ms = 2000,
+    .graceful_shutdown_timeout_ms = 200,
     .max_concurrent_tasks = 2,
 };
 
@@ -105,7 +105,6 @@ pub const WebSocketRoute = struct {
     handler_ptr: WebSocketHandler, // Store function pointer value directly, not a pointer to it
 };
 
-
 test "Environment enum values" {
     try std.testing.expectEqual(Environment.development, .development);
     try std.testing.expectEqual(Environment.staging, .staging);
@@ -124,7 +123,7 @@ test "ServerProfile_Development defaults" {
     try std.testing.expect(profile.enable_request_logging == true);
     try std.testing.expect(profile.enable_metrics == false);
     try std.testing.expect(profile.enable_health_checks == true);
-    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 5000);
+    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 100);
     try std.testing.expectEqual(profile.max_concurrent_tasks, 4);
 }
 
@@ -134,7 +133,7 @@ test "ServerProfile_Production defaults" {
     try std.testing.expect(profile.enable_request_logging == true);
     try std.testing.expect(profile.enable_metrics == true);
     try std.testing.expect(profile.enable_health_checks == true);
-    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 30000);
+    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 300);
     try std.testing.expectEqual(profile.max_concurrent_tasks, 32);
 }
 
@@ -144,7 +143,7 @@ test "ServerProfile_Testing defaults" {
     try std.testing.expect(profile.enable_request_logging == false);
     try std.testing.expect(profile.enable_metrics == false);
     try std.testing.expect(profile.enable_health_checks == true);
-    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 2000);
+    try std.testing.expectEqual(profile.graceful_shutdown_timeout_ms, 200);
     try std.testing.expectEqual(profile.max_concurrent_tasks, 2);
 }
 

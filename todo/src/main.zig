@@ -280,6 +280,9 @@ pub fn createApp() !*E12.Engine12 {
     const app = try allocator.create(E12.Engine12);
     app.* = try E12.Engine12.initDevelopment();
 
+    // Set custom port
+    app.setPort(8085);
+
     // Register root route FIRST before anything else that might build the server
     std.debug.print("[Todo] Registering root route / FIRST\n", .{});
     try app.get("/", handlers.views.handleIndex);

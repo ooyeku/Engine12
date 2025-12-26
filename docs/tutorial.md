@@ -860,6 +860,54 @@ fn handleIndex(req: *Request) Response {
 </ul>
 ```
 
+### 5.3 Template Features
+
+Engine12 templates support a rich set of features:
+
+**Comments** - stripped from output:
+```html
+{# This comment won't appear in HTML #}
+```
+
+**Filters** - transform values with pipe syntax:
+```html
+{{ .title | capitalize }}
+{{ .text | truncate:50 }}
+{{ .content | replace:foo:bar }}
+{{ .name | uppercase | trim }}
+```
+
+Available: `uppercase`, `lowercase`, `capitalize`, `trim`, `truncate:N`, `replace:a:b`, `default:val`, `length`, `json`, `nl2br`, `escape_js`, `escape_url`
+
+**Comparison operators**:
+```html
+{% if .count > 0 %}Has items{% endif %}
+{% if .status == "active" %}Active{% endif %}
+{% if not .hidden %}Visible{% endif %}
+```
+
+**Loop variables**:
+```html
+{% for .items |item| %}
+    Index: {{ index }}     {# 0-based index #}
+    Total: {{ length }}    {# total items #}
+    {% if first %}First item{% endif %}
+    {% if last %}Last item{% endif %}
+{% else %}
+    No items found
+{% endfor %}
+```
+
+**Template inheritance**:
+```html
+{# base.zt.html #}
+<html><body>{% block content %}{% endblock %}</body></html>
+
+{# page.zt.html #}
+{% extends "base.zt.html" %}
+{% block content %}<h1>My Page</h1>{% endblock %}
+```
+
 ## Step 5.5: Hot Reloading (Development Mode)
 
 In development mode, Engine12 automatically enables hot reloading for templates and static files. This means you can edit templates and static assets without restarting the server.

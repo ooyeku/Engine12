@@ -40,42 +40,47 @@ pub const Codegen = struct {
                         try buffer.appendSlice(allocator, text);
                     },
                     .variable => |var_node| {
-                        var value = try getVariableValue(var_node.path, ctx, allocator);
+                        const initial_value = try getVariableValue(var_node.path, ctx, allocator);
+                        const value = if (var_node.filters.len > 0) blk: {
+                            defer allocator.free(initial_value);
+                            break :blk try applyFilters(initial_value, var_node.filters, allocator);
+                        } else initial_value;
                         defer allocator.free(value);
-                        
-                        if (var_node.filters.len > 0) {
-                            const filtered = try applyFilters(value, var_node.filters, allocator);
-                            allocator.free(value);
-                            value = filtered;
-                            defer allocator.free(value);
-                        }
-                        
+
                         const escaped = try escape.Escape.escapeHtml(allocator, value);
                         defer allocator.free(escaped);
                         try buffer.appendSlice(allocator, escaped);
                     },
                     .raw_variable => |var_node| {
-                        var value = try getVariableValue(var_node.path, ctx, allocator);
+                        const initial_value = try getVariableValue(var_node.path, ctx, allocator);
+                        const value = if (var_node.filters.len > 0) blk: {
+                            defer allocator.free(initial_value);
+                            break :blk try applyFilters(initial_value, var_node.filters, allocator);
+                        } else initial_value;
                         defer allocator.free(value);
-                        
-                        if (var_node.filters.len > 0) {
-                            const filtered = try applyFilters(value, var_node.filters, allocator);
-                            allocator.free(value);
-                            value = filtered;
-                            defer allocator.free(value);
-                        }
-                        
+
                         try buffer.appendSlice(allocator, value);
                     },
                     .if_block => |if_node| {
-                        const condition_value = try getVariableValue(if_node.condition.path, ctx, allocator);
-                        defer allocator.free(condition_value);
-
-                        const is_true = isTruthy(condition_value);
+                        const is_true = try evaluateCondition(if_node.condition, ctx, allocator);
                         if (is_true) {
                             try renderNodes(if_node.true_block.nodes, ctx, buffer, allocator);
-                        } else if (if_node.false_block) |false_block| {
-                            try renderNodes(false_block.nodes, ctx, buffer, allocator);
+                        } else {
+                            // Check elif blocks
+                            var elif_matched = false;
+                            for (if_node.elif_blocks) |elif_block| {
+                                const elif_true = try evaluateCondition(elif_block.condition, ctx, allocator);
+                                if (elif_true) {
+                                    try renderNodes(elif_block.block.nodes, ctx, buffer, allocator);
+                                    elif_matched = true;
+                                    break;
+                                }
+                            }
+                            if (!elif_matched) {
+                                if (if_node.false_block) |false_block| {
+                                    try renderNodes(false_block.nodes, ctx, buffer, allocator);
+                                }
+                            }
                         }
                     },
                     .for_block => |for_node| {
@@ -91,13 +96,84 @@ pub const Codegen = struct {
                         }
                     },
                     .include => |include_node| {
-                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} (not yet implemented) -->", .{include_node.file_path});
+                        // TODO: Implement proper include with @embedFile
+                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} -->\n", .{include_node.file_path});
                         defer allocator.free(include_placeholder);
                         try buffer.appendSlice(allocator, include_placeholder);
+                    },
+                    .comment => |_| {
+                        // Comments are not rendered
+                    },
+                    .extends => |_| {
+                        // Extends is handled at template compilation level
+                    },
+                    .block => |block_node| {
+                        // For now, render block content directly
+                        try renderNodes(block_node.content.nodes, ctx, buffer, allocator);
                     },
                 }
             }
 
+            fn evaluateCondition(
+                condition: ast.TemplateAST.Condition,
+                ctx: context_type,
+                allocator: std.mem.Allocator,
+            ) !bool {
+                switch (condition) {
+                    .simple => |var_node| {
+                        const value = try getVariableValue(var_node.path, ctx, allocator);
+                        defer allocator.free(value);
+                        return isTruthy(value);
+                    },
+                    .negated => |neg| {
+                        const value = try getVariableValue(neg.inner.path, ctx, allocator);
+                        defer allocator.free(value);
+                        return !isTruthy(value);
+                    },
+                    .comparison => |cmp| {
+                        const left_value = try getVariableValue(cmp.left.path, ctx, allocator);
+                        defer allocator.free(left_value);
+
+                        const right_value: []const u8 = switch (cmp.right) {
+                            .variable => |v| try getVariableValue(v.path, ctx, allocator),
+                            .literal_string => |s| try allocator.dupe(u8, s),
+                            .literal_int => |i| try std.fmt.allocPrint(allocator, "{d}", .{i}),
+                            .literal_bool => |b| try allocator.dupe(u8, if (b) "true" else "false"),
+                        };
+                        defer allocator.free(right_value);
+
+                        return switch (cmp.operator) {
+                            .eq => std.mem.eql(u8, left_value, right_value),
+                            .ne => !std.mem.eql(u8, left_value, right_value),
+                            .lt => compareValues(left_value, right_value) < 0,
+                            .le => compareValues(left_value, right_value) <= 0,
+                            .gt => compareValues(left_value, right_value) > 0,
+                            .ge => compareValues(left_value, right_value) >= 0,
+                        };
+                    },
+                }
+            }
+
+            fn compareValues(left: []const u8, right: []const u8) i32 {
+                // Try numeric comparison first
+                const left_num = std.fmt.parseInt(i64, left, 10) catch null;
+                const right_num = std.fmt.parseInt(i64, right, 10) catch null;
+
+                if (left_num != null and right_num != null) {
+                    const l = left_num.?;
+                    const r = right_num.?;
+                    if (l < r) return -1;
+                    if (l > r) return 1;
+                    return 0;
+                }
+
+                // Fall back to string comparison
+                return switch (std.mem.order(u8, left, right)) {
+                    .lt => -1,
+                    .eq => 0,
+                    .gt => 1,
+                };
+            }
             fn getVariableValue(
                 path: []const []const u8,
                 ctx: context_type,
@@ -127,12 +203,33 @@ pub const Codegen = struct {
                             break :blk try filters.Filters.lowercase(current_value, allocator);
                         } else if (std.mem.eql(u8, filter_name, "trim")) {
                             break :blk try filters.Filters.trim(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "capitalize")) {
+                            break :blk try filters.Filters.capitalize(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "truncate")) {
+                            const max_len = if (filter.args.len > 0)
+                                std.fmt.parseInt(usize, filter.args[0], 10) catch 50
+                            else
+                                50;
+                            break :blk try filters.Filters.truncate(current_value, max_len, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "replace")) {
+                            const from = if (filter.args.len > 0) filter.args[0] else "";
+                            const to = if (filter.args.len > 1) filter.args[1] else "";
+                            break :blk try filters.Filters.replace(current_value, from, to, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "json")) {
+                            break :blk try filters.Filters.json(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "nl2br")) {
+                            break :blk try filters.Filters.nl2br(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "escape_js")) {
+                            break :blk try filters.Filters.escapeJs(current_value, allocator);
+                        } else if (std.mem.eql(u8, filter_name, "escape_url")) {
+                            break :blk try filters.Filters.escapeUrl(current_value, allocator);
                         } else if (std.mem.eql(u8, filter_name, "default")) {
                             const default_val = if (filter.args.len > 0) filter.args[0] else "";
                             const value_opt: ?[]const u8 = if (current_value.len > 0) current_value else null;
                             const result = filters.Filters.default(value_opt, default_val);
                             break :blk try allocator.dupe(u8, result);
                         } else {
+                            // Unknown filter - pass through unchanged
                             break :blk try allocator.dupe(u8, current_value);
                         }
                     };
@@ -293,42 +390,47 @@ pub const Codegen = struct {
                         try buffer.appendSlice(allocator, text);
                     },
                     .variable => |var_node| {
-                        var value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        const initial_value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        const value = if (var_node.filters.len > 0) blk: {
+                            defer allocator.free(initial_value);
+                            break :blk try applyFilters(initial_value, var_node.filters, allocator);
+                        } else initial_value;
                         defer allocator.free(value);
-                        
-                        if (var_node.filters.len > 0) {
-                            const filtered = try applyFilters(value, var_node.filters, allocator);
-                            allocator.free(value);
-                            value = filtered;
-                            defer allocator.free(value);
-                        }
-                        
+
                         const escaped = try escape.Escape.escapeHtml(allocator, value);
                         defer allocator.free(escaped);
                         try buffer.appendSlice(allocator, escaped);
                     },
                     .raw_variable => |var_node| {
-                        var value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        const initial_value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        const value = if (var_node.filters.len > 0) blk: {
+                            defer allocator.free(initial_value);
+                            break :blk try applyFilters(initial_value, var_node.filters, allocator);
+                        } else initial_value;
                         defer allocator.free(value);
-                        
-                        if (var_node.filters.len > 0) {
-                            const filtered = try applyFilters(value, var_node.filters, allocator);
-                            allocator.free(value);
-                            value = filtered;
-                            defer allocator.free(value);
-                        }
-                        
+
                         try buffer.appendSlice(allocator, value);
                     },
                     .if_block => |if_node| {
-                        const condition_value = try getVariableValueWithContext(if_node.condition.path, ctx, allocator);
-                        defer allocator.free(condition_value);
-
-                        const is_true = isTruthy(condition_value);
+                        const is_true = try evaluateConditionWithContext(if_node.condition, ctx, allocator);
                         if (is_true) {
                             try renderNodesWithContext(if_node.true_block.nodes, ctx, buffer, allocator);
-                        } else if (if_node.false_block) |false_block| {
-                            try renderNodesWithContext(false_block.nodes, ctx, buffer, allocator);
+                        } else {
+                            // Check elif blocks
+                            var elif_matched = false;
+                            for (if_node.elif_blocks) |elif_block| {
+                                const elif_true = try evaluateConditionWithContext(elif_block.condition, ctx, allocator);
+                                if (elif_true) {
+                                    try renderNodesWithContext(elif_block.block.nodes, ctx, buffer, allocator);
+                                    elif_matched = true;
+                                    break;
+                                }
+                            }
+                            if (!elif_matched) {
+                                if (if_node.false_block) |false_block| {
+                                    try renderNodesWithContext(false_block.nodes, ctx, buffer, allocator);
+                                }
+                            }
                         }
                     },
                     .for_block => |for_node| {
@@ -342,7 +444,7 @@ pub const Codegen = struct {
 
                             const T = @TypeOf(ctx);
                             const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
-                            
+
                             if (is_loop_ctx) {
                                 const nested_loop_ctx = LoopContext{
                                     .parent_ctx = ctx.parent_ctx, // Go back to original context, losing outer loop item
@@ -358,9 +460,59 @@ pub const Codegen = struct {
                         }
                     },
                     .include => |include_node| {
-                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} (not yet implemented) -->", .{include_node.file_path});
+                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} -->\n", .{include_node.file_path});
                         defer allocator.free(include_placeholder);
                         try buffer.appendSlice(allocator, include_placeholder);
+                    },
+                    .comment => |_| {
+                        // Comments are not rendered
+                    },
+                    .extends => |_| {
+                        // Extends is handled at template compilation level
+                    },
+                    .block => |block_node| {
+                        // For now, render block content directly
+                        try renderNodesWithContext(block_node.content.nodes, ctx, buffer, allocator);
+                    },
+                }
+            }
+
+            fn evaluateConditionWithContext(
+                condition: ast.TemplateAST.Condition,
+                ctx: anytype,
+                allocator: std.mem.Allocator,
+            ) !bool {
+                switch (condition) {
+                    .simple => |var_node| {
+                        const value = try getVariableValueWithContext(var_node.path, ctx, allocator);
+                        defer allocator.free(value);
+                        return isTruthy(value);
+                    },
+                    .negated => |neg| {
+                        const value = try getVariableValueWithContext(neg.inner.path, ctx, allocator);
+                        defer allocator.free(value);
+                        return !isTruthy(value);
+                    },
+                    .comparison => |cmp| {
+                        const left_value = try getVariableValueWithContext(cmp.left.path, ctx, allocator);
+                        defer allocator.free(left_value);
+
+                        const right_value: []const u8 = switch (cmp.right) {
+                            .variable => |v| try getVariableValueWithContext(v.path, ctx, allocator),
+                            .literal_string => |s| try allocator.dupe(u8, s),
+                            .literal_int => |i| try std.fmt.allocPrint(allocator, "{d}", .{i}),
+                            .literal_bool => |b| try allocator.dupe(u8, if (b) "true" else "false"),
+                        };
+                        defer allocator.free(right_value);
+
+                        return switch (cmp.operator) {
+                            .eq => std.mem.eql(u8, left_value, right_value),
+                            .ne => !std.mem.eql(u8, left_value, right_value),
+                            .lt => compareValues(left_value, right_value) < 0,
+                            .le => compareValues(left_value, right_value) <= 0,
+                            .gt => compareValues(left_value, right_value) > 0,
+                            .ge => compareValues(left_value, right_value) >= 0,
+                        };
                     },
                 }
             }
@@ -368,7 +520,7 @@ pub const Codegen = struct {
             fn getVariableValueWithContext(path: []const []const u8, ctx: anytype, allocator: std.mem.Allocator) ![]const u8 {
                 const T = @TypeOf(ctx);
                 const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
-                
+
                 if (is_loop_ctx) {
                     if (path.len > 0 and std.mem.eql(u8, path[0], "..")) {
                         if (path.len == 1) {
@@ -392,6 +544,12 @@ pub const Codegen = struct {
                             const last_str = if (ctx.index == ctx.total - 1) "true" else "false";
                             return try allocator.dupe(u8, last_str);
                         }
+                        if (std.mem.eql(u8, path[0], "length")) {
+                            return try std.fmt.allocPrint(allocator, "{d}", .{ctx.total});
+                        }
+                        if (std.mem.eql(u8, path[0], "revindex")) {
+                            return try std.fmt.allocPrint(allocator, "{d}", .{ctx.total - ctx.index - 1});
+                        }
                     }
                     return getVariableValueImpl(ctx.parent_ctx, path, allocator);
                 }
@@ -404,7 +562,7 @@ pub const Codegen = struct {
             fn getCollectionValueWithContext(collection_path: []const []const u8, ctx: anytype, allocator: std.mem.Allocator) !CollectionWrapper {
                 const T = @TypeOf(ctx);
                 const is_loop_ctx = @hasField(T, "item_name") and @hasField(T, "parent_ctx") and @hasField(T, "index");
-                
+
                 if (is_loop_ctx) {
                     return getCollectionValueImpl(ctx.parent_ctx, collection_path, allocator);
                 }

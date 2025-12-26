@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ .title }}</title>
+    <title>{{ .title | capitalize }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    {# Inline styles for the HTMX template with modern dark theme #}
     <style>
         :root {
             --bg-deep: #0a0a0b;
@@ -58,7 +62,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: 
+            background:
                 radial-gradient(ellipse at top, rgba(167, 139, 250, 0.03) 0%, transparent 50%),
                 radial-gradient(ellipse at bottom right, rgba(74, 222, 128, 0.02) 0%, transparent 50%);
             pointer-events: none;
@@ -163,7 +167,8 @@
             margin-bottom: 1rem;
         }
 
-        .error, .success {
+        .error,
+        .success {
             padding: 0.75rem 1rem;
             border-radius: var(--radius);
             font-size: 0.875rem;
@@ -205,7 +210,7 @@
             gap: 0.5rem;
         }
 
-        .form-row + .form-row {
+        .form-row+.form-row {
             margin-top: 0.75rem;
         }
 
@@ -615,26 +620,64 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         /* Responsive */
         @media (max-width: 600px) {
-            .container { padding: 2rem 1rem; }
-            .stats-bar { flex-wrap: wrap; justify-content: center; }
-            .form-row { flex-direction: column; }
-            .form-row-inline { grid-template-columns: 1fr; }
-            select, input[type="date"] { width: 100%; }
-            .filter-bar { flex-direction: column; align-items: stretch; }
-            .filter-buttons { justify-content: center; }
-            .todo-actions { opacity: 1; }
-            h1 { font-size: 1.5rem; }
+            .container {
+                padding: 2rem 1rem;
+            }
+
+            .stats-bar {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .form-row {
+                flex-direction: column;
+            }
+
+            .form-row-inline {
+                grid-template-columns: 1fr;
+            }
+
+            select,
+            input[type="date"] {
+                width: 100%;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-buttons {
+                justify-content: center;
+            }
+
+            .todo-actions {
+                opacity: 1;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+            }
         }
 
         /* Animations */
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-8px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .todo-item {
@@ -652,17 +695,21 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
+        {# Header section with HTMX badge #}
         <header>
             <div class="header-row">
-                <h1>{{ .title }}</h1>
+                <h1>{{ .title | capitalize }}</h1>
                 <span class="badge">HTMX</span>
             </div>
             <p class="subtitle">{{ .subtitle }}</p>
         </header>
 
-        <div class="stats-bar" id="stats" hx-get="/htmx/todos/stats" hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body" hx-swap="innerHTML">
+        <div class="stats-bar" id="stats" hx-get="/htmx/todos/stats"
+            hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
+            hx-swap="innerHTML">
             <div class="stat-pill"><span class="value">—</span><span class="label">total</span></div>
             <div class="stat-pill"><span class="value">—</span><span class="label">pending</span></div>
             <div class="stat-pill"><span class="value">—</span><span class="label">done</span></div>
@@ -671,7 +718,9 @@
 
         <div id="messages" hx-swap="innerHTML"></div>
 
-        <form class="add-form" hx-post="/htmx/todos" hx-target="#todo-list" hx-swap="afterbegin" hx-on::after-request="this.reset()" hx-on::htmx:after-request="if(event.detail.xhr.status === 200) { document.getElementById('messages').innerHTML = '<div class=\\'success\\'>✓ Task added successfully</div>'; setTimeout(() => document.getElementById('messages').innerHTML = '', 2500); }">
+        <form class="add-form" hx-post="/htmx/todos" hx-target="#todo-list" hx-swap="afterbegin"
+            hx-on::after-request="this.reset()"
+            hx-on::htmx:after-request="if(event.detail.xhr.status === 200) { document.getElementById('messages').innerHTML = '<div class=\\'success\\'>✓ Task added successfully</div>'; setTimeout(() => document.getElementById('messages').innerHTML = '', 2500); }">
             <div class="form-row">
                 <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
                 <button type="submit" class="btn btn-primary">Add Task</button>
@@ -692,18 +741,28 @@
 
         <div class="filter-bar">
             <div class="filter-buttons">
-                <button class="btn btn-secondary active" hx-get="/htmx/todos/all" hx-target="#todo-list" hx-swap="innerHTML">All</button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/active" hx-target="#todo-list" hx-swap="innerHTML">Active</button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/completed" hx-target="#todo-list" hx-swap="innerHTML">Completed</button>
+                <button class="btn btn-secondary active" hx-get="/htmx/todos/all" hx-target="#todo-list"
+                    hx-swap="innerHTML">All</button>
+                <button class="btn btn-secondary" hx-get="/htmx/todos/active" hx-target="#todo-list"
+                    hx-swap="innerHTML">Active</button>
+                <button class="btn btn-secondary" hx-get="/htmx/todos/completed" hx-target="#todo-list"
+                    hx-swap="innerHTML">Completed</button>
             </div>
             <a href="/htmx/analytics" class="btn btn-secondary" style="text-decoration: none;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
                 Analytics
             </a>
         </div>
 
         <ul id="todo-list" class="todo-list" hx-get="/htmx/todos/all" hx-trigger="load" hx-swap="innerHTML">
-            <li class="loading"><div class="spinner"></div></li>
+            <li class="loading">
+                <div class="spinner"></div>
+            </li>
         </ul>
     </div>
 
@@ -717,4 +776,5 @@
         });
     </script>
 </body>
+
 </html>

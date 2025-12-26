@@ -94,8 +94,13 @@ pub const TryHttpHandler = types.TryHttpHandler;
 pub const wrapTryHandler = types.wrapTryHandler;
 pub const wrapTryHandlerCustom = types.wrapTryHandlerCustom;
 
-
 comptime {
     _ = @import("tests/integration.zig");
     _ = @import("orm/orm_comprehensive_tests.zig");
+    // Template system tests
+    _ = @import("templates/filters.zig");
+    _ = @import("templates/ast.zig");
+    _ = @import("templates/escape.zig");
+    _ = @import("hot_reload/runtime_renderer.zig");
+    // Note: parser.zig tests are comptime-only and run during compilation
 }
