@@ -454,16 +454,16 @@ var global_db: ?Database = null;
 var global_orm: ?ORM = null;
 
 pub fn initDatabase() !void {
-    // Option 1: Use environment variables
-    // Set: DB_DRIVER=postgresql PGHOST=localhost PGDATABASE=myapp PGUSER=myuser
+    // Option 1: Use E12_* environment variables
+    // Set: E12_DB_DRIVER=postgresql E12_DB_HOST=localhost E12_DB_NAME=myapp E12_DB_USER=myuser
     
     // Option 2: Explicit configuration
     const config = DatabaseConfig.postgresql(.{
-        .host = std.posix.getenv("PGHOST") orelse "localhost",
+        .host = std.posix.getenv("E12_DB_HOST") orelse std.posix.getenv("PGHOST") orelse "localhost",
         .port = 5432,
-        .database = std.posix.getenv("PGDATABASE") orelse "todos",
-        .username = std.posix.getenv("PGUSER") orelse "postgres",
-        .password = std.posix.getenv("PGPASSWORD"),
+        .database = std.posix.getenv("E12_DB_NAME") orelse std.posix.getenv("PGDATABASE") orelse "todos",
+        .username = std.posix.getenv("E12_DB_USER") orelse std.posix.getenv("PGUSER") orelse "postgres",
+        .password = std.posix.getenv("E12_DB_PASSWORD") orelse std.posix.getenv("PGPASSWORD"),
         .pool_size = 10,
     });
 
@@ -484,11 +484,14 @@ pub fn getORM() !*ORM {
 
 **Running with PostgreSQL:**
 ```bash
-# Using environment variables
-DB_DRIVER=postgresql PGUSER=myuser PGDATABASE=myapp zig build run
+# Using E12_* environment variables (recommended)
+E12_DB_DRIVER=postgresql E12_DB_USER=myuser E12_DB_NAME=myapp zig build run
 
-# Or with explicit password
-DB_DRIVER=postgresql PGUSER=myuser PGPASSWORD=secret PGDATABASE=myapp zig build run
+# Or with password
+E12_DB_DRIVER=postgresql E12_DB_USER=myuser E12_DB_PASSWORD=secret E12_DB_NAME=myapp zig build run
+
+# Legacy variables also supported (for backward compatibility)
+DB_DRIVER=postgresql PGUSER=myuser PGDATABASE=myapp zig build run
 ```
 
 #### Driver-Specific Migrations

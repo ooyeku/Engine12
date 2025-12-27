@@ -287,8 +287,10 @@ pub fn createApp() !*E12.Engine12 {
     const app = try allocator.create(E12.Engine12);
     app.* = try E12.Engine12.initDevelopment();
 
-    // Set custom port
-    app.setPort(8085);
+    // Set port from environment (E12_PORT) or default to 8085
+    const port_str = std.posix.getenv("E12_PORT");
+    const port: u16 = if (port_str) |p| std.fmt.parseInt(u16, p, 10) catch 8085 else 8085;
+    app.setPort(port);
 
     // Register root route FIRST before anything else that might build the server
     std.debug.print("[Todo] Registering root route / FIRST\n", .{});

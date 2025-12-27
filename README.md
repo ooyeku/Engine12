@@ -33,6 +33,21 @@ pub fn main() !void {
 }
 ```
 
+**Option 3: Environment-Based Configuration (Cloud-Ready)**
+
+```zig
+const Engine12 = @import("engine12");
+
+pub fn main() !void {
+    // Auto-configure from .env file and system environment variables
+    var app = try Engine12.initFromEnv();
+    defer app.deinit();
+
+    try app.get("/", handleRoot);
+    try app.listen();
+}
+```
+
 ## Installation
 
 ### Step 1: Fetch the package
@@ -71,11 +86,79 @@ exe.addModule("engine12", engine12_dep.module("engine12"));
 
 SQLite is bundled with Engine12, so the ORM works out of the box with no additional setup required.
 
+## Environment Configuration
+
+Engine12 provides a centralized configuration system for cloud-ready deployments. All Engine12-specific environment variables use the `E12_` prefix.
+
+### Quick Setup
+
+1. Copy `.env.example` to `.env` in your project root:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Use `initFromEnv()` in your application:
+   ```zig
+   var app = try Engine12.initFromEnv();
+   ```
+
+### Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `E12_ENV` | enum | `development` | Environment: `development`, `staging`, `production` |
+| `E12_HOST` | string | `127.0.0.1` | Server bind address |
+| `E12_PORT` | u16 | `8080` | Server port |
+| `E12_WORKERS` | u16 | `12` | Worker thread count |
+| `E12_LOG_LEVEL` | enum | `debug` | Log level: `debug`, `info`, `warn`, `error` |
+| `E12_LOG_REQUESTS` | bool | `true` | Enable request logging |
+| `E12_DB_DRIVER` | enum | `sqlite` | Database driver: `sqlite`, `postgresql` |
+| `E12_DB_PATH` | string | `app.db` | SQLite database path |
+| `E12_DB_HOST` | string | `127.0.0.1` | PostgreSQL host |
+| `E12_DB_PORT` | u16 | `5432` | PostgreSQL port |
+| `E12_DB_NAME` | string | - | PostgreSQL database name |
+| `E12_DB_USER` | string | - | PostgreSQL username |
+| `E12_DB_PASSWORD` | string | - | PostgreSQL password |
+| `E12_CACHE_ENABLED` | bool | `true` | Enable response caching |
+| `E12_CACHE_TTL` | u32 | `60000` | Cache TTL in milliseconds |
+| `E12_SECRET_KEY` | string | - | Application secret (required in production) |
+
+### Example .env File
+
+```env
+# Application
+E12_ENV=development
+E12_HOST=127.0.0.1
+E12_PORT=8080
+
+# Database (PostgreSQL)
+E12_DB_DRIVER=postgresql
+E12_DB_HOST=localhost
+E12_DB_PORT=5432
+E12_DB_NAME=myapp
+E12_DB_USER=postgres
+E12_DB_PASSWORD=secret
+
+# Logging
+E12_LOG_LEVEL=debug
+E12_LOG_REQUESTS=true
+
+# Security
+E12_SECRET_KEY=your-secret-key-here
+```
+
+### Layered Configuration
+
+- **System environment variables** take precedence over `.env` file values
+- **Legacy variables** (`PGHOST`, `PGUSER`, `DB_DRIVER`, etc.) are supported for backward compatibility
+- The `.env` file is optional and silently ignored if missing
+
 ## Features
 
 - **High Performance** - Multi-threaded request handling with configurable worker threads (default: 12)
+- **Environment Configuration** - Centralized `E12_*` prefixed env vars with `.env` file support for cloud deployment
 - **HTTP Routing** - GET, POST, PUT, DELETE, PATCH with route parameters
-- **Server Configuration** - Configurable host, port, timeouts, and worker threads via `configure()`
+- **Server Configuration** - Configurable host, port, timeouts, and worker threads via `configure()` or environment
 - **WebSocket Support** - Real-time bidirectional communication with room management
 - **HTMX Integration** - Zero-configuration HTMX support with form parsing, error helpers, and response builders (auto-enabled in development)
 - **Hot Reloading** - Automatic template and static file reloading in development mode
@@ -84,6 +167,7 @@ SQLite is bundled with Engine12, so the ORM works out of the box with no additio
 - **Structured Logging** - JSON and human-readable logging with multiple destinations (stdout, file, syslog)
 - **Middleware System** - Pre-request and response middleware chains
 - **SQLite ORM** - Type-safe database operations with automatic table pluralization, upsert support, managed memory, and parameter binding for SQL injection prevention
+- **PostgreSQL Support** - Full PostgreSQL integration with connection pooling
 - **Template Engine** - Server-side HTML rendering
 - **Request/Response API** - Clean, memory-safe HTTP handling with struct-to-JSON convenience methods
 - **Rate Limiting** - Per-route rate limiting
@@ -110,7 +194,6 @@ zig build -Dtarget=x86_64-windows
 - [API Reference](docs/api-reference.md) - Complete API documentation
 - [Tutorial](docs/tutorial.md) - Step-by-step guide to building your first app
 - [Architecture Guide](docs/architecture.md) - System design and architecture
-- [Examples](docs/examples/todo-app.md) - Complete todo app walkthrough
 - [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
 ## Example

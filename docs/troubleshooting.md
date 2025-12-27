@@ -198,7 +198,10 @@ chmod 755 /path/to/database/directory
 # Check your PostgreSQL users
 psql -l
 
-# Use your macOS username
+# Use your macOS username with E12_* variables (recommended)
+E12_DB_DRIVER=postgresql E12_DB_USER=$USER E12_DB_NAME=myapp zig build run
+
+# Legacy variables also work
 DB_DRIVER=postgresql PGUSER=$USER PGDATABASE=myapp zig build run
 ```
 

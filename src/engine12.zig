@@ -30,6 +30,7 @@ const openapi = @import("openapi.zig");
 const validation = @import("data/validation.zig");
 const shutdown_utils = @import("utils/shutdown.zig");
 const builtin = @import("builtin");
+const config_mod = @import("config/module.zig");
 
 const allocator = std.heap.page_allocator;
 
@@ -626,6 +627,64 @@ pub const Engine12 = struct {
 
     pub fn initTesting() !Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
+    }
+
+    /// Initialize Engine12 from environment variables.
+    /// Reads from .env file (if present) and system environment variables.
+    /// This is the recommended way to initialize for cloud deployments.
+    pub fn initFromEnv() !Engine12 {
+        var cfg = try config_mod.Config.load(allocator);
+        defer cfg.deinit();
+        return initFromConfigInternal(&cfg);
+    }
+
+    /// Initialize Engine12 from a Config struct.
+    /// Note: This copies string values from the config, so the config can be freed after this call.
+    pub fn initFromConfig(cfg: *const config_mod.Config) !Engine12 {
+        return initFromConfigInternal(cfg);
+    }
+
+    fn initFromConfigInternal(cfg: *const config_mod.Config) !Engine12 {
+        // Determine profile from environment
+        const profile: types.ServerProfile = switch (cfg.environment) {
+            .development => types.ServerProfile_Development,
+            .staging => types.ServerProfile_Testing,
+            .production => types.ServerProfile_Production,
+        };
+
+        var app = try Engine12.initWithProfile(profile);
+
+        // Copy host string to page allocator (it will live for app lifetime)
+        const host_copy = try allocator.dupe(u8, cfg.server.host);
+
+        // Apply server configuration from env
+        app.server_config = ServerConfig{
+            .host = host_copy,
+            .port = cfg.server.port,
+            .worker_threads = cfg.server.workers,
+            .read_timeout = cfg.server.read_timeout_ms,
+            .write_timeout = cfg.server.write_timeout_ms,
+            .max_body_size = cfg.server.max_body_size,
+            .buffer_size = 16384,
+            .max_header_size = 32768,
+        };
+
+        // Enable hot reload and HTMX in development
+        if (cfg.isDevelopment()) {
+            const hr_manager = try allocator.create(hot_reload_mod.HotReloadManager);
+            hr_manager.* = hot_reload_mod.HotReloadManager.init(allocator, true);
+            app.hot_reload_manager = hr_manager;
+            script_injector_mod.setHotReloadManager(hr_manager);
+            try app.useResponse(script_injector_mod.injectHotReloadScript);
+            app.enableHtmx();
+        }
+
+        // Print config summary in debug mode
+        if (builtin.mode == .Debug) {
+            cfg.printSummary();
+        }
+
+        return app;
     }
 
     pub fn enableHtmx(self: *Engine12) void {

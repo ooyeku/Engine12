@@ -91,43 +91,39 @@ pub fn withORMResult(comptime T: type, comptime callback: fn (*ORM) T) T {
 }
 
 /// Load database configuration from environment variables
+/// Uses E12_* prefixed vars with fallback to legacy PG* vars
 fn loadConfigFromEnv() DbConfig {
     var config = DbConfig{};
-    // Helper to get env var, leaking memory (acceptable for global config)
-    const getEnv = struct {
-        fn get(alloc: std.mem.Allocator, key: []const u8) ?[]const u8 {
-            return std.process.getEnvVarOwned(alloc, key) catch null;
-        }
-    }.get;
 
-    // Check for driver selection
-    if (getEnv(allocator, "DB_DRIVER")) |driver_env| {
-        if (std.mem.eql(u8, driver_env, "sqlite")) {
+    // Check for driver selection (E12_DB_DRIVER takes precedence)
+    const driver_env = std.posix.getenv("E12_DB_DRIVER") orelse std.posix.getenv("DB_DRIVER");
+    if (driver_env) |d| {
+        if (std.mem.eql(u8, d, "sqlite")) {
             config.driver = .sqlite;
-        } else if (std.mem.eql(u8, driver_env, "postgresql") or std.mem.eql(u8, driver_env, "postgres")) {
+        } else if (std.mem.eql(u8, d, "postgresql") or std.mem.eql(u8, d, "postgres")) {
             config.driver = .postgresql;
         }
     }
 
-    // PostgreSQL settings
-    if (getEnv(allocator, "PGHOST")) |host| {
+    // PostgreSQL settings (E12_* takes precedence, fallback to PG*)
+    if (std.posix.getenv("E12_DB_HOST") orelse std.posix.getenv("PGHOST")) |host| {
         config.pg_host = host;
     }
-    if (getEnv(allocator, "PGPORT")) |port_str| {
+    if (std.posix.getenv("E12_DB_PORT") orelse std.posix.getenv("PGPORT")) |port_str| {
         config.pg_port = std.fmt.parseInt(u16, port_str, 10) catch 5432;
     }
-    if (getEnv(allocator, "PGDATABASE")) |db| {
+    if (std.posix.getenv("E12_DB_NAME") orelse std.posix.getenv("PGDATABASE")) |db| {
         config.pg_database = db;
     }
-    if (getEnv(allocator, "PGUSER")) |user| {
+    if (std.posix.getenv("E12_DB_USER") orelse std.posix.getenv("PGUSER")) |user| {
         config.pg_username = user;
     }
-    if (getEnv(allocator, "PGPASSWORD")) |pass| {
+    if (std.posix.getenv("E12_DB_PASSWORD") orelse std.posix.getenv("PGPASSWORD")) |pass| {
         config.pg_password = pass;
     }
 
-    // SQLite settings
-    if (getEnv(allocator, "SQLITE_PATH")) |path| {
+    // SQLite settings (E12_DB_PATH takes precedence)
+    if (std.posix.getenv("E12_DB_PATH") orelse std.posix.getenv("SQLITE_PATH")) |path| {
         config.sqlite_path = path;
     }
 

@@ -2953,22 +2953,42 @@ pub const PostgresConfig = struct {
 
 ### Environment Variable Configuration
 
-For PostgreSQL, you can use standard PostgreSQL environment variables:
+Engine12 uses `E12_*` prefixed environment variables for configuration. Legacy PostgreSQL variables are also supported for backward compatibility.
 
 ```bash
-# Set database driver
-export DB_DRIVER=postgresql  # or sqlite (default)
+# Primary E12_* variables (recommended)
+export E12_DB_DRIVER=postgresql  # or sqlite (default)
+export E12_DB_HOST=localhost
+export E12_DB_PORT=5432
+export E12_DB_NAME=myapp
+export E12_DB_USER=myuser
+export E12_DB_PASSWORD=mypassword
+export E12_DB_PATH=app.db  # SQLite path
 
-# PostgreSQL settings
+# Legacy variables (still supported, E12_* takes precedence)
+export DB_DRIVER=postgresql
 export PGHOST=localhost
 export PGPORT=5432
 export PGDATABASE=myapp
 export PGUSER=myuser
 export PGPASSWORD=mypassword
-
-# SQLite settings  
 export SQLITE_PATH=app.db
 ```
+
+**Using .env files:**
+
+Create a `.env` file in your project root:
+
+```env
+E12_DB_DRIVER=postgresql
+E12_DB_HOST=localhost
+E12_DB_PORT=5432
+E12_DB_NAME=myapp
+E12_DB_USER=myuser
+E12_DB_PASSWORD=secret
+```
+
+System environment variables take precedence over `.env` file values.
 
 ### Engine12 Database Integration
 
@@ -4502,6 +4522,47 @@ Set a value in the connection's context storage.
 
 ```zig
 try conn.set("user_id", "12345");
+```
+
+#### `getHeader(name: []const u8) ?[]const u8`
+
+Get a header value from the original WebSocket handshake request.
+
+```zig
+if (conn.getHeader("Authorization")) |auth| {
+    std.debug.print("Auth header: {s}\n", .{auth});
+}
+```
+
+#### `isOpen() bool`
+
+Check if the connection is still open.
+
+```zig
+if (conn.isOpen()) {
+    try conn.sendText("Still connected!");
+}
+```
+
+#### `queueMessage(queue: *MessageQueue, topic: []const u8, data: []const u8) !void`
+
+Queue a message for later sending. Useful for batching messages.
+
+```zig
+const websocket = @import("engine12").websocket;
+var queue = websocket.connection.MessageQueue.init(allocator);
+defer queue.deinit();
+
+try conn.queueMessage(&queue, "chat", "Hello!");
+try conn.queueMessage(&queue, "chat", "World!");
+```
+
+#### `drainQueue(queue: *MessageQueue) void`
+
+Send all queued messages and clear the queue.
+
+```zig
+conn.drainQueue(&queue); // Sends all queued messages
 ```
 
 ### Connection Properties
