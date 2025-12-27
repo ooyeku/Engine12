@@ -111,4 +111,17 @@ comptime {
     _ = @import("templates/escape.zig");
     _ = @import("hot_reload/runtime_renderer.zig");
     // Note: parser.zig tests are comptime-only and run during compilation
+
+    // WebSocket tests
+    _ = @import("websocket/module.zig");
+    _ = @import("websocket/protocol.zig");
+    _ = @import("websocket/handshake.zig");
+    _ = @import("websocket/security.zig");
+    _ = @import("websocket/message.zig");
+    _ = @import("websocket/client_api.zig");
+    _ = @import("websocket/health.zig");
+    _ = @import("websocket/connection.zig");
+    _ = @import("websocket/server.zig");
+    _ = @import("websocket/manager.zig");
+    _ = @import("websocket/room.zig");
 }

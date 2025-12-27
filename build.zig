@@ -68,10 +68,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const websocket_dep = b.dependency("websocket", .{
-        .target = target,
-        .optimize = optimize,
-    });
     const pg_dep = b.dependency("pg", .{
         .target = target,
         .optimize = optimize,
@@ -84,7 +80,6 @@ pub fn build(b: *std.Build) void {
 
     mod.addImport("vigil", vigil.module("vigil"));
     mod.addImport("ziggurat", ziggurat_mod);
-    mod.addImport("websocket", websocket_dep.module("websocket"));
     mod.addImport("pg", pg_dep.module("pg"));
 
     // Link bundled SQLite instead of system library

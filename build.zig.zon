@@ -17,10 +17,6 @@
             .url = "git+https://github.com/ooyeku/engine12.git#c94d22bbce1f3c968c03145f6c303cd3a1cf0ad3",
             .hash = "engine12-0.15.0-0uShHl91FAAK7ncLwUgDTE-4dJrePJJ8zPTNxSXPWwrV",
         },
-        .websocket = .{
-            .url = "git+https://github.com/karlseguin/websocket.zig.git#91ca9c501066144fa95a52237da110812e9aa145",
-            .hash = "websocket-0.1.0-ZPISdRNzAwAGszh62EpRtoQxu8wb1MSMVI6Ow0o2dmyJ",
-        },
         .pg = .{
             .url = "git+https://github.com/karlseguin/pg.zig?ref=master#f8d4892387fbad2abdf775783e101e50a7114335",
             .hash = "pg-0.0.0-Wp_7gag6BgD_QAZrPhNNEGpnUZR_LEkKT40Ura3p-4yX",

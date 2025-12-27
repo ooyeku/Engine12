@@ -1,6 +1,7 @@
 const std = @import("std");
-const ws = @import("websocket");
 const json = @import("../json.zig");
+const protocol = @import("protocol.zig");
+const server = @import("server.zig");
 
 pub const ThreadSafeContext = struct {
     mutex: std.Thread.Mutex,
@@ -168,64 +169,78 @@ pub const MessageQueue = struct {
     }
 };
 
+/// WebSocket connection wrapper for Engine12
+/// Uses native WebSocket implementation instead of external dependency
 pub const WebSocketConnection = struct {
-    conn: *ws.Conn,
+    /// Native WebSocket client
+    client: *server.Client,
 
+    /// Unique connection ID
     id: []const u8,
+
+    /// Request path
     path: []const u8,
+
+    /// Request headers (copy for Engine12 API compatibility)
     headers: std.StringHashMap([]const u8),
 
+    /// Connection state flag
     is_open: std.atomic.Value(bool),
 
+    /// Custom context for storing user data
     context: std.StringHashMap([]const u8),
 
+    /// Allocator for this connection
     allocator: std.mem.Allocator,
 
+    /// Cleanup flag to prevent double cleanup
     cleaned_up: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    /// Send a text message
     pub fn sendText(self: *WebSocketConnection, text: []const u8) !void {
         if (!self.is_open.load(.monotonic)) {
             return error.ConnectionClosed;
         }
 
-        const mutable = try self.allocator.dupe(u8, text);
-        defer self.allocator.free(mutable);
-
-        try self.conn.write(mutable);
+        try self.client.sendText(text);
     }
 
+    /// Send a binary message
     pub fn sendBinary(self: *WebSocketConnection, data: []const u8) !void {
         if (!self.is_open.load(.monotonic)) {
             return error.ConnectionClosed;
         }
 
-        const mutable = try self.allocator.dupe(u8, data);
-        defer self.allocator.free(mutable);
-
-        try self.conn.writeBin(mutable);
+        try self.client.sendBinary(data);
     }
 
+    /// Send a JSON-serialized message
     pub fn sendJson(self: *WebSocketConnection, comptime T: type, value: T) !void {
         const json_str = try json.Json.serialize(T, value, self.allocator);
         defer self.allocator.free(json_str);
         try self.sendText(json_str);
     }
 
+    /// Close the connection
     pub fn close(self: *WebSocketConnection, code: ?u16, reason: ?[]const u8) !void {
         self.is_open.store(false, .monotonic);
 
-        if (code) |c| {
-            const close_reason = reason orelse "";
-            try self.conn.close(.{ .code = c, .reason = close_reason });
-        } else {
-            try self.conn.close(.{});
-        }
+        const close_code = if (code) |c|
+            protocol.CloseCode.fromU16(c)
+        else
+            protocol.CloseCode.normal;
+
+        const close_reason = reason orelse "";
+
+        try self.client.close(close_code, close_reason);
     }
 
+    /// Get a context value by key
     pub fn get(self: *const WebSocketConnection, key: []const u8) ?[]const u8 {
         return self.context.get(key);
     }
 
+    /// Set a context value
     pub fn set(self: *WebSocketConnection, key: []const u8, value: []const u8) !void {
         const key_copy = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_copy);
@@ -234,11 +249,13 @@ pub const WebSocketConnection = struct {
         try self.context.put(key_copy, value_copy);
     }
 
+    /// Queue a message for later sending
     pub fn queueMessage(self: *WebSocketConnection, queue: *MessageQueue, topic: []const u8, data: []const u8) !void {
         _ = self;
         try queue.push(topic, data);
     }
 
+    /// Drain and send all queued messages
     pub fn drainQueue(self: *WebSocketConnection, queue: *MessageQueue) void {
         while (queue.pop()) |msg| {
             defer msg.deinit(self.allocator);
@@ -248,12 +265,24 @@ pub const WebSocketConnection = struct {
         }
     }
 
+    /// Get a header value from the original request
+    pub fn getHeader(self: *const WebSocketConnection, name: []const u8) ?[]const u8 {
+        return self.headers.get(name);
+    }
+
+    /// Check if connection is open
+    pub fn isOpen(self: *const WebSocketConnection) bool {
+        return self.is_open.load(.monotonic);
+    }
+
+    /// Cleanup connection resources
     pub fn cleanup(self: *WebSocketConnection) void {
         const already_cleaned = self.cleaned_up.swap(true, .monotonic);
         if (already_cleaned) {
             return; // Already cleaned up
         }
 
+        // Clean up context
         var context_keys = std.ArrayListUnmanaged([]const u8){};
         defer context_keys.deinit(self.allocator);
 
@@ -270,6 +299,7 @@ pub const WebSocketConnection = struct {
         }
         self.context.deinit();
 
+        // Clean up headers
         var header_keys = std.ArrayListUnmanaged([]const u8){};
         defer header_keys.deinit(self.allocator);
 
@@ -286,7 +316,79 @@ pub const WebSocketConnection = struct {
         }
         self.headers.deinit();
 
+        // Free id and path
         self.allocator.free(self.id);
         self.allocator.free(self.path);
     }
 };
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "ThreadSafeContext basic operations" {
+    const allocator = std.testing.allocator;
+
+    var ctx = ThreadSafeContext.init(allocator);
+    defer ctx.deinit();
+
+    try ctx.setThreadSafe("key1", "value1");
+    try std.testing.expectEqualStrings("value1", ctx.getThreadSafe("key1").?);
+
+    ctx.removeThreadSafe("key1");
+    try std.testing.expect(ctx.getThreadSafe("key1") == null);
+}
+
+test "MessageQueue push and pop" {
+    const allocator = std.testing.allocator;
+
+    var queue = MessageQueue.init(allocator);
+    defer queue.deinit();
+
+    try queue.push("topic1", "data1");
+    try queue.push("topic2", "data2");
+
+    try std.testing.expectEqual(@as(usize, 2), queue.len());
+
+    const msg1 = queue.pop();
+    try std.testing.expect(msg1 != null);
+    if (msg1) |m| {
+        defer m.deinit(allocator);
+        try std.testing.expectEqualStrings("topic1", m.topic);
+        try std.testing.expectEqualStrings("data1", m.data);
+    }
+
+    const msg2 = queue.pop();
+    try std.testing.expect(msg2 != null);
+    if (msg2) |m| {
+        defer m.deinit(allocator);
+        try std.testing.expectEqualStrings("topic2", m.topic);
+        try std.testing.expectEqualStrings("data2", m.data);
+    }
+
+    try std.testing.expect(queue.pop() == null);
+}
+
+test "MessageQueue max size" {
+    const allocator = std.testing.allocator;
+
+    var queue = MessageQueue.initWithMaxSize(allocator, 2);
+    defer queue.deinit();
+
+    try queue.push("topic1", "data1");
+    try queue.push("topic2", "data2");
+    try std.testing.expectError(error.QueueFull, queue.push("topic3", "data3"));
+}
+
+test "MessageQueue clear" {
+    const allocator = std.testing.allocator;
+
+    var queue = MessageQueue.init(allocator);
+    defer queue.deinit();
+
+    try queue.push("topic1", "data1");
+    try queue.push("topic2", "data2");
+
+    queue.clear();
+    try std.testing.expect(queue.isEmpty());
+}
