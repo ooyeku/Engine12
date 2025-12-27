@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     mod.addImport("ziggurat", ziggurat_mod);
     mod.addImport("websocket", websocket_dep.module("websocket"));
     mod.addImport("pg", pg_dep.module("pg"));
+    mod.link_libc = true;
     mod.linkSystemLibrary("sqlite3", .{});
     const exe = b.addExecutable(.{
         .name = "engine12",
@@ -39,6 +40,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
             .imports = &.{
                 .{ .name = "engine12", .module = mod },
                 .{ .name = "vigil", .module = vigil.module("vigil") },
@@ -46,8 +48,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    exe.linkSystemLibrary("sqlite3");
-    exe.linkLibC();
+    exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(exe);
     const run_step = b.step("run", "Show available build commands");
     const run_info_cmd = b.addSystemCommand(&.{ "sh", "-c" });
@@ -58,15 +59,15 @@ pub fn build(b: *std.Build) void {
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
-    mod_tests.linkSystemLibrary("sqlite3");
-    mod_tests.linkLibC();
+    mod_tests.root_module.linkSystemLibrary("sqlite3", .{});
+    mod_tests.root_module.link_libc = true;
     const run_mod_tests = b.addRunArtifact(mod_tests);
     run_mod_tests.has_side_effects = true;
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
-    exe_tests.linkSystemLibrary("sqlite3");
-    exe_tests.linkLibC();
+    exe_tests.root_module.linkSystemLibrary("sqlite3", .{});
+    exe_tests.root_module.link_libc = true;
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.has_side_effects = true;
     const test_step = b.step("test", "Run tests");
@@ -78,6 +79,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("todo/src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
             .imports = &.{
                 .{ .name = "engine12", .module = mod },
                 .{ .name = "vigil", .module = vigil.module("vigil") },
@@ -85,8 +87,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    todo_exe.linkSystemLibrary("sqlite3");
-    todo_exe.linkLibC();
+    todo_exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(todo_exe);
     const todo_run_step = b.step("todo-run", "Run the TODO application");
     const todo_run_cmd = b.addRunArtifact(todo_exe);
@@ -98,8 +99,8 @@ pub fn build(b: *std.Build) void {
     const todo_test_exe = b.addTest(.{
         .root_module = todo_exe.root_module,
     });
-    todo_test_exe.linkSystemLibrary("sqlite3");
-    todo_test_exe.linkLibC();
+    todo_test_exe.root_module.linkSystemLibrary("sqlite3", .{});
+    todo_test_exe.root_module.link_libc = true;
     const todo_test_step = b.step("todo-test", "Run TODO application tests");
     const run_todo_tests = b.addRunArtifact(todo_test_exe);
     todo_test_step.dependOn(&run_todo_tests.step);

@@ -1,3 +1,11 @@
+const std = @import("std");
+
+pub const std_options: std.Options = .{
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .websocket, .level = .err },
+    },
+};
+
 pub const types = @import("types.zig");
 pub const engine12 = @import("engine12.zig");
 pub const fileserver = @import("fileserver.zig");

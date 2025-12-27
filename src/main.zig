@@ -1,4 +1,11 @@
 const std = @import("std");
+
+pub const std_options: std.Options = .{
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .websocket, .level = .err },
+    },
+};
+
 const E12 = @import("engine12");
 
 pub fn main() !void {
