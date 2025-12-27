@@ -253,6 +253,9 @@ pub const Connection = struct {
         // All param formats 0 (Text) - assuming simple text encoding for now
         try self.writer.writeBind("", "", &[_]i16{}, encoded_params.items, &[_]i16{});
 
+        // Describe Portal (unnamed)
+        try self.writer.writeDescribe(true, "");
+
         // 3. Execute
         try self.writer.writeExecute("", 0); // 0 = all rows
 
@@ -309,7 +312,11 @@ pub const Connection = struct {
             }
         }
 
+        // 2. Bind
         try self.writer.writeBind("", "", &[_]i16{}, encoded_params.items, &[_]i16{});
+
+        // Describe Portal (unnamed)
+        try self.writer.writeDescribe(true, "");
 
         // 3. Execute
         try self.writer.writeExecute("", 0);

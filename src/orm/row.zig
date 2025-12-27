@@ -62,7 +62,17 @@ pub const PostgresStoredRow = struct {
         return switch (self.values[col_index]) {
             .int => |i| i,
             .bool_val => |b| if (b) @as(i64, 1) else @as(i64, 0),
-            .text => |t| std.fmt.parseInt(i64, t, 10) catch 0,
+            .text => |t| {
+                // Handle PostgreSQL boolean text values
+                if (t.len == 1) {
+                    if (t[0] == 't' or t[0] == '1') return 1;
+                    if (t[0] == 'f' or t[0] == '0') return 0;
+                }
+                if (std.mem.eql(u8, t, "true")) return 1;
+                if (std.mem.eql(u8, t, "false")) return 0;
+                // Try parsing as integer
+                return std.fmt.parseInt(i64, t, 10) catch 0;
+            },
             else => 0,
         };
     }

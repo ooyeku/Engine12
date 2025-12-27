@@ -174,6 +174,19 @@ pub const MessageWriter = struct {
         try self.stream.writeAll(self.buffer.items);
     }
 
+    pub fn writeDescribe(self: *MessageWriter, is_portal: bool, name: []const u8) !void {
+        self.buffer.clearRetainingCapacity();
+        try self.buffer.append(self.allocator, @intFromEnum(types.Frontend.Describe));
+        try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 });
+
+        try self.buffer.append(self.allocator, if (is_portal) 'P' else 'S');
+        try self.writeString(name);
+
+        const len = @as(i32, @intCast(self.buffer.items.len - 1));
+        std.mem.writeInt(i32, self.buffer.items[1..5], len, .big);
+        try self.stream.writeAll(self.buffer.items);
+    }
+
     pub fn writeExecute(self: *MessageWriter, portal: []const u8, max_rows: i32) !void {
         self.buffer.clearRetainingCapacity();
         try self.buffer.append(self.allocator, @intFromEnum(types.Frontend.Execute));
