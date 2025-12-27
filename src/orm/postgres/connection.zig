@@ -84,6 +84,10 @@ pub const Connection = struct {
                 .EmptyQueryResponse => {
                     // No rows and no error
                 },
+                .NoticeResponse, .NotificationResponse, .ParameterStatus => {
+                    // Ignore async messages
+                    try self.reader.skip(payload_len);
+                },
                 else => {
                     // Skip unknown/unhandled messages
                     try self.reader.skip(payload_len);
@@ -172,6 +176,9 @@ pub const Connection = struct {
                 },
                 .EmptyQueryResponse => {
                     // yield empty list
+                },
+                .NoticeResponse, .NotificationResponse, .ParameterStatus => {
+                    try self.reader.skip(payload_len);
                 },
                 else => {
                     try self.reader.skip(payload_len);
@@ -274,6 +281,8 @@ pub const Connection = struct {
                 .ParseComplete, .BindComplete => {},
                 .DataRow => try self.reader.skip(payload_len), // Ignore rows
                 .RowDescription => try self.reader.skip(payload_len),
+                .PortalSuspended => try self.reader.skip(payload_len),
+                .NoticeResponse, .NotificationResponse, .ParameterStatus => try self.reader.skip(payload_len),
                 else => try self.reader.skip(payload_len),
             }
         }
@@ -351,6 +360,8 @@ pub const Connection = struct {
                 },
                 .ParseComplete, .BindComplete => {},
                 .CommandComplete => try self.reader.skip(payload_len),
+                .PortalSuspended => try self.reader.skip(payload_len),
+                .NoticeResponse, .NotificationResponse, .ParameterStatus => try self.reader.skip(payload_len),
                 else => try self.reader.skip(payload_len),
             }
         }

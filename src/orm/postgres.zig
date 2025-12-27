@@ -12,6 +12,7 @@ const ParamList = @import("params.zig").ParamList;
 pub const PostgresDatabase = struct {
     conn: *Connection,
     allocator: std.mem.Allocator,
+    mutex: std.Thread.Mutex,
 
     pub fn open(config: PostgresConfig, allocator: std.mem.Allocator) !PostgresDatabase {
         const conn = try allocator.create(Connection);
@@ -19,23 +20,32 @@ pub const PostgresDatabase = struct {
         return PostgresDatabase{
             .conn = conn,
             .allocator = allocator,
+            .mutex = std.Thread.Mutex{},
         };
     }
 
     pub fn close(self: *PostgresDatabase) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.conn.close();
         self.allocator.destroy(self.conn);
     }
 
     pub fn execute(self: *PostgresDatabase, sql: []const u8) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         try self.conn.execute(sql);
     }
 
     pub fn executeParams(self: *PostgresDatabase, sql: []const u8, params: *const ParamList) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         try self.conn.executeParams(sql, params);
     }
 
     pub fn query(self: *PostgresDatabase, sql: []const u8) !QueryResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         var rs = try self.conn.query(sql);
         defer rs.rows.deinit(self.allocator); // We will consume/copy rows, or move ownership?
         // QueryResult wants `pg_rows` as ArrayListUnmanaged(PostgresStoredRow).
@@ -49,6 +59,8 @@ pub const PostgresDatabase = struct {
     }
 
     pub fn queryParams(self: *PostgresDatabase, sql: []const u8, params: *const ParamList) !QueryResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         var rs = try self.conn.queryParams(sql, params);
         defer rs.rows.deinit(self.allocator);
         return try convertToQueryResult(self.allocator, &rs);

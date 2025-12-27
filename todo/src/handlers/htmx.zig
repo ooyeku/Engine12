@@ -421,11 +421,11 @@ pub fn handleCreateTodo(req: *Request) Response {
         .updated_at = std.time.timestamp(),
     };
 
-    orm.create(Todo, todo) catch {
+    const created_id = orm.create(Todo, todo) catch {
         return htmx.errors.errorFragmentWithStatus("Failed to create todo", 500);
     };
 
-    todo.id = orm.db.lastInsertRowId() catch 0;
+    todo.id = created_id;
 
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);

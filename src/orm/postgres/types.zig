@@ -33,6 +33,7 @@ pub const Backend = enum(u8) {
     PortalSuspended = 's',
     ReadyForQuery = 'Z',
     RowDescription = 'T',
+    _,
 };
 
 /// Common OIDs (Object Identifiers) for Types

@@ -82,10 +82,15 @@ var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 var global_engine12_instance: ?*Engine12 = null;
 var shutdown_triggered: bool = false;
 
-// Signal handler for graceful shutdown on SIGINT (Ctrl+C)
-fn handleSigint(_: c_int) callconv(.c) void {
+// Signal handler for graceful shutdown on SIGINT/SIGTERM
+fn handleSignal(sig: c_int) callconv(.c) void {
+    const msg = if (sig == posix.SIG.INT) "\nReceived SIGINT (Ctrl+C)...\n" else "\nReceived SIGTERM...\n";
+    _ = posix.write(posix.STDERR_FILENO, msg) catch {};
+
     if (shutdown_triggered) {
-        // Second Ctrl+C - force exit immediately
+        // Second signal - force exit immediately
+        const force_msg = "Forcing exit...\n";
+        _ = posix.write(posix.STDERR_FILENO, force_msg) catch {};
         std.process.exit(1);
     }
     shutdown_triggered = true;
@@ -1676,18 +1681,18 @@ pub const Engine12 = struct {
         // Store global reference for signal handler
         global_engine12_instance = self;
 
-        // Install SIGINT handler for graceful shutdown on Ctrl+C
-        // Install SIGINT handler for graceful shutdown on Ctrl+C
+        // Install SIGINT and SIGTERM handlers for graceful shutdown
         if (builtin.os.tag != .windows) {
             const act = posix.Sigaction{
-                .handler = .{ .handler = handleSigint },
+                .handler = .{ .handler = handleSignal },
                 .mask = posix.sigemptyset(),
                 .flags = 0,
             };
             posix.sigaction(posix.SIG.INT, &act, null);
+            posix.sigaction(posix.SIG.TERM, &act, null);
         } else {
             // Suppress unused function warning on Windows
-            _ = &handleSigint;
+            _ = &handleSignal;
         }
 
         try self.start();

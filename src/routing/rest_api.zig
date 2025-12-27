@@ -541,14 +541,8 @@ fn handleCreate(
         }
     }
 
-    config.orm.create(T, model_to_create) catch {
+    const created_id = config.orm.create(T, model_to_create) catch {
         return Response.serverError("Failed to create record");
-    };
-
-    const created_id = config.orm.db.lastInsertRowId() catch |err| {
-        std.debug.print("[REST API] Warning: Failed to get lastInsertRowId: {}\n", .{err});
-        const response = Response.jsonFrom(T, model_to_create, config.orm.allocator);
-        return response.withStatus(201);
     };
 
     inline for (std.meta.fields(T)) |field| {

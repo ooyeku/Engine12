@@ -16,7 +16,7 @@ const allocator = std.heap.page_allocator;
 // Default to SQLite for ease of use (no server required)
 // Set DB_DRIVER=postgresql to use PostgreSQL
 pub const DbConfig = struct {
-    driver: Driver = .sqlite,
+    driver: Driver = .postgresql,
     // PostgreSQL settings
     pg_host: []const u8 = "127.0.0.1",
     pg_port: u16 = 5432,

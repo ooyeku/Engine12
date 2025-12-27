@@ -2,7 +2,6 @@ const std = @import("std");
 const Database = @import("database.zig").Database;
 const ORM = @import("orm.zig").ORM;
 
-
 test "ORM create - basic insert" {
     const allocator = std.testing.allocator;
 
@@ -25,7 +24,7 @@ test "ORM create - basic insert" {
         .age = 25,
     };
 
-    try orm.create(User, user);
+    _ = try orm.create(User, user);
 
     var result = try orm.query("SELECT * FROM users");
     defer result.deinit();
@@ -55,8 +54,8 @@ test "ORM create - with auto-increment id" {
     const user1 = User{ .id = 0, .name = "Alice" };
     const user2 = User{ .id = 0, .name = "Bob" };
 
-    try orm.create(User, user1);
-    try orm.create(User, user2);
+    _ = try orm.create(User, user1);
+    _ = try orm.create(User, user2);
 
     var users = try orm.findAll(User);
     defer {
@@ -94,7 +93,7 @@ test "ORM create - with optional fields (null values skipped)" {
         .description = null,
     };
 
-    try orm.create(User, user);
+    _ = try orm.create(User, user);
 
     var result = try orm.query("SELECT name, description FROM users");
     defer result.deinit();
@@ -128,7 +127,7 @@ test "ORM create - with enum field" {
         .status = .active,
     };
 
-    try orm.create(User, user);
+    _ = try orm.create(User, user);
 
     var result = try orm.query("SELECT status FROM users");
     defer result.deinit();
@@ -531,7 +530,7 @@ test "ORM full CRUD cycle" {
     var orm = ORM.init(db, allocator);
 
     const user1 = User{ .id = 0, .name = "Alice", .age = 25 };
-    try orm.create(User, user1);
+    _ = try orm.create(User, user1);
 
     var users = try orm.findAll(User);
     defer {

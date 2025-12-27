@@ -65,31 +65,7 @@ pub fn ModelWithORM(comptime T: type) type {
         }
 
         pub fn create(self: Self, instance: T) !T {
-            try self.orm.create(T, instance);
-
-            const id = self.orm.db.lastInsertRowId() catch {
-                var all_result = try self.orm.findAllManaged(T);
-                defer all_result.deinit();
-                if (all_result.isEmpty()) return error.FailedToCreate;
-
-                var max_id: i64 = 0;
-                for (all_result.getItems()) |item| {
-                    const id_field = @field(item, "id");
-                    if (id_field > max_id) {
-                        max_id = id_field;
-                    }
-                }
-
-                const max_result_opt = try self.orm.findManaged(T, max_id);
-                if (max_result_opt) |result| {
-                    var mutable_result = result;
-                    defer mutable_result.deinit();
-                    if (mutable_result.first()) |found| {
-                        return try Self.copyInstance(found, self.orm.allocator);
-                    }
-                }
-                return error.FailedToCreate;
-            };
+            const id = try self.orm.create(T, instance);
 
             const result_opt = try self.orm.findManaged(T, id);
             if (result_opt) |result| {

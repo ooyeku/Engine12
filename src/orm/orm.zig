@@ -423,7 +423,7 @@ pub const ORM = struct {
         return comptime model.comptimeTableName(T);
     }
 
-    pub fn create(self: *ORM, comptime T: type, instance: T) !void {
+    pub fn create(self: *ORM, comptime T: type, instance: T) !i64 {
         const table_name = comptime getTableName(T);
 
         var fields = std.ArrayListUnmanaged([]const u8){};
@@ -472,25 +472,39 @@ pub const ORM = struct {
             try placeholders.append(self.allocator, '?');
         }
 
-        const sql = try std.fmt.allocPrint(
-            self.allocator,
-            "INSERT INTO {s} ({s}) VALUES ({s})",
-            .{ table_name, fields_str, placeholders.items },
-        );
-        defer self.allocator.free(sql);
+        const sql_template = "INSERT INTO {s} ({s}) VALUES ({s})";
 
-        self.db.executeParams(sql, &params) catch |err| {
-            std.debug.print("[ORM Error] create() failed for table '{s}'\n", .{table_name});
-            std.debug.print("  SQL: {s}\n", .{sql});
-            std.debug.print("  Fields: ", .{});
-            for (fields.items, 0..) |field, i| {
-                if (i > 0) std.debug.print(", ", .{});
-                std.debug.print("{s}", .{field});
-            }
-            std.debug.print("\n", .{});
-            std.debug.print("  Error: {}\n", .{err});
-            return err;
-        };
+        switch (self.db.driver) {
+            .postgresql => {
+                // Postgres: Use RETURNING id
+                const sql = try std.fmt.allocPrint(
+                    self.allocator,
+                    sql_template ++ " RETURNING id",
+                    .{ table_name, fields_str, placeholders.items },
+                );
+                defer self.allocator.free(sql);
+
+                var rs = try self.db.queryParams(sql, &params);
+                defer rs.deinit();
+
+                if (rs.nextRow()) |row| {
+                    return row.getInt64(0);
+                }
+                return error.NoInsertId;
+            },
+            .sqlite => {
+                // SQLite: Execute then last_insert_rowid
+                const sql = try std.fmt.allocPrint(
+                    self.allocator,
+                    sql_template,
+                    .{ table_name, fields_str, placeholders.items },
+                );
+                defer self.allocator.free(sql);
+
+                try self.db.executeParams(sql, &params);
+                return try self.db.lastInsertRowId();
+            },
+        }
     }
 
     pub fn createMany(self: *ORM, comptime T: type, instances: []const T) !void {
@@ -683,8 +697,7 @@ pub const ORM = struct {
         );
         defer self.allocator.free(sql);
 
-        self.db.executeParams(sql, &params) catch {
-        };
+        self.db.executeParams(sql, &params) catch {};
     }
 
     pub fn find(self: *ORM, comptime T: type, id: i64) !?T {
@@ -886,8 +899,7 @@ pub const ORM = struct {
         const table_name = comptime getTableName(T);
 
         const table_exists = try Schema.tableExists(&self.db, table_name);
-        if (!table_exists) {
-        } else {
+        if (!table_exists) {} else {
             const table_columns = try Schema.getColumns(&self.db, table_name, self.allocator);
             defer {
                 for (table_columns) |col| {
@@ -982,8 +994,7 @@ pub const ORM = struct {
         const table_name = comptime getTableName(T);
 
         const table_exists = try Schema.tableExists(&self.db, table_name);
-        if (!table_exists) {
-        } else {
+        if (!table_exists) {} else {
             const table_columns = try Schema.getColumns(&self.db, table_name, self.allocator);
             defer {
                 for (table_columns) |col| {
@@ -1354,7 +1365,7 @@ test "ORM create" {
         .age = 25,
     };
 
-    try orm.create(User, user);
+    _ = try orm.create(User, user);
 }
 
 test "ORM find" {
@@ -1559,8 +1570,8 @@ test "ORM create with auto-increment id" {
     const user1 = User{ .id = 0, .name = "Alice" };
     const user2 = User{ .id = 0, .name = "Bob" };
 
-    try orm.create(User, user1);
-    try orm.create(User, user2);
+    _ = try orm.create(User, user1);
+    _ = try orm.create(User, user2);
 
     var users = try orm.findAll(User);
     defer {
@@ -1803,8 +1814,6 @@ test "ORM initPtr and deinitPtr" {
     try std.testing.expect(orm.db.sqlite_db != null);
 }
 
-
-
 test "ORM findAll with table not found" {
     const allocator = std.testing.allocator;
 
@@ -1917,7 +1926,7 @@ test "ORM SQL injection prevention with create" {
         .notes = "test",
     };
 
-    try orm.create(User, malicious_user);
+    _ = try orm.create(User, malicious_user);
 
     var result = try orm.db.query("SELECT COUNT(*) FROM users");
     defer result.deinit();
@@ -1949,9 +1958,9 @@ test "ORM whereParams" {
 
     var orm = ORM.init(db, allocator);
 
-    try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
-    try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
-    try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
 
     var params = ParamList.init(allocator);
     defer params.deinit();
@@ -1984,9 +1993,9 @@ test "ORM whereParamsWithOptions" {
 
     var orm = ORM.init(db, allocator);
 
-    try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
-    try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
-    try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Alice", .age = 25 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Bob", .age = 30 });
+    _ = try orm.create(User, .{ .id = 0, .name = "Charlie", .age = 25 });
 
     var params = ParamList.init(allocator);
     defer params.deinit();
