@@ -1,5 +1,5 @@
 const std = @import("std");
-const Response = @import("../response.zig").Response;
+const Response = @import("../http/response.zig").Response;
 const config_mod = @import("config.zig");
 const HtmxConfig = config_mod.HtmxConfig;
 
@@ -181,7 +181,6 @@ fn findInjectionPoint(body: []const u8) ?usize {
 pub fn injectHtmx(resp: Response) Response {
     const config = getConfig() orelse return resp;
     if (!config.enabled) return resp;
-
 
     const body = resp.getBody();
     if (body.len == 0) return resp;

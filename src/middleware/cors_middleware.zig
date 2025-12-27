@@ -1,19 +1,19 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
 const middleware = @import("middleware.zig");
 
 pub const CorsConfig = struct {
     allowed_origins: []const []const u8 = &[_][]const u8{"*"},
-    
+
     allowed_methods: []const []const u8 = &[_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" },
-    
-    allowed_headers: []const []const u8 = &[_][]const u8{"Content-Type", "Authorization"},
-    
+
+    allowed_headers: []const []const u8 = &[_][]const u8{ "Content-Type", "Authorization" },
+
     max_age: u32 = 3600,
-    
+
     allow_credentials: bool = false,
-    
+
     exposed_headers: []const []const u8 = &[_][]const u8{},
 };
 
@@ -22,17 +22,17 @@ var global_cors_config_mutex: std.Thread.Mutex = .{};
 
 pub const CorsMiddleware = struct {
     config: CorsConfig,
-    
+
     pub fn init(config: CorsConfig) CorsMiddleware {
         return CorsMiddleware{ .config = config };
     }
-    
+
     pub fn setGlobalConfig(self: *const CorsMiddleware) void {
         global_cors_config_mutex.lock();
         defer global_cors_config_mutex.unlock();
         global_cors_config = self.config;
     }
-    
+
     fn preflightMiddleware(req: *Request) middleware.MiddlewareResult {
         global_cors_config_mutex.lock();
         const config = global_cors_config orelse {
@@ -43,23 +43,23 @@ pub const CorsMiddleware = struct {
         const origin = req.header("Origin") orelse {
             return .proceed; // No origin header, not a CORS request
         };
-        
+
         if (!isOriginAllowed(&config, origin)) {
             return .proceed; // Origin not allowed
         }
-        
+
         req.set("cors_origin", origin) catch {};
-        
+
         if (std.mem.eql(u8, req.method(), "OPTIONS")) {
             const requested_method = req.header("Access-Control-Request-Method") orelse "";
             const requested_headers = req.header("Access-Control-Request-Headers") orelse "";
-            
+
             const method_allowed = isMethodAllowed(&config, requested_method);
             const headers_allowed = areHeadersAllowed(&config, requested_headers);
-            
+
             if (method_allowed and headers_allowed) {
                 req.set("cors_preflight", "true") catch {};
-                
+
                 var methods_buf: [256]u8 = undefined;
                 var methods_fba = std.heap.FixedBufferAllocator.init(&methods_buf);
                 var methods_list = std.ArrayListUnmanaged(u8){};
@@ -71,7 +71,7 @@ pub const CorsMiddleware = struct {
                     methods_list.appendSlice(methods_fba.allocator(), method) catch break;
                 }
                 req.set("cors_allowed_methods", methods_list.items) catch {};
-                
+
                 var headers_buf: [256]u8 = undefined;
                 var headers_fba = std.heap.FixedBufferAllocator.init(&headers_buf);
                 var headers_list = std.ArrayListUnmanaged(u8){};
@@ -83,15 +83,15 @@ pub const CorsMiddleware = struct {
                     headers_list.appendSlice(headers_fba.allocator(), header) catch break;
                 }
                 req.set("cors_allowed_headers", headers_list.items) catch {};
-                
+
                 var max_age_buf: [32]u8 = undefined;
                 const max_age_str = std.fmt.bufPrint(&max_age_buf, "{d}", .{config.max_age}) catch "3600";
                 req.set("cors_max_age", max_age_str) catch {};
-                
+
                 if (config.allow_credentials) {
                     req.set("cors_allow_credentials", "true") catch {};
                 }
-                
+
                 if (config.exposed_headers.len > 0) {
                     var exposed_buf: [256]u8 = undefined;
                     var exposed_fba = std.heap.FixedBufferAllocator.init(&exposed_buf);
@@ -124,10 +124,10 @@ pub const CorsMiddleware = struct {
                 req.set("cors_exposed_headers", exposed_list.items) catch {};
             }
         }
-        
+
         return .proceed;
     }
-    
+
     fn isOriginAllowed(config: *const CorsConfig, origin: []const u8) bool {
         for (config.allowed_origins) |allowed| {
             if (std.mem.eql(u8, allowed, "*")) {
@@ -139,7 +139,7 @@ pub const CorsMiddleware = struct {
         }
         return false;
     }
-    
+
     fn isMethodAllowed(config: *const CorsConfig, method: []const u8) bool {
         for (config.allowed_methods) |allowed| {
             if (std.mem.eql(u8, allowed, method)) {
@@ -148,10 +148,10 @@ pub const CorsMiddleware = struct {
         }
         return false;
     }
-    
+
     fn areHeadersAllowed(config: *const CorsConfig, headers_str: []const u8) bool {
         if (headers_str.len == 0) return true;
-        
+
         var headers = std.mem.splitSequence(u8, headers_str, ",");
         while (headers.next()) |header| {
             const trimmed = std.mem.trim(u8, header, " \t");
@@ -168,7 +168,7 @@ pub const CorsMiddleware = struct {
         }
         return true;
     }
-    
+
     pub fn preflightMwFn(_: *const CorsMiddleware) middleware.PreRequestMiddlewareFn {
         const Self = @This();
         return struct {
@@ -182,7 +182,7 @@ pub const CorsMiddleware = struct {
 test "CorsMiddleware init" {
     const cors = CorsMiddleware.init(.{
         .allowed_origins = &[_][]const u8{"http://localhost:3000"},
-        .allowed_methods = &[_][]const u8{"GET", "POST"},
+        .allowed_methods = &[_][]const u8{ "GET", "POST" },
         .max_age = 3600,
     });
     try std.testing.expectEqualStrings(cors.config.allowed_origins[0], "http://localhost:3000");
@@ -191,9 +191,9 @@ test "CorsMiddleware init" {
 
 test "CorsMiddleware isOriginAllowed" {
     var cors = CorsMiddleware.init(.{
-        .allowed_origins = &[_][]const u8{"http://localhost:3000", "https://example.com"},
+        .allowed_origins = &[_][]const u8{ "http://localhost:3000", "https://example.com" },
     });
-    
+
     try std.testing.expect(cors.isOriginAllowed("http://localhost:3000"));
     try std.testing.expect(cors.isOriginAllowed("https://example.com"));
     try std.testing.expect(!cors.isOriginAllowed("http://evil.com"));
@@ -203,16 +203,16 @@ test "CorsMiddleware isOriginAllowed wildcard" {
     var cors = CorsMiddleware.init(.{
         .allowed_origins = &[_][]const u8{"*"},
     });
-    
+
     try std.testing.expect(cors.isOriginAllowed("http://localhost:3000"));
     try std.testing.expect(cors.isOriginAllowed("https://example.com"));
 }
 
 test "CorsMiddleware isMethodAllowed" {
     var cors = CorsMiddleware.init(.{
-        .allowed_methods = &[_][]const u8{"GET", "POST"},
+        .allowed_methods = &[_][]const u8{ "GET", "POST" },
     });
-    
+
     try std.testing.expect(cors.isMethodAllowed("GET"));
     try std.testing.expect(cors.isMethodAllowed("POST"));
     try std.testing.expect(!cors.isMethodAllowed("DELETE"));
@@ -220,11 +220,10 @@ test "CorsMiddleware isMethodAllowed" {
 
 test "CorsMiddleware areHeadersAllowed" {
     var cors = CorsMiddleware.init(.{
-        .allowed_headers = &[_][]const u8{"Content-Type", "Authorization"},
+        .allowed_headers = &[_][]const u8{ "Content-Type", "Authorization" },
     });
-    
+
     try std.testing.expect(cors.areHeadersAllowed("Content-Type"));
     try std.testing.expect(cors.areHeadersAllowed("Content-Type, Authorization"));
     try std.testing.expect(!cors.areHeadersAllowed("X-Custom-Header"));
 }
-

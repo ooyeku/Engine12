@@ -1,5 +1,5 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
+const Request = @import("../http/request.zig").Request;
 
 pub const Param = struct {
     value: []const u8,
@@ -178,8 +178,6 @@ pub const RoutePattern = struct {
     }
 };
 
-
-
 test "RoutePattern parse with parameter" {
     const allocator = std.testing.allocator;
     var pattern = try RoutePattern.parse(allocator, "/todos/:id");
@@ -191,8 +189,6 @@ test "RoutePattern parse with parameter" {
     try std.testing.expectEqual(pattern.param_names.len, 1);
     try std.testing.expectEqualStrings(pattern.param_names[0], "id");
 }
-
-
 
 test "RoutePattern match literal path" {
     const allocator = std.testing.allocator;
@@ -206,8 +202,6 @@ test "RoutePattern match literal path" {
         try std.testing.expect(p.count() == 0);
     }
 }
-
-
 
 test "RoutePattern match fails on wrong path" {
     const allocator = std.testing.allocator;
@@ -309,8 +303,6 @@ test "RoutePattern parse pattern with trailing slash" {
     try std.testing.expectEqualStrings(pattern.segments[0].literal, "todos");
 }
 
-
-
 test "RoutePattern parse pattern with consecutive slashes" {
     const allocator = std.testing.allocator;
     var pattern = try RoutePattern.parse(allocator, "/todos//:id");
@@ -332,8 +324,6 @@ test "RoutePattern match empty path" {
     }
 }
 
-
-
 test "RoutePattern match fails on missing segments" {
     const allocator = std.testing.allocator;
     var pattern = try RoutePattern.parse(allocator, "/todos/:id");
@@ -343,15 +333,11 @@ test "RoutePattern match fails on missing segments" {
     try std.testing.expect(params == null);
 }
 
-
-
 test "RoutePattern deinit cleans up memory" {
     const allocator = std.testing.allocator;
     var pattern = try RoutePattern.parse(allocator, "/api/users/:userId/posts/:postId");
 
-
     pattern.deinit(allocator);
-
 
     var pattern2 = try RoutePattern.parse(allocator, "/test");
     pattern2.deinit(allocator);

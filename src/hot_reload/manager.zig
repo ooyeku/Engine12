@@ -1,7 +1,7 @@
 const std = @import("std");
 const watcher = @import("watcher.zig");
 const runtime_template = @import("runtime_template.zig");
-const fileserver = @import("../fileserver.zig");
+const fileserver = @import("../http/fileserver.zig");
 const websocket_room = @import("../websocket/room.zig");
 
 pub const HotReloadManager = struct {

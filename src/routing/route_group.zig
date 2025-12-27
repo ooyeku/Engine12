@@ -1,7 +1,7 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
-const middleware_chain = @import("middleware.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const middleware_chain = @import("../middleware/middleware.zig");
 
 pub const RouteGroup = struct {
     const Self = @This();
@@ -53,18 +53,18 @@ pub const RouteGroup = struct {
     }
 
     pub fn get(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        const original_middleware = @import("engine12.zig").global_middleware;
-        @import("engine12.zig").global_middleware = &self.middleware;
-        defer @import("engine12.zig").global_middleware = original_middleware;
+        const original_middleware = @import("../engine12.zig").global_middleware;
+        @import("../engine12.zig").global_middleware = &self.middleware;
+        defer @import("../engine12.zig").global_middleware = original_middleware;
 
         const full_path = self.buildFullPath(path);
         try self.register_get(self.engine_ptr, full_path, handler);
     }
 
     pub fn post(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        const original_middleware = @import("engine12.zig").global_middleware;
-        @import("engine12.zig").global_middleware = &self.middleware;
-        defer @import("engine12.zig").global_middleware = original_middleware;
+        const original_middleware = @import("../engine12.zig").global_middleware;
+        @import("../engine12.zig").global_middleware = &self.middleware;
+        defer @import("../engine12.zig").global_middleware = original_middleware;
         const full_path = self.buildFullPath(path);
         try self.register_post(self.engine_ptr, full_path, handler);
     }
@@ -74,17 +74,17 @@ pub const RouteGroup = struct {
     }
 
     pub fn put(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        const original_middleware = @import("engine12.zig").global_middleware;
-        @import("engine12.zig").global_middleware = &self.middleware;
-        defer @import("engine12.zig").global_middleware = original_middleware;
+        const original_middleware = @import("../engine12.zig").global_middleware;
+        @import("../engine12.zig").global_middleware = &self.middleware;
+        defer @import("../engine12.zig").global_middleware = original_middleware;
         const full_path = self.buildFullPath(path);
         try self.register_put(self.engine_ptr, full_path, handler);
     }
 
     pub fn delete(self: *Self, comptime path: []const u8, handler: anytype) !void {
-        const original_middleware = @import("engine12.zig").global_middleware;
-        @import("engine12.zig").global_middleware = &self.middleware;
-        defer @import("engine12.zig").global_middleware = original_middleware;
+        const original_middleware = @import("../engine12.zig").global_middleware;
+        @import("../engine12.zig").global_middleware = &self.middleware;
+        defer @import("../engine12.zig").global_middleware = original_middleware;
         const full_path = self.buildFullPath(path);
         try self.register_delete(self.engine_ptr, full_path, handler);
     }

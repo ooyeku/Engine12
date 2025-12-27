@@ -1,7 +1,7 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
-const middleware_chain = @import("middleware.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const middleware_chain = @import("../middleware/middleware.zig");
 
 pub const CacheError = error{
     InvalidArgument,
@@ -70,7 +70,7 @@ pub const ResponseCache = struct {
     default_ttl_ms: u64,
 
     max_entries: usize = 0,
-    
+
     insertion_order: std.ArrayListUnmanaged([]const u8) = .{},
 
     mutex: std.Thread.Mutex = .{},
@@ -99,11 +99,11 @@ pub const ResponseCache = struct {
 
     fn evictOldest(self: *ResponseCache) void {
         if (self.insertion_order.items.len == 0) return;
-        
+
         const key = self.insertion_order.items[0];
-        
+
         _ = self.insertion_order.orderedRemove(0);
-        
+
         if (self.entries.fetchRemove(key)) |removed| {
             var mutable_value = removed.value;
             mutable_value.deinit(self.allocator);
@@ -159,7 +159,7 @@ pub const ResponseCache = struct {
                     break;
                 }
             }
-            
+
             var mutable_value = old_entry.value;
             mutable_value.deinit(self.allocator);
             self.allocator.free(old_entry.key);
@@ -179,7 +179,7 @@ pub const ResponseCache = struct {
         }
 
         try self.entries.put(key_copy, entry);
-        
+
         try self.insertion_order.append(self.allocator, key_copy);
     }
 
@@ -190,7 +190,7 @@ pub const ResponseCache = struct {
 
         self.mutex.lock();
         defer self.mutex.unlock();
-        
+
         if (self.entries.fetchRemove(key)) |entry| {
             for (self.insertion_order.items, 0..) |k, i| {
                 if (std.mem.eql(u8, k, entry.key)) {
@@ -198,7 +198,7 @@ pub const ResponseCache = struct {
                     break;
                 }
             }
-            
+
             var mutable_value = entry.value;
             mutable_value.deinit(self.allocator);
             self.allocator.free(entry.key);
@@ -270,7 +270,7 @@ pub const ResponseCache = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.entries.deinit();
-        
+
         self.insertion_order.deinit(self.allocator);
     }
 };
@@ -290,7 +290,7 @@ pub fn createCachingMiddleware(cache_ptr: *ResponseCache, comptime route: []cons
     return struct {
         fn mw(req: *Request) middleware_chain.MiddlewareResult {
             const cache_key = req.path();
-            const global_cache = @import("engine12.zig").global_cache orelse return .proceed;
+            const global_cache = @import("../engine12.zig").global_cache orelse return .proceed;
             const entry = global_cache.get(cache_key);
 
             if (entry) |cached| {

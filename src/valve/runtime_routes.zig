@@ -1,7 +1,7 @@
 const std = @import("std");
-const Request = @import("../request.zig").Request;
-const Response = @import("../response.zig").Response;
-const router = @import("../router.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const router = @import("../routing/router.zig");
 const types = @import("../types.zig");
 
 pub const RouteTrieNode = struct {

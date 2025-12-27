@@ -4,9 +4,9 @@ const Valve = valve.Valve;
 const ValveCapability = valve.ValveCapability;
 const context = @import("../context.zig");
 const ValveContext = context.ValveContext;
-const Request = @import("../../request.zig").Request;
-const Response = @import("../../response.zig").Response;
-const middleware = @import("../../middleware.zig");
+const Request = @import("../../http/request.zig").Request;
+const Response = @import("../../http/response.zig").Response;
+const middleware = @import("../../middleware/middleware.zig");
 const orm = @import("../../orm/orm.zig");
 const ORM = orm.ORM;
 const Model = orm.Model;
@@ -16,7 +16,7 @@ const SqlEscape = orm.SqlEscape;
 const jwt = @import("jwt.zig");
 const Claims = jwt.Claims;
 const password = @import("password.zig");
-const json_module = @import("../../json.zig");
+const json_module = @import("../../data/json.zig");
 
 pub const User = struct {
     id: i64,
@@ -88,7 +88,6 @@ pub const BasicAuthValve = struct {
         registry_mutex.lock();
         defer registry_mutex.unlock();
         global_registry = self;
-
 
         try ctx.registerMiddleware(&Self.authMiddleware);
     }

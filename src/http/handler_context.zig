@@ -1,12 +1,12 @@
 const std = @import("std");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
-const ORM = @import("orm/orm.zig").ORM;
-const Logger = @import("dev_tools.zig").Logger;
-const LogLevel = @import("dev_tools.zig").LogLevel;
-const BasicAuthValve = @import("valve/builtin/basic_auth.zig").BasicAuthValve;
-const AuthUser = @import("rest_api.zig").AuthUser;
-const engine12_mod = @import("engine12.zig");
+const ORM = @import("../orm/orm.zig").ORM;
+const Logger = @import("../observability/dev_tools.zig").Logger;
+const LogLevel = @import("../observability/dev_tools.zig").LogLevel;
+const BasicAuthValve = @import("../valve/builtin/basic_auth.zig").BasicAuthValve;
+const AuthUser = @import("../routing/rest_api.zig").AuthUser;
+const engine12_mod = @import("../engine12.zig");
 
 const allocator = std.heap.page_allocator;
 
@@ -45,7 +45,7 @@ pub const HandlerCtx = struct {
             ctx.orm_instance = if (options.get_orm) |get_fn|
                 get_fn() catch return error.DatabaseNotInitialized
             else blk: {
-                const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
+                const DatabaseSingleton = @import("../orm/singleton.zig").DatabaseSingleton;
                 break :blk DatabaseSingleton.get() catch null;
             };
 
@@ -151,7 +151,7 @@ pub const HandlerCtx = struct {
             return orm_instance;
         }
 
-        const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
+        const DatabaseSingleton = @import("../orm/singleton.zig").DatabaseSingleton;
         const orm_instance = DatabaseSingleton.get() catch {
             return error.DatabaseNotInitialized;
         };
@@ -189,7 +189,7 @@ pub const HandlerCtx = struct {
         return std.fmt.allocPrint(self.request.arena.allocator(), pattern, .{user_id});
     }
 
-    pub fn cacheGet(self: *HandlerCtx, key: []const u8) !?*@import("cache.zig").CacheEntry {
+    pub fn cacheGet(self: *HandlerCtx, key: []const u8) !?*@import("../data/cache.zig").CacheEntry {
         return self.request.cacheGet(key);
     }
 

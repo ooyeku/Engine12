@@ -1,5 +1,5 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
+const Request = @import("../http/request.zig").Request;
 const Json = @import("json.zig").Json;
 
 pub const ParserError = error{
@@ -343,7 +343,6 @@ test "QueryParser parse with mixed encoding" {
     try std.testing.expectEqualStrings(params.get("encoded").?, "hello world");
     try std.testing.expectEqualStrings(params.get("plus").?, "test value");
 }
-
 
 test "QueryParser parse - duplicate keys memory leak prevention" {
     const allocator = std.testing.allocator;

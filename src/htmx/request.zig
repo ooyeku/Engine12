@@ -1,5 +1,5 @@
 const std = @import("std");
-const Request = @import("../request.zig").Request;
+const Request = @import("../http/request.zig").Request;
 
 pub const HtmxRequestInfo = struct {
     is_htmx: bool,
@@ -47,7 +47,6 @@ fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
     }
     return true;
 }
-
 
 pub fn isHtmxRequest(req: *const Request) bool {
     return req.header("HX-Request") != null;

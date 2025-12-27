@@ -1,5 +1,5 @@
 const std = @import("std");
-const Request = @import("../request.zig").Request;
+const Request = @import("../http/request.zig").Request;
 
 pub const Security = struct {
     pub fn validateRequest(req: *Request) !void {

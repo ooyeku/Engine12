@@ -1,6 +1,5 @@
 const std = @import("std");
-const Response = @import("../response.zig").Response;
-
+const Response = @import("../http/response.zig").Response;
 
 pub fn fragment(html: []const u8) Response {
     return Response.html(html).withHeader("X-HTMX-Fragment", "true");
@@ -81,7 +80,6 @@ pub fn withLocation(resp: Response, location_json: []const u8) Response {
 pub fn stopPolling() Response {
     return Response.text("").withStatus(286);
 }
-
 
 pub fn replaceWith(html: []const u8) Response {
     return fragment(html).withHeader("HX-Reswap", "outerHTML");

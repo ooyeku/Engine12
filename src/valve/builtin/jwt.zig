@@ -1,5 +1,5 @@
 const std = @import("std");
-const json_module = @import("../../json.zig");
+const json_module = @import("../../data/json.zig");
 
 pub const Claims = struct {
     user_id: i64,

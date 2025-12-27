@@ -1,7 +1,7 @@
 const std = @import("std");
-const types = @import("types.zig");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
+const types = @import("../types.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
 
 pub const HealthCheckResult = struct {
     status: types.HealthStatus,

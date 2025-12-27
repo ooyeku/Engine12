@@ -1,6 +1,6 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
+const Request = @import("http/request.zig").Request;
+const Response = @import("http/response.zig").Response;
 
 pub const Environment = enum {
     development,

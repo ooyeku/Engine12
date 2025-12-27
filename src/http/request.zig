@@ -1,7 +1,7 @@
 const std = @import("std");
 const ziggurat = @import("ziggurat");
-const router = @import("router.zig");
-const parsers = @import("parsers.zig");
+const router = @import("../routing/router.zig");
+const parsers = @import("../data/parsers.zig");
 
 var request_id_counter: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
@@ -57,7 +57,6 @@ pub const Request = struct {
         return self.inner.headers.get(name);
     }
 
-
     pub fn isHtmx(self: *const Request) bool {
         return self.header("HX-Request") != null;
     }
@@ -87,11 +86,10 @@ pub const Request = struct {
         return self.header("HX-Prompt");
     }
 
-    pub fn getFormParser(self: *Request) @import("htmx/form.zig").FormParser {
-        const htmx_form = @import("htmx/form.zig");
+    pub fn getFormParser(self: *Request) @import("../htmx/form.zig").FormParser {
+        const htmx_form = @import("../htmx/form.zig");
         return htmx_form.FormParser.init(self.body(), self.allocator());
     }
-
 
     pub fn queryParams(self: *Request) !std.StringHashMap([]const u8) {
         if (self._query_params) |*params| {
@@ -194,7 +192,7 @@ pub const Request = struct {
         return self.jsonBody(T) catch null;
     }
 
-    pub fn validateJson(self: *Request, comptime T: type, schema: *@import("validation.zig").ValidationSchema) (error{ValidationFailed} || @TypeOf(self.jsonBody(T)).Error)!T {
+    pub fn validateJson(self: *Request, comptime T: type, schema: *@import("../data/validation.zig").ValidationSchema) (error{ValidationFailed} || @TypeOf(self.jsonBody(T)).Error)!T {
         const parsed = try self.jsonBody(T);
 
         const validation_errors = try schema.validate();
@@ -363,7 +361,6 @@ pub const Request = struct {
         return self.context.get(key);
     }
 
-
     pub fn setTyped(self: *Request, comptime T: type, ptr: *T) !void {
         const key = comptime typeName(T);
         const addr = @intFromPtr(ptr);
@@ -476,12 +473,12 @@ pub const Request = struct {
         return self.get("request_id");
     }
 
-    pub fn cache(self: *Request) ?*@import("cache.zig").ResponseCache {
+    pub fn cache(self: *Request) ?*@import("../data/cache.zig").ResponseCache {
         _ = self;
-        return @import("engine12.zig").global_cache;
+        return @import("../engine12.zig").global_cache;
     }
 
-    pub fn cacheGet(self: *Request, key: []const u8) !?*@import("cache.zig").CacheEntry {
+    pub fn cacheGet(self: *Request, key: []const u8) !?*@import("../data/cache.zig").CacheEntry {
         const cache_instance = self.cache() orelse return null;
         return cache_instance.get(key);
     }
@@ -575,7 +572,6 @@ test "Request context set and get" {
     const missing = req.get("nonexistent");
     try std.testing.expect(missing == null);
 }
-
 
 test "Request param extraction" {
     var ziggurat_req = createTestZigguratRequest("/api/todos/123", .GET, "");
@@ -890,11 +886,11 @@ test "Request cache access methods" {
     var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
     defer req.deinit();
 
-    var response_cache = @import("cache.zig").ResponseCache.init(std.testing.allocator, 60000);
+    var response_cache = @import("../data/cache.zig").ResponseCache.init(std.testing.allocator, 60000);
     defer response_cache.deinit();
 
-    @import("engine12.zig").global_cache = &response_cache;
-    defer @import("engine12.zig").global_cache = null;
+    @import("../engine12.zig").global_cache = &response_cache;
+    defer @import("../engine12.zig").global_cache = null;
 
     const cache_instance = req.cache();
     try std.testing.expect(cache_instance != null);
@@ -918,7 +914,7 @@ test "Request cache methods return null when cache not configured" {
     var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
     defer req.deinit();
 
-    @import("engine12.zig").global_cache = null;
+    @import("../engine12.zig").global_cache = null;
 
     const cache_instance = req.cache();
     try std.testing.expect(cache_instance == null);

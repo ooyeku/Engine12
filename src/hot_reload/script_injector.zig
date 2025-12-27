@@ -1,5 +1,5 @@
 const std = @import("std");
-const Response = @import("../response.zig").Response;
+const Response = @import("../http/response.zig").Response;
 const manager_mod = @import("manager.zig");
 
 var hot_reload_manager_for_injector: ?*manager_mod.HotReloadManager = null;

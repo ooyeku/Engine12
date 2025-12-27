@@ -2,16 +2,16 @@ const std = @import("std");
 const ziggurat = @import("ziggurat");
 const engine12 = @import("../engine12.zig");
 const Engine12 = engine12.Engine12;
-const Request = @import("../request.zig").Request;
-const Response = @import("../response.zig").Response;
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
 const types = @import("../types.zig");
-const middleware_chain = @import("../middleware.zig");
-const cache = @import("../cache.zig");
-const metrics = @import("../metrics.zig");
+const middleware_chain = @import("../middleware/middleware.zig");
+const cache = @import("../data/cache.zig");
+const metrics = @import("../observability/metrics.zig");
 const orm = @import("../orm/orm.zig");
 const valve = @import("valve.zig");
 const ValveCapability = valve.ValveCapability;
-const handlers = @import("../handlers.zig");
+const handlers = @import("../http/handlers.zig");
 const wrapHandler = engine12.wrapHandler;
 const createRuntimeRouteWrapper = engine12.createRuntimeRouteWrapper;
 const websocket_mod = @import("../websocket/module.zig");
@@ -238,7 +238,6 @@ test "ValveContext registerRoute requires capability" {
 
     try std.testing.expectError(valve.ValveError.CapabilityRequired, ctx.registerRoute("GET", "/test", dummyHandler));
 }
-
 
 test "ValveContext registerMiddleware requires capability" {
     var app = try Engine12.initTesting();

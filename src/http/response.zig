@@ -1,7 +1,7 @@
 const std = @import("std");
 const ziggurat = @import("ziggurat");
-const json_module = @import("json.zig");
-const validation = @import("validation.zig");
+const json_module = @import("../data/json.zig");
+const validation = @import("../data/validation.zig");
 
 pub const ResponseBufferPool = struct {
     free_buffers: std.ArrayListUnmanaged([]u8),
@@ -580,7 +580,6 @@ pub const Response = struct {
         }
     }
 
-
     pub fn fragment(body: []const u8) Response {
         return Response.html(body).withHeader("X-HTMX-Fragment", "true");
     }
@@ -620,7 +619,6 @@ pub const Response = struct {
     pub fn htmxReswap(self: Response, style: []const u8) Response {
         return self.withHeader("HX-Reswap", style);
     }
-
 
     pub fn withCookie(self: Response, name: []const u8, value: []const u8, options: CookieOptions) Response {
         const persistent_name = dupePersistent(name) catch return self;

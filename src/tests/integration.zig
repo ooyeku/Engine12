@@ -1,18 +1,16 @@
 const std = @import("std");
 const engine12 = @import("../engine12.zig");
 const Engine12 = engine12.Engine12;
-const Request = @import("../request.zig").Request;
-const Response = @import("../response.zig").Response;
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
 const test_helpers = @import("test_helpers.zig").TestHelpers;
-
-
 
 test "integration: middleware chain execution" {
     var app = try test_helpers.createTestApp();
     defer app.deinit();
 
     const middleware = struct {
-        fn mw(req: *Request) @import("../middleware.zig").MiddlewareResult {
+        fn mw(req: *Request) @import("../middleware/middleware.zig").MiddlewareResult {
             _ = req;
             return .proceed;
         }
@@ -35,7 +33,6 @@ test "integration: request parameter parsing" {
     const id = try req.paramTyped(i64, "id");
     try std.testing.expectEqual(id, 123);
 }
-
 
 test "integration: JSON response creation" {
     const resp = Response.json("{\"test\":\"value\"}");

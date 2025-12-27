@@ -1,5 +1,5 @@
 const std = @import("std");
-const json = @import("../json.zig");
+const json = @import("../data/json.zig");
 const protocol = @import("protocol.zig");
 const server = @import("server.zig");
 

@@ -1,6 +1,6 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
 const middleware_chain = @import("middleware.zig");
 
 pub const RateLimitConfig = struct {
@@ -161,13 +161,13 @@ pub const RateLimiter = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.ip_limits.deinit();
-        
+
         var route_iterator = self.route_limits.iterator();
         while (route_iterator.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
         }
         self.route_limits.deinit();
-        
+
         self.route_configs.deinit();
     }
 };
@@ -177,7 +177,7 @@ pub fn createRateLimitMiddleware(limiter: *RateLimiter, route: []const u8) middl
     _ = route;
     return struct {
         fn mw(req: *Request) middleware_chain.MiddlewareResult {
-            const global_limiter = @import("engine12.zig").global_rate_limiter orelse return .proceed;
+            const global_limiter = @import("../engine12.zig").global_rate_limiter orelse return .proceed;
 
             const route_path = req.path();
 

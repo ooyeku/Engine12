@@ -1,7 +1,8 @@
 const std = @import("std");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
-const metrics = @import("metrics.zig");
+const metrics = @import("../observability/metrics.zig");
+const health_mod = @import("../observability/health.zig");
 
 pub fn handleDefaultRoot(request: *Request) Response {
     _ = request;
@@ -9,20 +10,17 @@ pub fn handleDefaultRoot(request: *Request) Response {
 }
 
 pub fn handleHealthEndpoint(request: *Request) Response {
-    const health_mod = @import("health.zig");
     return health_mod.handleHealth(request);
 }
 
 pub fn handleReadyEndpoint(request: *Request) Response {
-    const health_mod = @import("health.zig");
     return health_mod.handleReady(request);
 }
 
 pub fn handleMetricsEndpoint(request: *Request) Response {
     _ = request;
-    const metrics_collector = @import("engine12.zig").global_metrics;
 
-    if (metrics_collector) |mc| {
+    if (@import("../engine12.zig").global_metrics) |mc| {
         const prometheus_output = mc.getPrometheusMetrics() catch {
             return Response.json("{\"error\":\"Failed to generate metrics\"}").withStatus(500);
         };
@@ -71,4 +69,3 @@ test "handleHealthEndpoint returns correct JSON" {
     const resp = handleHealthEndpoint(&req);
     _ = resp;
 }
-

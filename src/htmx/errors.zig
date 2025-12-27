@@ -1,5 +1,5 @@
 const std = @import("std");
-const Response = @import("../response.zig").Response;
+const Response = @import("../http/response.zig").Response;
 
 pub fn errorFragment(message: []const u8) Response {
     var buf: [512]u8 = undefined;
@@ -134,4 +134,3 @@ test "notFoundFragment" {
     try std.testing.expect(std.mem.indexOf(u8, resp.getBody(), "Todo") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.getBody(), "not found") != null);
 }
-

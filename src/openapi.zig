@@ -1,5 +1,5 @@
 const std = @import("std");
-const json_mod = @import("json.zig");
+const json_mod = @import("data/json.zig");
 const model_utils = @import("orm/model.zig");
 
 pub const OpenApiInfo = struct {
@@ -370,8 +370,7 @@ pub const OpenAPIGenerator = struct {
                 }
                 const safe_name = try self.allocator.dupe(u8, safe_name_buf[0..safe_name_len]);
 
-                if (self.doc.components.schemas.contains(safe_name)) {
-                }
+                if (self.doc.components.schemas.contains(safe_name)) {}
 
                 var properties = std.StringHashMapUnmanaged(OpenApiSchema){};
                 var required = std.ArrayListUnmanaged([]const u8){};

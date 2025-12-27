@@ -1,6 +1,6 @@
 const std = @import("std");
-const json_module = @import("../json.zig");
-const Response = @import("../response.zig").Response;
+const json_module = @import("../data/json.zig");
+const Response = @import("../http/response.zig").Response;
 const model_utils = @import("model.zig");
 const ORM = @import("orm.zig").ORM;
 

@@ -112,7 +112,7 @@ pub const WebSocketRoom = struct {
     }
 
     pub fn broadcastJson(self: *WebSocketRoom, comptime T: type, value: T) !void {
-        const json = @import("../json.zig");
+        const json = @import("../data/json.zig");
         const json_str = try json.Json.serialize(T, value, self.allocator);
         defer self.allocator.free(json_str);
 

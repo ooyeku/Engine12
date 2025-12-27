@@ -1,5 +1,5 @@
 const std = @import("std");
-const Response = @import("../response.zig").Response;
+const Response = @import("../http/response.zig").Response;
 
 pub const FormParser = struct {
     body: []const u8,

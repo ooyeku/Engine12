@@ -1,7 +1,7 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
-const types = @import("types.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const types = @import("../types.zig");
 
 pub const RouteInfo = struct {
     method: []const u8,
@@ -302,7 +302,7 @@ pub const LogEntry = struct {
         var output = std.ArrayListUnmanaged(u8){};
         const writer = output.writer(allocator);
 
-        const Time = @import("utils/time.zig").Time;
+        const Time = @import("../utils/time.zig").Time;
         const formatted_timestamp = Time.formatTimestamp(self.timestamp, allocator) catch {
             try writer.print("[{d}] ", .{self.timestamp});
             const level_str = switch (self.level) {
@@ -506,7 +506,6 @@ pub const Logger = struct {
         _ = try entry.field("error", err_name);
         entry.log();
     }
-
 
     pub fn debugf(self: *Logger, comptime fmt: []const u8, args: anytype) void {
         if (LogLevel.debug.toInt() < self.min_level.toInt()) return;

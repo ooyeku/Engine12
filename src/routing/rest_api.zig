@@ -1,18 +1,18 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
-const Response = @import("response.zig").Response;
-const orm_mod = @import("orm/orm.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const orm_mod = @import("../orm/orm.zig");
 const ORM = orm_mod.ORM;
-const QueryBuilder = @import("orm/query_builder.zig").QueryBuilder;
-const QueryResult = @import("orm/row.zig").QueryResult;
-const validation = @import("validation.zig");
+const QueryBuilder = @import("../orm/query_builder.zig").QueryBuilder;
+const QueryResult = @import("../orm/row.zig").QueryResult;
+const validation = @import("../data/validation.zig");
 const ValidationErrors = validation.ValidationErrors;
-const pagination_mod = @import("pagination.zig");
+const pagination_mod = @import("../http/pagination.zig");
 const Pagination = pagination_mod.Pagination;
 const PaginationMeta = pagination_mod.PaginationMeta;
-const json_mod = @import("json.zig");
-const model_utils = @import("orm/model.zig");
-const openapi = @import("openapi.zig");
+const json_mod = @import("../data/json.zig");
+const model_utils = @import("../orm/model.zig");
+const openapi = @import("../openapi.zig");
 
 const allocator = std.heap.page_allocator;
 
@@ -793,7 +793,7 @@ fn initRestApiConfigs() void {
 }
 
 pub fn restApi(
-    app: *@import("engine12.zig").Engine12,
+    app: *@import("../engine12.zig").Engine12,
     comptime prefix: []const u8,
     comptime Model: type,
     config: RestApiConfig(Model),
@@ -804,8 +804,7 @@ pub fn restApi(
         generator.registerResource(prefix, Model) catch |err| {
             std.debug.print("Failed to register OpenAPI resource: {}\n", .{err});
         };
-    } else |_| {
-    }
+    } else |_| {}
 
     const config_ptr = try allocator.create(RestApiConfig(Model));
     config_ptr.* = config;

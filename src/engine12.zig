@@ -4,19 +4,19 @@ const net = std.net;
 const vigil = @import("vigil");
 const ziggurat = @import("ziggurat");
 const types = @import("types.zig");
-const handlers = @import("handlers.zig");
-const fileserver = @import("fileserver.zig");
-const Request = @import("request.zig").Request;
-const response_mod = @import("response.zig");
+const handlers = @import("http/handlers.zig");
+const fileserver = @import("http/fileserver.zig");
+const Request = @import("http/request.zig").Request;
+const response_mod = @import("http/response.zig");
 const Response = response_mod.Response;
-const router = @import("router.zig");
-const middleware_chain = @import("middleware.zig");
-const route_group = @import("route_group.zig");
+const router = @import("routing/router.zig");
+const middleware_chain = @import("middleware/middleware.zig");
+const route_group = @import("routing/route_group.zig");
 const error_handler = @import("error_handler.zig");
-const metrics = @import("metrics.zig");
-const rate_limit = @import("rate_limit.zig");
-const cache = @import("cache.zig");
-const dev_tools = @import("dev_tools.zig");
+const metrics = @import("observability/metrics.zig");
+const rate_limit = @import("middleware/rate_limit.zig");
+const cache = @import("data/cache.zig");
+const dev_tools = @import("observability/dev_tools.zig");
 const valve_registry_mod = @import("valve/registry.zig");
 const valve_mod = @import("valve/valve.zig");
 const runtime_routes_mod = @import("valve/runtime_routes.zig");
@@ -25,9 +25,9 @@ const websocket_mod = @import("websocket/module.zig");
 const hot_reload_mod = @import("hot_reload/module.zig");
 const script_injector_mod = @import("hot_reload/script_injector.zig");
 const htmx_mod = @import("htmx/module.zig");
-const rest_api_mod = @import("rest_api.zig");
+const rest_api_mod = @import("routing/rest_api.zig");
 const openapi = @import("openapi.zig");
-const validation = @import("validation.zig");
+const validation = @import("data/validation.zig");
 const shutdown_utils = @import("utils/shutdown.zig");
 const builtin = @import("builtin");
 
@@ -1201,8 +1201,8 @@ pub const Engine12 = struct {
         self.logger = logger;
     }
 
-    pub fn enableRequestLogging(self: *Engine12, config: ?@import("logging_middleware.zig").LoggingConfig) !void {
-        const logging_middleware_mod = @import("logging_middleware.zig");
+    pub fn enableRequestLogging(self: *Engine12, config: ?@import("middleware/logging_middleware.zig").LoggingConfig) !void {
+        const logging_middleware_mod = @import("middleware/logging_middleware.zig");
         const default_config = logging_middleware_mod.LoggingConfig{};
         const logging_config = config orelse default_config;
 
