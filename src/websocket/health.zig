@@ -481,3 +481,321 @@ test "HealthMetrics recording" {
     try std.testing.expectEqual(@as(u64, 1), metrics.frames_sent);
     try std.testing.expectEqual(@as(u64, 2), metrics.frames_received);
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "HealthStatus enum values" {
+    try std.testing.expect(HealthStatus.healthy != HealthStatus.degraded);
+    try std.testing.expect(HealthStatus.degraded != HealthStatus.unhealthy);
+    try std.testing.expect(HealthStatus.unhealthy != HealthStatus.unknown);
+}
+
+test "HealthConfig default values" {
+    const config = HealthConfig{};
+
+    try std.testing.expectEqual(@as(u32, 30000), config.ping_interval_ms);
+    try std.testing.expectEqual(@as(u32, 10000), config.pong_timeout_ms);
+    try std.testing.expectEqual(@as(u8, 3), config.max_ping_failures);
+    try std.testing.expectEqual(@as(u32, 1000), config.degraded_latency_threshold_ms);
+    try std.testing.expectEqual(@as(usize, 10), config.latency_sample_count);
+}
+
+test "HealthMonitor disabled ping" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{
+        .ping_interval_ms = 0, // Disabled
+    });
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+
+    // Should never need to ping when disabled
+    try std.testing.expect(!monitor.shouldPing());
+
+    // Timeout check should also return false when disabled
+    try std.testing.expect(!monitor.checkPingTimeout());
+}
+
+test "HealthMonitor getUptime" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    // Before connection, uptime should be 0
+    try std.testing.expectEqual(@as(i64, 0), monitor.getUptime());
+
+    monitor.connectionEstablished();
+
+    // After connection, uptime should be >= 0
+    try std.testing.expect(monitor.getUptime() >= 0);
+}
+
+test "HealthMonitor reset" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+    monitor.recordBytesSent(1000);
+    monitor.recordFrameSent();
+
+    const metrics_before = monitor.getMetrics();
+    try std.testing.expect(metrics_before.bytes_sent > 0);
+    try std.testing.expect(metrics_before.connected_at > 0);
+
+    monitor.reset();
+
+    const metrics_after = monitor.getMetrics();
+    try std.testing.expectEqual(@as(u64, 0), metrics_after.bytes_sent);
+    try std.testing.expectEqual(@as(i64, 0), metrics_after.connected_at);
+    try std.testing.expectEqual(@as(u64, 0), metrics_after.frames_sent);
+}
+
+test "HealthMonitor cumulative byte tracking" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    monitor.recordBytesSent(100);
+    monitor.recordBytesSent(200);
+    monitor.recordBytesSent(300);
+
+    monitor.recordBytesReceived(50);
+    monitor.recordBytesReceived(150);
+
+    const metrics = monitor.getMetrics();
+    try std.testing.expectEqual(@as(u64, 600), metrics.bytes_sent);
+    try std.testing.expectEqual(@as(u64, 200), metrics.bytes_received);
+}
+
+test "HealthMonitor cumulative frame tracking" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    for (0..10) |_| {
+        monitor.recordFrameSent();
+    }
+
+    for (0..5) |_| {
+        monitor.recordFrameReceived();
+    }
+
+    const metrics = monitor.getMetrics();
+    try std.testing.expectEqual(@as(u64, 10), metrics.frames_sent);
+    try std.testing.expectEqual(@as(u64, 5), metrics.frames_received);
+}
+
+test "HealthMonitor unhealthy after max failures" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{
+        .ping_interval_ms = 100,
+        .pong_timeout_ms = 10,
+        .max_ping_failures = 2,
+    });
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+    try std.testing.expectEqual(HealthStatus.healthy, monitor.getStatus());
+
+    // Simulate first failure
+    monitor.mutex.lock();
+    monitor.metrics.ping_failures = 1;
+    monitor.mutex.unlock();
+    try std.testing.expectEqual(HealthStatus.degraded, monitor.getStatus());
+
+    // Simulate second failure (at max)
+    monitor.mutex.lock();
+    monitor.metrics.ping_failures = 2;
+    monitor.mutex.unlock();
+    try std.testing.expectEqual(HealthStatus.unhealthy, monitor.getStatus());
+
+    // Simulate more failures (above max)
+    monitor.mutex.lock();
+    monitor.metrics.ping_failures = 5;
+    monitor.mutex.unlock();
+    try std.testing.expectEqual(HealthStatus.unhealthy, monitor.getStatus());
+}
+
+test "HealthMonitor degraded with high latency" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{
+        .degraded_latency_threshold_ms = 100,
+    });
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+
+    // Simulate high latency
+    monitor.mutex.lock();
+    monitor.metrics.avg_latency_ms = 150;
+    monitor.mutex.unlock();
+
+    try std.testing.expectEqual(HealthStatus.degraded, monitor.getStatus());
+}
+
+test "HealthMonitor preparePing returns unique data" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    const ping1 = try monitor.preparePing();
+    _ = ping1;
+
+    // Prepare another ping (this should replace the previous pending ping data)
+    const ping2 = try monitor.preparePing();
+    _ = ping2;
+
+    // Both should have been prepared
+    const metrics = monitor.getMetrics();
+    try std.testing.expectEqual(@as(u64, 2), metrics.total_pings_sent);
+}
+
+test "PoolHealthAggregator empty pool" {
+    const aggregator = PoolHealthAggregator.init();
+
+    try std.testing.expectEqual(@as(usize, 0), aggregator.total_connections);
+    try std.testing.expectEqual(HealthStatus.unknown, aggregator.getOverallStatus());
+}
+
+test "PoolHealthAggregator all healthy" {
+    var aggregator = PoolHealthAggregator.init();
+
+    aggregator.total_connections = 5;
+    aggregator.healthy_connections = 5;
+    aggregator.degraded_connections = 0;
+    aggregator.unhealthy_connections = 0;
+
+    try std.testing.expectEqual(HealthStatus.healthy, aggregator.getOverallStatus());
+}
+
+test "PoolHealthAggregator some unhealthy" {
+    var aggregator = PoolHealthAggregator.init();
+
+    aggregator.total_connections = 5;
+    aggregator.healthy_connections = 3;
+    aggregator.degraded_connections = 1;
+    aggregator.unhealthy_connections = 1;
+
+    try std.testing.expectEqual(HealthStatus.degraded, aggregator.getOverallStatus());
+}
+
+test "PoolHealthAggregator all unhealthy" {
+    var aggregator = PoolHealthAggregator.init();
+
+    aggregator.total_connections = 3;
+    aggregator.healthy_connections = 0;
+    aggregator.degraded_connections = 0;
+    aggregator.unhealthy_connections = 3;
+
+    try std.testing.expectEqual(HealthStatus.unhealthy, aggregator.getOverallStatus());
+}
+
+test "PoolHealthAggregator majority degraded" {
+    var aggregator = PoolHealthAggregator.init();
+
+    aggregator.total_connections = 4;
+    aggregator.healthy_connections = 1;
+    aggregator.degraded_connections = 3; // > 50%
+    aggregator.unhealthy_connections = 0;
+
+    try std.testing.expectEqual(HealthStatus.degraded, aggregator.getOverallStatus());
+}
+
+test "PoolHealthAggregator tracks bytes" {
+    var aggregator = PoolHealthAggregator.init();
+
+    aggregator.total_bytes_sent = 1000;
+    aggregator.total_bytes_received = 2000;
+
+    try std.testing.expectEqual(@as(u64, 1000), aggregator.total_bytes_sent);
+    try std.testing.expectEqual(@as(u64, 2000), aggregator.total_bytes_received);
+}
+
+test "HealthMetrics default values" {
+    const metrics = HealthMetrics{};
+
+    try std.testing.expectEqual(@as(i64, 0), metrics.last_ping_sent);
+    try std.testing.expectEqual(@as(i64, 0), metrics.last_pong_received);
+    try std.testing.expectEqual(@as(u32, 0), metrics.latency_ms);
+    try std.testing.expectEqual(@as(u32, 0), metrics.avg_latency_ms);
+    try std.testing.expectEqual(@as(u8, 0), metrics.ping_failures);
+    try std.testing.expectEqual(@as(u64, 0), metrics.total_pings_sent);
+    try std.testing.expectEqual(@as(u64, 0), metrics.total_pongs_received);
+    try std.testing.expectEqual(@as(i64, 0), metrics.connected_at);
+    try std.testing.expectEqual(@as(u64, 0), metrics.bytes_sent);
+    try std.testing.expectEqual(@as(u64, 0), metrics.bytes_received);
+    try std.testing.expectEqual(@as(u64, 0), metrics.frames_sent);
+    try std.testing.expectEqual(@as(u64, 0), metrics.frames_received);
+}
+
+test "HealthMonitor recordPong clears pending ping" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+
+    // Prepare ping
+    _ = try monitor.preparePing();
+    try std.testing.expect(monitor.pending_ping_data != null);
+
+    // Record matching pong
+    if (monitor.pending_ping_data) |data| {
+        const data_copy = try allocator.dupe(u8, data);
+        defer allocator.free(data_copy);
+        monitor.recordPong(data_copy);
+    }
+
+    // Pending ping should be cleared
+    try std.testing.expect(monitor.pending_ping_data == null);
+}
+
+test "HealthMonitor recordPong ignores non-matching data" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{});
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+
+    // Prepare ping
+    _ = try monitor.preparePing();
+    try std.testing.expect(monitor.pending_ping_data != null);
+
+    // Record non-matching pong
+    monitor.recordPong("wrong data");
+
+    // Pending ping should still be set (not cleared by wrong pong)
+    try std.testing.expect(monitor.pending_ping_data != null);
+
+    // But pong received count should still increment
+    const metrics = monitor.getMetrics();
+    try std.testing.expectEqual(@as(u64, 1), metrics.total_pongs_received);
+}
+
+test "HealthMonitor checkPingTimeout with no pending ping" {
+    const allocator = std.testing.allocator;
+
+    var monitor = HealthMonitor.init(allocator, .{
+        .ping_interval_ms = 100,
+        .pong_timeout_ms = 50,
+    });
+    defer monitor.deinit();
+
+    monitor.connectionEstablished();
+
+    // No pending ping, so timeout check should return false
+    try std.testing.expect(!monitor.checkPingTimeout());
+}

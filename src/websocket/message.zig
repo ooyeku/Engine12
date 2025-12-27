@@ -439,3 +439,495 @@ test "Message type checks" {
     try std.testing.expect(!binary_msg.isText());
     try std.testing.expect(binary_msg.isBinary());
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "Message asText and asBytes" {
+    const msg = Message{
+        .opcode = .text,
+        .data = "Hello, World!",
+        .was_fragmented = false,
+        .fragment_count = 1,
+    };
+
+    try std.testing.expectEqualStrings("Hello, World!", msg.asText());
+    try std.testing.expectEqualStrings("Hello, World!", msg.asBytes());
+}
+
+test "MessageAssembler binary single frame" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .binary,
+            .masked = false,
+            .payload_len = 4,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0xFF, 0xFE, 0x00, 0x01 },
+    };
+
+    const message = try assembler.processFrame(&frame);
+    try std.testing.expect(message != null);
+
+    if (message) |m| {
+        defer assembler.freeMessage(&m);
+        try std.testing.expect(m.isBinary());
+        try std.testing.expect(!m.was_fragmented);
+        try std.testing.expectEqual(@as(usize, 1), m.fragment_count);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0xFF, 0xFE, 0x00, 0x01 }, m.data);
+    }
+}
+
+test "MessageAssembler ignores control frames" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    // Ping frame
+    const ping_frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .ping,
+            .masked = false,
+            .payload_len = 4,
+            .mask_key = null,
+        },
+        .payload = "ping",
+    };
+
+    const result = try assembler.processFrame(&ping_frame);
+    try std.testing.expect(result == null);
+}
+
+test "MessageAssembler rejects new frame during fragmentation" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    _ = try assembler.processFrame(&frame1);
+
+    // Try to start a new message
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .binary,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "World",
+    };
+
+    try std.testing.expectError(error.NewFrameDuringFragmentation, assembler.processFrame(&frame2));
+}
+
+test "MessageAssembler message too large" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{
+        .max_message_size = 10,
+    });
+    defer assembler.deinit();
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 8,
+            .mask_key = null,
+        },
+        .payload = "12345678",
+    };
+    _ = try assembler.processFrame(&frame1);
+
+    // Continuation that would exceed limit
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "12345",
+    };
+
+    try std.testing.expectError(error.MessageTooLarge, assembler.processFrame(&frame2));
+}
+
+test "MessageAssembler isAssembling state" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    try std.testing.expect(!assembler.isAssembling());
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    _ = try assembler.processFrame(&frame1);
+
+    try std.testing.expect(assembler.isAssembling());
+}
+
+test "MessageAssembler currentFragmentCount" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), assembler.currentFragmentCount());
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    _ = try assembler.processFrame(&frame1);
+
+    try std.testing.expectEqual(@as(usize, 2), assembler.currentFragmentCount()); // 1 for start + 1 for append
+}
+
+test "MessageAssembler reset" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    _ = try assembler.processFrame(&frame1);
+
+    try std.testing.expect(assembler.isAssembling());
+
+    assembler.reset();
+
+    try std.testing.expect(!assembler.isAssembling());
+    try std.testing.expectEqual(@as(usize, 0), assembler.currentFragmentCount());
+}
+
+test "MessageBuilder close frame with code" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const frame = try builder.close(.normal, "goodbye");
+    defer builder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x88), frame[0]); // FIN=1, close opcode
+    // Close code 1000 = 0x03E8
+    try std.testing.expectEqual(@as(u8, 0x03), frame[2]);
+    try std.testing.expectEqual(@as(u8, 0xE8), frame[3]);
+}
+
+test "MessageBuilder close frame without reason" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const frame = try builder.close(.going_away, "");
+    defer builder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x88), frame[0]); // FIN=1, close opcode
+    try std.testing.expectEqual(@as(u8, 2), frame[1]); // Mask=0, Length=2
+}
+
+test "MessageBuilder ping and pong" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const ping = try builder.ping("test");
+    defer builder.free(ping);
+
+    try std.testing.expectEqual(@as(u8, 0x89), ping[0]); // FIN=1, ping opcode
+
+    const pong = try builder.pong("test");
+    defer builder.free(pong);
+
+    try std.testing.expectEqual(@as(u8, 0x8A), pong[0]); // FIN=1, pong opcode
+}
+
+test "MessageBuilder binary message" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const data = [_]u8{ 0x00, 0xFF, 0xAB, 0xCD };
+    const frame = try builder.binary(&data);
+    defer builder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x82), frame[0]); // FIN=1, binary opcode
+    try std.testing.expectEqualSlices(u8, &data, frame[2..]);
+}
+
+test "MessageBuilder fragmentedBinary" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const data = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A };
+    const frames = try builder.fragmentedBinary(&data, 4);
+    defer builder.freeFragmented(frames);
+
+    try std.testing.expectEqual(@as(usize, 3), frames.len);
+
+    // First frame: binary opcode, FIN=0
+    try std.testing.expectEqual(@as(u8, 0x02), frames[0][0]); // FIN=0, binary
+
+    // Middle frame: continuation, FIN=0
+    try std.testing.expectEqual(@as(u8, 0x00), frames[1][0]); // FIN=0, continuation
+
+    // Last frame: continuation, FIN=1
+    try std.testing.expectEqual(@as(u8, 0x80), frames[2][0]); // FIN=1, continuation
+}
+
+test "MessageBuilder fragmented rejects empty data" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const result = builder.fragmentedText("", 5);
+    try std.testing.expectError(error.InvalidInput, result);
+}
+
+test "MessageBuilder fragmented rejects zero fragment size" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    const result = builder.fragmentedText("Hello", 0);
+    try std.testing.expectError(error.InvalidInput, result);
+}
+
+test "MessageAssembler multiple fragments" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    // First fragment
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 3,
+            .mask_key = null,
+        },
+        .payload = "Hel",
+    };
+    try std.testing.expect((try assembler.processFrame(&frame1)) == null);
+
+    // Second fragment
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 2,
+            .mask_key = null,
+        },
+        .payload = "lo",
+    };
+    try std.testing.expect((try assembler.processFrame(&frame2)) == null);
+
+    // Third fragment
+    const frame3 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 1,
+            .mask_key = null,
+        },
+        .payload = " ",
+    };
+    try std.testing.expect((try assembler.processFrame(&frame3)) == null);
+
+    // Final fragment
+    const frame4 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 6,
+            .mask_key = null,
+        },
+        .payload = "World!",
+    };
+
+    const message = try assembler.processFrame(&frame4);
+    try std.testing.expect(message != null);
+
+    if (message) |m| {
+        defer assembler.freeMessage(&m);
+        try std.testing.expectEqualStrings("Hello World!", m.data);
+        try std.testing.expect(m.was_fragmented);
+        try std.testing.expectEqual(@as(usize, 5), m.fragment_count); // 1 start + 4 appends
+    }
+}
+
+test "MessageAssembler empty payload fragments" {
+    const allocator = std.testing.allocator;
+
+    var assembler = MessageAssembler.init(allocator, .{});
+    defer assembler.deinit();
+
+    // Start with empty payload
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+    try std.testing.expect((try assembler.processFrame(&frame1)) == null);
+
+    // Finish with content
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+
+    const message = try assembler.processFrame(&frame2);
+    try std.testing.expect(message != null);
+
+    if (message) |m| {
+        defer assembler.freeMessage(&m);
+        try std.testing.expectEqualStrings("Hello", m.data);
+    }
+}
+
+test "MessageBuilder fragmentedText single chunk" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    // Data smaller than fragment size
+    const frames = try builder.fragmentedText("Hi", 10);
+    defer builder.freeFragmented(frames);
+
+    // Should still create one frame
+    try std.testing.expectEqual(@as(usize, 1), frames.len);
+    // Single frame should have FIN=1
+    try std.testing.expectEqual(@as(u8, 0x81), frames[0][0]); // FIN=1, text
+}
+
+test "MessageBuilder fragmentedText exact size" {
+    const allocator = std.testing.allocator;
+
+    var builder = MessageBuilder.init(allocator);
+
+    // Data exactly divisible by fragment size
+    const frames = try builder.fragmentedText("HelloWorld", 5);
+    defer builder.freeFragmented(frames);
+
+    try std.testing.expectEqual(@as(usize, 2), frames.len);
+
+    // First frame
+    try std.testing.expectEqual(@as(u8, 0x01), frames[0][0]); // FIN=0, text
+
+    // Last frame
+    try std.testing.expectEqual(@as(u8, 0x80), frames[1][0]); // FIN=1, continuation
+}

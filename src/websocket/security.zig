@@ -474,3 +474,551 @@ test "validateOrigin allows all when not configured" {
     try std.testing.expect(validateOrigin("http://anything.com", null));
     try std.testing.expect(validateOrigin(null, null));
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "SecurityConfig default values" {
+    const config = SecurityConfig{};
+
+    try std.testing.expectEqual(@as(usize, 16 * 1024 * 1024), config.max_frame_size);
+    try std.testing.expectEqual(@as(usize, 64 * 1024 * 1024), config.max_message_size);
+    try std.testing.expectEqual(@as(usize, 1000), config.max_queued_frames);
+    try std.testing.expectEqual(@as(u32, 0), config.max_frames_per_second);
+    try std.testing.expectEqual(@as(u64, 0), config.max_bytes_per_second);
+    try std.testing.expect(config.require_masking);
+    try std.testing.expectEqual(@as(u32, 5000), config.handshake_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 60000), config.idle_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 30000), config.ping_interval_ms);
+    try std.testing.expectEqual(@as(u8, 3), config.max_ping_failures);
+    try std.testing.expect(config.allowed_origins == null);
+    try std.testing.expectEqual(@as(usize, 8192), config.max_header_size);
+    try std.testing.expect(config.validate_utf8);
+}
+
+test "RateLimiter allows unlimited when limits are 0" {
+    var limiter = RateLimiter.init(.{
+        .max_frames_per_second = 0,
+        .max_bytes_per_second = 0,
+    });
+
+    // Should allow any amount
+    for (0..100) |_| {
+        try std.testing.expect(limiter.allowFrame(10000));
+    }
+}
+
+test "RateLimiter reset clears counters" {
+    var limiter = RateLimiter.init(.{
+        .max_frames_per_second = 2,
+        .max_bytes_per_second = 100,
+    });
+
+    try std.testing.expect(limiter.allowFrame(50));
+    try std.testing.expect(limiter.allowFrame(50));
+    try std.testing.expect(!limiter.allowFrame(50)); // Blocked by byte limit
+
+    limiter.reset();
+
+    // After reset, should allow again
+    try std.testing.expect(limiter.allowFrame(50));
+}
+
+test "RateLimiter tracks both frame count and byte count" {
+    var limiter = RateLimiter.init(.{
+        .max_frames_per_second = 100,
+        .max_bytes_per_second = 50,
+    });
+
+    // Should be blocked by byte limit, not frame limit
+    try std.testing.expect(limiter.allowFrame(25));
+    try std.testing.expect(limiter.allowFrame(25));
+    try std.testing.expect(!limiter.allowFrame(1)); // Would exceed 50 bytes
+}
+
+test "FrameValidator allows unmasked frames when not required" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+
+    try validator.validate(&frame);
+}
+
+test "FrameValidator rejects frame exceeding max size" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+        .max_frame_size = 100,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 200,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+
+    try std.testing.expectError(ValidationError.FrameTooLarge, validator.validate(&frame));
+}
+
+test "FrameValidator rejects control frame larger than 125 bytes" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .ping,
+            .masked = false,
+            .payload_len = 126,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+
+    try std.testing.expectError(ValidationError.ControlFrameTooLarge, validator.validate(&frame));
+}
+
+test "FrameValidator accepts control frame with 125 bytes" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .pong,
+            .masked = false,
+            .payload_len = 125,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+
+    try validator.validate(&frame);
+}
+
+test "FrameValidator tracks fragmentation state" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    try validator.validate(&frame1);
+
+    // Continue with continuation
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "World",
+    };
+    try validator.validate(&frame2);
+
+    // Finish fragmented message
+    const frame3 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 1,
+            .mask_key = null,
+        },
+        .payload = "!",
+    };
+    try validator.validate(&frame3);
+}
+
+test "FrameValidator rejects unexpected continuation" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    // Continuation without prior fragment
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+
+    try std.testing.expectError(ValidationError.UnexpectedContinuation, validator.validate(&frame));
+}
+
+test "FrameValidator rejects new data frame during fragmentation" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    try validator.validate(&frame1);
+
+    // Try to start a new message (should fail)
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .binary,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "World",
+    };
+
+    try std.testing.expectError(ValidationError.NewFrameDuringFragmentation, validator.validate(&frame2));
+}
+
+test "FrameValidator validates close codes" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    // Valid close code 1000
+    const valid_frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 2,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0x03, 0xE8 }, // 1000
+    };
+    try validator.validate(&valid_frame);
+}
+
+test "FrameValidator rejects close code below 1000" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 2,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0x00, 0x64 }, // 100
+    };
+
+    try std.testing.expectError(ValidationError.InvalidCloseCode, validator.validate(&frame));
+}
+
+test "FrameValidator rejects single byte close payload" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 1,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{0x03},
+    };
+
+    try std.testing.expectError(ValidationError.InvalidClosePayload, validator.validate(&frame));
+}
+
+test "FrameValidator allows empty close payload" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+
+    try validator.validate(&frame);
+}
+
+test "FrameValidator rejects close with invalid UTF-8 reason" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0x03, 0xE8, 0xFF, 0xFE, 0x00 }, // 1000 + invalid UTF-8
+    };
+
+    try std.testing.expectError(ValidationError.InvalidUtf8, validator.validate(&frame));
+}
+
+test "FrameValidator reset clears fragmentation state" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    // Start fragmented message
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    try validator.validate(&frame1);
+
+    // Reset
+    validator.reset();
+
+    // Should now accept a new text frame
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "World",
+    };
+    try validator.validate(&frame2);
+}
+
+test "FrameValidator allows valid UTF-8 text frames" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+        .validate_utf8 = true,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 12,
+            .mask_key = null,
+        },
+        .payload = "Hello, 世界!",
+    };
+
+    try validator.validate(&frame);
+}
+
+test "FrameValidator skips UTF-8 validation when disabled" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+        .validate_utf8 = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 3,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0xFF, 0xFE, 0x00 }, // Invalid UTF-8
+    };
+
+    try validator.validate(&frame);
+}
+
+test "FrameValidator rejects reserved close codes 1016-2999" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+    });
+
+    const frame = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 2,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0x07, 0xD0 }, // 2000
+    };
+
+    try std.testing.expectError(ValidationError.ReservedCloseCode, validator.validate(&frame));
+}
+
+test "validateOrigin rejects non-matching origins" {
+    const allowed = [_][]const u8{ "http://example.com", "https://example.org" };
+
+    try std.testing.expect(!validateOrigin("http://evil.com", &allowed));
+    try std.testing.expect(!validateOrigin("https://example.net", &allowed));
+}
+
+test "validateOrigin with empty allowed list" {
+    const allowed = [_][]const u8{};
+
+    try std.testing.expect(!validateOrigin("http://anything.com", &allowed));
+}
+
+test "validateOrigin exact match required" {
+    const allowed = [_][]const u8{"http://example.com"};
+
+    try std.testing.expect(validateOrigin("http://example.com", &allowed));
+    try std.testing.expect(!validateOrigin("http://example.com:8080", &allowed));
+    try std.testing.expect(!validateOrigin("https://example.com", &allowed));
+    try std.testing.expect(!validateOrigin("http://www.example.com", &allowed));
+}
+
+test "FrameValidator message size limit across fragments" {
+    var validator = FrameValidator.init(.{
+        .require_masking = false,
+        .max_message_size = 10,
+    });
+
+    // First fragment (5 bytes)
+    const frame1 = protocol.Frame{
+        .header = .{
+            .fin = false,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 5,
+            .mask_key = null,
+        },
+        .payload = "Hello",
+    };
+    try validator.validate(&frame1);
+
+    // Second fragment (6 bytes - would exceed 10 byte limit)
+    const frame2 = protocol.Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .continuation,
+            .masked = false,
+            .payload_len = 6,
+            .mask_key = null,
+        },
+        .payload = " World",
+    };
+
+    try std.testing.expectError(ValidationError.MessageTooLarge, validator.validate(&frame2));
+}

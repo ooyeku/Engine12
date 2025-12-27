@@ -506,3 +506,153 @@ test "WebSocketClient init and deinit" {
     try std.testing.expect(!client.isConnected());
     try std.testing.expectEqual(WebSocketClient.State.disconnected, client.getState());
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "ClientBuilder full configuration" {
+    const allocator = std.testing.allocator;
+
+    var builder = ClientBuilder.init(allocator);
+    _ = builder
+        .host("example.com")
+        .port(443)
+        .path("/websocket")
+        .origin("https://example.com")
+        .protocol("chat")
+        .maxFrameSize(1024 * 1024)
+        .maxMessageSize(4 * 1024 * 1024)
+        .autoPong(false)
+        .autoReconnect(true)
+        .bufferSize(32768);
+
+    try std.testing.expectEqualStrings("example.com", builder.config.host);
+    try std.testing.expectEqual(@as(u16, 443), builder.config.port);
+    try std.testing.expectEqualStrings("/websocket", builder.config.path);
+    try std.testing.expectEqualStrings("https://example.com", builder.config.origin.?);
+    try std.testing.expectEqualStrings("chat", builder.config.protocol.?);
+    try std.testing.expectEqual(@as(usize, 1024 * 1024), builder.config.security.max_frame_size);
+    try std.testing.expectEqual(@as(usize, 4 * 1024 * 1024), builder.config.security.max_message_size);
+    try std.testing.expect(!builder.config.auto_pong);
+    try std.testing.expect(builder.config.auto_reconnect);
+    try std.testing.expectEqual(@as(usize, 32768), builder.config.buffer_size);
+}
+
+test "ClientBuilder can build client" {
+    const allocator = std.testing.allocator;
+
+    var builder = ClientBuilder.init(allocator);
+    _ = builder.host("localhost").port(9000);
+
+    var client = try builder.build();
+    defer client.deinit();
+
+    try std.testing.expectEqual(WebSocketClient.State.disconnected, client.getState());
+}
+
+test "ClientConfig default values" {
+    const config = WebSocketClient.ClientConfig{};
+
+    try std.testing.expectEqualStrings("127.0.0.1", config.host);
+    try std.testing.expectEqual(@as(u16, 80), config.port);
+    try std.testing.expectEqualStrings("/", config.path);
+    try std.testing.expect(config.origin == null);
+    try std.testing.expect(config.protocol == null);
+    try std.testing.expectEqual(@as(usize, 65536), config.buffer_size);
+    try std.testing.expect(config.auto_pong);
+    try std.testing.expect(!config.auto_reconnect);
+    try std.testing.expectEqual(@as(u32, 1000), config.reconnect_delay_ms);
+    try std.testing.expectEqual(@as(u32, 5), config.max_reconnect_attempts);
+}
+
+test "WebSocketClient State enum" {
+    try std.testing.expect(WebSocketClient.State.disconnected != WebSocketClient.State.connecting);
+    try std.testing.expect(WebSocketClient.State.connecting != WebSocketClient.State.connected);
+    try std.testing.expect(WebSocketClient.State.connected != WebSocketClient.State.closing);
+    try std.testing.expect(WebSocketClient.State.closing != WebSocketClient.State.closed);
+}
+
+test "WebSocketClient initial state" {
+    const allocator = std.testing.allocator;
+
+    var client = try WebSocketClient.init(allocator, .{});
+    defer client.deinit();
+
+    try std.testing.expectEqual(WebSocketClient.State.disconnected, client.state);
+    try std.testing.expect(client.socket == null);
+    try std.testing.expectEqual(@as(i64, 0), client.last_pong_time);
+    try std.testing.expectEqual(@as(u8, 0), client.ping_failures);
+}
+
+test "WebSocketClient disconnect from disconnected state" {
+    const allocator = std.testing.allocator;
+
+    var client = try WebSocketClient.init(allocator, .{});
+    defer client.deinit();
+
+    // Disconnect from already disconnected state should be safe
+    client.disconnect();
+    try std.testing.expectEqual(WebSocketClient.State.disconnected, client.getState());
+}
+
+test "WebSocketClient isConnected" {
+    const allocator = std.testing.allocator;
+
+    var client = try WebSocketClient.init(allocator, .{});
+    defer client.deinit();
+
+    try std.testing.expect(!client.isConnected());
+
+    // Simulate connected state (without actual connection)
+    client.state = .connected;
+    try std.testing.expect(client.isConnected());
+
+    client.state = .closing;
+    try std.testing.expect(!client.isConnected());
+
+    client.state = .closed;
+    try std.testing.expect(!client.isConnected());
+}
+
+test "ClientBuilder chaining returns same instance" {
+    const allocator = std.testing.allocator;
+
+    var builder = ClientBuilder.init(allocator);
+
+    const ptr1 = builder.host("a");
+    const ptr2 = ptr1.port(1);
+    const ptr3 = ptr2.path("/");
+
+    // All should be same instance
+    try std.testing.expect(ptr1 == ptr2);
+    try std.testing.expect(ptr2 == ptr3);
+}
+
+test "WebSocketClient with custom buffer size" {
+    const allocator = std.testing.allocator;
+
+    var client = try WebSocketClient.init(allocator, .{
+        .buffer_size = 1024,
+    });
+    defer client.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1024), client.read_buffer.len);
+}
+
+test "WebSocketClient with security config" {
+    const allocator = std.testing.allocator;
+
+    var client = try WebSocketClient.init(allocator, .{
+        .security = .{
+            .max_frame_size = 100,
+            .max_message_size = 500,
+            .require_masking = false,
+        },
+    });
+    defer client.deinit();
+
+    try std.testing.expectEqual(@as(usize, 100), client.config.security.max_frame_size);
+    try std.testing.expectEqual(@as(usize, 500), client.config.security.max_message_size);
+    try std.testing.expect(!client.config.security.require_masking);
+}

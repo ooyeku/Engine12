@@ -68,10 +68,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const pg_dep = b.dependency("pg", .{
-        .target = target,
-        .optimize = optimize,
-    });
+
     const ziggurat_mod = b.createModule(.{
         .root_source_file = ziggurat.path("src/root.zig"),
         .target = target,
@@ -80,7 +77,6 @@ pub fn build(b: *std.Build) void {
 
     mod.addImport("vigil", vigil.module("vigil"));
     mod.addImport("ziggurat", ziggurat_mod);
-    mod.addImport("pg", pg_dep.module("pg"));
 
     // Link bundled SQLite instead of system library
     linkSqlite(mod, sqlite.lib, sqlite.dep);

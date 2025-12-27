@@ -425,3 +425,342 @@ test "validateHandshake connection header with multiple values" {
 
     try validateHandshake(&request);
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "parseHandshakeRequest missing header terminator" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n";
+
+    const result = parseHandshakeRequest(allocator, request_data);
+    try std.testing.expectError(HandshakeError.InvalidRequest, result);
+}
+
+test "parseHandshakeRequest with query string" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat?room=main&user=test HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectEqualStrings("/chat?room=main&user=test", request.path);
+}
+
+test "parseHandshakeRequest with Sec-WebSocket-Protocol" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "Sec-WebSocket-Protocol: chat, superchat\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectEqualStrings("chat, superchat", request.sec_websocket_protocol.?);
+}
+
+test "parseHandshakeRequest with Sec-WebSocket-Extensions" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "Sec-WebSocket-Extensions: permessage-deflate\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectEqualStrings("permessage-deflate", request.sec_websocket_extensions.?);
+}
+
+test "parseHandshakeRequest case insensitive headers" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "HOST: server.example.com\r\n" ++
+        "upgrade: websocket\r\n" ++
+        "CONNECTION: Upgrade\r\n" ++
+        "SEC-WEBSOCKET-KEY: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "sec-websocket-version: 13\r\n" ++
+        "ORIGIN: http://example.com\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expect(request.host != null);
+    try std.testing.expect(request.upgrade != null);
+    try std.testing.expect(request.connection != null);
+    try std.testing.expect(request.sec_websocket_key != null);
+    try std.testing.expect(request.sec_websocket_version != null);
+    try std.testing.expect(request.origin != null);
+}
+
+test "validateHandshake invalid Upgrade header value" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: http2\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.InvalidUpgradeHeader, validateHandshake(&request));
+}
+
+test "validateHandshake missing Connection header" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.MissingConnectionHeader, validateHandshake(&request));
+}
+
+test "validateHandshake Connection header without Upgrade token" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: keep-alive\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.InvalidConnectionHeader, validateHandshake(&request));
+}
+
+test "validateHandshake missing Sec-WebSocket-Key" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.MissingSecWebSocketKey, validateHandshake(&request));
+}
+
+test "validateHandshake invalid Sec-WebSocket-Key length" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: short\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.InvalidSecWebSocketKey, validateHandshake(&request));
+}
+
+test "validateHandshake missing Sec-WebSocket-Version" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectError(HandshakeError.MissingSecWebSocketVersion, validateHandshake(&request));
+}
+
+test "generateAcceptKey with different keys" {
+    const allocator = std.testing.allocator;
+
+    // Test with another key
+    const key1 = try generateAcceptKey(allocator, "x3JJHMbDL1EzLkh9GBhXDw==");
+    defer allocator.free(key1);
+
+    const key2 = try generateAcceptKey(allocator, "HSmrc0sMlYUkAGmm5OPpG2Hg==");
+    defer allocator.free(key2);
+
+    // Different inputs should produce different outputs
+    try std.testing.expect(!std.mem.eql(u8, key1, key2));
+
+    // Same input should produce same output
+    const key1_again = try generateAcceptKey(allocator, "x3JJHMbDL1EzLkh9GBhXDw==");
+    defer allocator.free(key1_again);
+    try std.testing.expectEqualStrings(key1, key1_again);
+}
+
+test "generateBadRequestResponse" {
+    const allocator = std.testing.allocator;
+
+    const response = try generateBadRequestResponse(allocator, "Invalid handshake");
+    defer allocator.free(response);
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "HTTP/1.1 400 Bad Request") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Content-Type: text/plain") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Connection: close") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Bad Request: Invalid handshake") != null);
+}
+
+test "generateUpgradeRequiredResponse" {
+    const allocator = std.testing.allocator;
+
+    const response = try generateUpgradeRequiredResponse(allocator);
+    defer allocator.free(response);
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "HTTP/1.1 426 Upgrade Required") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Sec-WebSocket-Version: 13") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "Connection: close") != null);
+}
+
+test "parseHandshakeRequest headers map populated" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "X-Custom-Header: custom-value\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    // Check that custom header is in the map
+    try std.testing.expect(request.headers.contains("X-Custom-Header"));
+}
+
+test "parseHandshakeRequest empty path" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET / HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try std.testing.expectEqualStrings("/", request.path);
+}
+
+test "validateHandshake Upgrade header case insensitive" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host: server.example.com\r\n" ++
+        "Upgrade: WebSocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    try validateHandshake(&request);
+}
+
+test "WEBSOCKET_GUID constant is correct" {
+    try std.testing.expectEqualStrings("258EAFA5-E914-47DA-95CA-C5AB0DC85B11", WEBSOCKET_GUID);
+}
+
+test "generateHandshakeResponse structure" {
+    const allocator = std.testing.allocator;
+
+    const response = try generateHandshakeResponse(allocator, "dGhlIHNhbXBsZSBub25jZQ==", null);
+    defer allocator.free(response);
+
+    // Check response ends with \r\n\r\n (empty body)
+    try std.testing.expect(std.mem.endsWith(u8, response, "\r\n\r\n"));
+
+    // Check response starts with HTTP status line
+    try std.testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 101"));
+}
+
+test "parseHandshakeRequest with leading/trailing whitespace in header values" {
+    const allocator = std.testing.allocator;
+
+    const request_data =
+        "GET /chat HTTP/1.1\r\n" ++
+        "Host:   server.example.com   \r\n" ++
+        "Upgrade:  websocket  \r\n" ++
+        "Connection:  Upgrade  \r\n" ++
+        "Sec-WebSocket-Key:  dGhlIHNhbXBsZSBub25jZQ==  \r\n" ++
+        "Sec-WebSocket-Version:  13  \r\n" ++
+        "\r\n";
+
+    var request = try parseHandshakeRequest(allocator, request_data);
+    defer request.deinit(allocator);
+
+    // Whitespace should be trimmed
+    try std.testing.expectEqualStrings("server.example.com", request.host.?);
+    try std.testing.expectEqualStrings("websocket", request.upgrade.?);
+    try std.testing.expectEqualStrings("Upgrade", request.connection.?);
+    try std.testing.expectEqualStrings("dGhlIHNhbXBsZSBub25jZQ==", request.sec_websocket_key.?);
+    try std.testing.expectEqualStrings("13", request.sec_websocket_version.?);
+}

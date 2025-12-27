@@ -4,6 +4,7 @@ const params_mod = @import("params.zig");
 const row_mod = @import("row.zig");
 const driver_mod = @import("driver.zig");
 const sql_splitter = @import("sql_splitter.zig");
+const PostgresDatabase = @import("postgres.zig").PostgresDatabase;
 const Driver = driver_mod.Driver;
 const DatabaseConfig = driver_mod.DatabaseConfig;
 const SqliteConfig = driver_mod.SqliteConfig;
@@ -139,7 +140,7 @@ pub const Database = struct {
 
     sqlite_db: ?*sqlite.sqlite3 = null,
 
-    pg_pool: ?*anyopaque = null,
+    pg_db: ?PostgresDatabase = null,
 
     fn captureError(db_handle: ?*sqlite.sqlite3, comptime context: []const u8, sql: ?[]const u8) void {
         const error_msg = sqlite.getErrorMessage(db_handle);
@@ -218,29 +219,15 @@ pub const Database = struct {
     }
 
     fn openPostgres(config: PostgresConfig, allocator: std.mem.Allocator) !Database {
-        const pg = @import("pg");
-
-        const pool = pg.Pool.init(allocator, .{
-            .size = config.pool_size,
-            .connect = .{
-                .port = config.port,
-                .host = config.host,
-            },
-            .auth = .{
-                .username = config.username,
-                .database = config.database,
-                .password = config.password,
-                .timeout = config.auth_timeout_ms,
-            },
-        }) catch |err| {
-            std.debug.print("[PostgreSQL Error] Failed to initialize connection pool: {}\n", .{err});
+        const pg_db = PostgresDatabase.open(config, allocator) catch |err| {
+            std.debug.print("[PostgreSQL Error] Failed to open: {}\n", .{err});
             return error.DatabaseOpenFailed;
         };
 
         return Database{
             .driver = .postgresql,
             .allocator = allocator,
-            .pg_pool = @ptrCast(pool),
+            .pg_db = pg_db,
         };
     }
 
@@ -257,11 +244,9 @@ pub const Database = struct {
                 }
             },
             .postgresql => {
-                if (self.pg_pool) |pool_ptr| {
-                    const pg = @import("pg");
-                    const pool: *pg.Pool = @ptrCast(@alignCast(pool_ptr));
-                    pool.deinit();
-                    self.pg_pool = null;
+                if (self.pg_db) |*db| {
+                    db.close();
+                    self.pg_db = null;
                 }
             },
         }
@@ -305,27 +290,13 @@ pub const Database = struct {
     }
 
     fn executePostgres(self: *Database, sql: []const u8) !void {
-        const pg = @import("pg");
-        const pool: *pg.Pool = @ptrCast(@alignCast(self.pg_pool.?));
-
-        const statements = sql_splitter.splitStatements(sql, self.allocator) catch |err| {
-            std.debug.print("[PostgreSQL Error] Failed to split SQL statements: {}\n", .{err});
-            return error.QueryFailed;
-        };
-        defer self.allocator.free(statements);
-
-        for (statements) |statement| {
-            var result = pool.query(statement, .{}) catch |err| {
-                std.debug.print("[PostgreSQL Error] Failed to execute statement: {s}\n", .{statement});
-                std.debug.print("  Error: {}\n", .{err});
+        if (self.pg_db) |*db| {
+            db.execute(sql) catch |err| {
+                std.debug.print("[PostgreSQL Error] execute failed: {}\n", .{err});
                 return error.QueryFailed;
             };
-            defer result.deinit();
-
-            while (true) {
-                const row = result.next() catch break;
-                if (row == null) break;
-            }
+        } else {
+            return error.QueryFailed;
         }
     }
 
@@ -363,109 +334,13 @@ pub const Database = struct {
     }
 
     fn queryPostgres(self: *Database, sql: []const u8) !QueryResult {
-        const pg = @import("pg");
-
-        if (self.pg_pool == null) {
-            return error.QueryFailed;
+        if (self.pg_db) |*db| {
+            return db.query(sql) catch |err| {
+                std.debug.print("[PostgreSQL Error] query failed: {}\n", .{err});
+                return error.QueryFailed;
+            };
         }
-
-        const pool: *pg.Pool = @ptrCast(@alignCast(self.pg_pool.?));
-
-        var result = pool.queryOpts(sql, .{}, .{ .column_names = true }) catch |err| {
-            std.debug.print("[PostgreSQL Error] Failed to query: {s}\n", .{sql});
-            std.debug.print("  Error: {}\n", .{err});
-            return error.QueryFailed;
-        };
-        defer result.deinit();
-
-        var rows = std.ArrayListUnmanaged(row_mod.PostgresStoredRow){};
-        errdefer {
-            for (rows.items) |*row| {
-                row.deinit();
-            }
-            rows.deinit(self.allocator);
-        }
-
-        const num_cols = result.number_of_columns;
-
-        var column_names = try self.allocator.alloc([]const u8, num_cols);
-        errdefer self.allocator.free(column_names);
-
-        for (0..num_cols) |i| {
-            if (i < result.column_names.len) {
-                column_names[i] = try self.allocator.dupe(u8, result.column_names[i]);
-            } else {
-                column_names[i] = try self.allocator.dupe(u8, "");
-            }
-        }
-
-        while (result.next() catch null) |row| {
-            var values = try self.allocator.alloc(row_mod.PostgresStoredRow.StoredValue, num_cols);
-            errdefer self.allocator.free(values);
-
-            for (0..num_cols) |col_idx| {
-                const oid = row.oids[col_idx];
-
-                switch (oid) {
-                    21 => { // int2 (smallint)
-                        if (row.get(?i16, col_idx)) |v| {
-                            values[col_idx] = .{ .int = @as(i64, v) };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    23 => { // int4 (integer/serial)
-                        if (row.get(?i32, col_idx)) |v| {
-                            values[col_idx] = .{ .int = @as(i64, v) };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    20 => { // int8 (bigint/bigserial)
-                        if (row.get(?i64, col_idx)) |v| {
-                            values[col_idx] = .{ .int = v };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    700 => { // float4 (real)
-                        if (row.get(?f32, col_idx)) |v| {
-                            values[col_idx] = .{ .float = @as(f64, v) };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    701 => { // float8 (double precision)
-                        if (row.get(?f64, col_idx)) |v| {
-                            values[col_idx] = .{ .float = v };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    16 => { // bool
-                        if (row.get(?bool, col_idx)) |v| {
-                            values[col_idx] = .{ .bool_val = v };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                    else => {
-                        if (row.get(?[]const u8, col_idx)) |v| {
-                            values[col_idx] = .{ .text = try self.allocator.dupe(u8, v) };
-                        } else {
-                            values[col_idx] = .null_val;
-                        }
-                    },
-                }
-            }
-
-            try rows.append(self.allocator, row_mod.PostgresStoredRow{
-                .values = values,
-                .allocator = self.allocator,
-            });
-        }
-
-        return QueryResult.initPostgres(rows, column_names, self.allocator);
+        return error.QueryFailed;
     }
 
     pub fn lastInsertRowId(self: *Database) !i64 {
@@ -509,10 +384,17 @@ pub const Database = struct {
     }
 
     fn executeParamsPostgres(self: *Database, sql: []const u8, params: *const ParamList) !void {
-        const literal_sql = try buildSqlWithLiterals(self.allocator, sql, params);
-        defer self.allocator.free(literal_sql);
+        if (self.pg_db) |*db| {
+            const pg_sql = try PostgresDatabase.convertPlaceholders(self.allocator, sql);
+            defer self.allocator.free(pg_sql);
 
-        try self.executePostgres(literal_sql);
+            db.executeParams(pg_sql, params) catch |err| {
+                std.debug.print("[PostgreSQL Error] executeParams failed: {}\n", .{err});
+                return error.QueryFailed;
+            };
+        } else {
+            return error.QueryFailed;
+        }
     }
 
     fn buildSqlWithLiterals(allocator: std.mem.Allocator, sql: []const u8, params: *const ParamList) ![]u8 {
@@ -614,12 +496,16 @@ pub const Database = struct {
     }
 
     fn queryParamsPostgres(self: *Database, sql: []const u8, params: *const ParamList) !QueryResult {
-        const postgres_mod = @import("postgres.zig");
-        const pg_sql = try postgres_mod.convertPlaceholders(self.allocator, sql);
-        defer self.allocator.free(pg_sql);
+        if (self.pg_db) |*db| {
+            const pg_sql = try PostgresDatabase.convertPlaceholders(self.allocator, sql);
+            defer self.allocator.free(pg_sql);
 
-        _ = params;
-        return self.queryPostgres(pg_sql);
+            return db.queryParams(pg_sql, params) catch |err| {
+                std.debug.print("[PostgreSQL Error] queryParams failed: {}\n", .{err});
+                return error.QueryFailed;
+            };
+        }
+        return error.QueryFailed;
     }
 
     pub const Error = error{
@@ -678,7 +564,6 @@ pub const Transaction = struct {
         }
     }
 };
-
 
 test "Database open and close" {
     const allocator = std.testing.allocator;
@@ -1004,7 +889,6 @@ test "Database openWithConfig SQLite" {
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
 }
 
-
 test "Database openWithConfig SQLite with custom config" {
     const allocator = std.testing.allocator;
     const config = DatabaseConfig{
@@ -1273,8 +1157,7 @@ test "Database transaction rollback on error" {
 
     try trans.execute("INSERT INTO users (name) VALUES ('Alice')");
 
-    _ = trans.execute("INVALID SQL") catch {
-    };
+    _ = trans.execute("INVALID SQL") catch {};
 
     trans.deinit();
 

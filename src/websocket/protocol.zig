@@ -598,3 +598,659 @@ test "Frame.getCloseInfo" {
     try std.testing.expectEqual(CloseCode.normal, close_info.code);
     try std.testing.expectEqualStrings("goodbye", close_info.reason);
 }
+
+// ============================================================================
+// Additional comprehensive tests
+// ============================================================================
+
+test "Opcode.fromU4 returns null for reserved opcodes" {
+    // Reserved non-control opcodes (0x3-0x7)
+    try std.testing.expect(Opcode.fromU4(0x3) == null);
+    try std.testing.expect(Opcode.fromU4(0x4) == null);
+    try std.testing.expect(Opcode.fromU4(0x5) == null);
+    try std.testing.expect(Opcode.fromU4(0x6) == null);
+    try std.testing.expect(Opcode.fromU4(0x7) == null);
+
+    // Reserved control opcodes (0xB-0xF)
+    try std.testing.expect(Opcode.fromU4(0xB) == null);
+    try std.testing.expect(Opcode.fromU4(0xC) == null);
+    try std.testing.expect(Opcode.fromU4(0xD) == null);
+    try std.testing.expect(Opcode.fromU4(0xE) == null);
+    try std.testing.expect(Opcode.fromU4(0xF) == null);
+}
+
+test "Opcode.fromU4 returns valid opcodes" {
+    try std.testing.expectEqual(Opcode.continuation, Opcode.fromU4(0x0).?);
+    try std.testing.expectEqual(Opcode.text, Opcode.fromU4(0x1).?);
+    try std.testing.expectEqual(Opcode.binary, Opcode.fromU4(0x2).?);
+    try std.testing.expectEqual(Opcode.close, Opcode.fromU4(0x8).?);
+    try std.testing.expectEqual(Opcode.ping, Opcode.fromU4(0x9).?);
+    try std.testing.expectEqual(Opcode.pong, Opcode.fromU4(0xA).?);
+}
+
+test "CloseCode.fromU16 handles all defined codes" {
+    try std.testing.expectEqual(CloseCode.normal, CloseCode.fromU16(1000));
+    try std.testing.expectEqual(CloseCode.going_away, CloseCode.fromU16(1001));
+    try std.testing.expectEqual(CloseCode.protocol_error, CloseCode.fromU16(1002));
+    try std.testing.expectEqual(CloseCode.unsupported_data, CloseCode.fromU16(1003));
+    try std.testing.expectEqual(CloseCode.no_status, CloseCode.fromU16(1005));
+    try std.testing.expectEqual(CloseCode.abnormal, CloseCode.fromU16(1006));
+    try std.testing.expectEqual(CloseCode.invalid_payload, CloseCode.fromU16(1007));
+    try std.testing.expectEqual(CloseCode.policy_violation, CloseCode.fromU16(1008));
+    try std.testing.expectEqual(CloseCode.message_too_big, CloseCode.fromU16(1009));
+    try std.testing.expectEqual(CloseCode.mandatory_extension, CloseCode.fromU16(1010));
+    try std.testing.expectEqual(CloseCode.internal_error, CloseCode.fromU16(1011));
+    try std.testing.expectEqual(CloseCode.tls_handshake, CloseCode.fromU16(1015));
+}
+
+test "CloseCode.fromU16 returns protocol_error for unknown codes" {
+    try std.testing.expectEqual(CloseCode.protocol_error, CloseCode.fromU16(1004)); // Reserved
+    try std.testing.expectEqual(CloseCode.protocol_error, CloseCode.fromU16(9999));
+    try std.testing.expectEqual(CloseCode.protocol_error, CloseCode.fromU16(0));
+}
+
+test "FrameHeader.headerSize calculates correctly" {
+    // 2 bytes base + no extended length + no mask
+    const header1 = FrameHeader{
+        .fin = true,
+        .rsv1 = false,
+        .rsv2 = false,
+        .rsv3 = false,
+        .opcode = .text,
+        .masked = false,
+        .payload_len = 100,
+        .mask_key = null,
+    };
+    try std.testing.expectEqual(@as(usize, 2), header1.headerSize());
+
+    // 2 bytes base + 2 bytes extended (16-bit) + no mask
+    const header2 = FrameHeader{
+        .fin = true,
+        .rsv1 = false,
+        .rsv2 = false,
+        .rsv3 = false,
+        .opcode = .text,
+        .masked = false,
+        .payload_len = 1000,
+        .mask_key = null,
+    };
+    try std.testing.expectEqual(@as(usize, 4), header2.headerSize());
+
+    // 2 bytes base + 8 bytes extended (64-bit) + no mask
+    const header3 = FrameHeader{
+        .fin = true,
+        .rsv1 = false,
+        .rsv2 = false,
+        .rsv3 = false,
+        .opcode = .text,
+        .masked = false,
+        .payload_len = 100000,
+        .mask_key = null,
+    };
+    try std.testing.expectEqual(@as(usize, 10), header3.headerSize());
+
+    // 2 bytes base + no extended length + 4 bytes mask
+    const header4 = FrameHeader{
+        .fin = true,
+        .rsv1 = false,
+        .rsv2 = false,
+        .rsv3 = false,
+        .opcode = .text,
+        .masked = true,
+        .payload_len = 100,
+        .mask_key = [_]u8{ 0, 0, 0, 0 },
+    };
+    try std.testing.expectEqual(@as(usize, 6), header4.headerSize());
+
+    // 2 bytes base + 8 bytes extended (64-bit) + 4 bytes mask
+    const header5 = FrameHeader{
+        .fin = true,
+        .rsv1 = false,
+        .rsv2 = false,
+        .rsv3 = false,
+        .opcode = .text,
+        .masked = true,
+        .payload_len = 100000,
+        .mask_key = [_]u8{ 0, 0, 0, 0 },
+    };
+    try std.testing.expectEqual(@as(usize, 14), header5.headerSize());
+}
+
+test "Frame type helper methods" {
+    const text_frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .text,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+    try std.testing.expect(text_frame.isText());
+    try std.testing.expect(!text_frame.isBinary());
+    try std.testing.expect(!text_frame.isClose());
+    try std.testing.expect(!text_frame.isPing());
+    try std.testing.expect(!text_frame.isPong());
+
+    const binary_frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .binary,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+    try std.testing.expect(!binary_frame.isText());
+    try std.testing.expect(binary_frame.isBinary());
+
+    const ping_frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .ping,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+    try std.testing.expect(ping_frame.isPing());
+    try std.testing.expect(!ping_frame.isPong());
+
+    const pong_frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .pong,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+    try std.testing.expect(!pong_frame.isPing());
+    try std.testing.expect(pong_frame.isPong());
+}
+
+test "Frame.getCloseInfo with empty payload" {
+    const frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 0,
+            .mask_key = null,
+        },
+        .payload = "",
+    };
+
+    const close_info = frame.getCloseInfo();
+    try std.testing.expectEqual(CloseCode.no_status, close_info.code);
+    try std.testing.expectEqualStrings("", close_info.reason);
+}
+
+test "Frame.getCloseInfo with code only (no reason)" {
+    const frame = Frame{
+        .header = .{
+            .fin = true,
+            .rsv1 = false,
+            .rsv2 = false,
+            .rsv3 = false,
+            .opcode = .close,
+            .masked = false,
+            .payload_len = 2,
+            .mask_key = null,
+        },
+        .payload = &[_]u8{ 0x03, 0xE9 }, // 1001 (going_away)
+    };
+
+    const close_info = frame.getCloseInfo();
+    try std.testing.expectEqual(CloseCode.going_away, close_info.code);
+    try std.testing.expectEqualStrings("", close_info.reason);
+}
+
+test "FrameParser rejects reserved RSV bits" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Text frame with RSV1 set (invalid without extension)
+    const frame_data = [_]u8{ 0xC1, 0x05, 'H', 'e', 'l', 'l', 'o' }; // RSV1=1
+
+    try parser.feed(&frame_data);
+
+    const result = parser.parse();
+    try std.testing.expectError(error.ReservedBitsSet, result);
+}
+
+test "FrameParser rejects invalid opcodes" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Frame with reserved opcode 0x3
+    const frame_data = [_]u8{ 0x83, 0x05, 'H', 'e', 'l', 'l', 'o' };
+
+    try parser.feed(&frame_data);
+
+    const result = parser.parse();
+    try std.testing.expectError(error.InvalidOpcode, result);
+}
+
+test "FrameParser rejects payload exceeding max size" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 100); // Max 100 bytes
+    defer parser.deinit();
+
+    // Frame with 200 byte payload
+    var frame_data: [4]u8 = undefined;
+    frame_data[0] = 0x81; // FIN=1, Opcode=1 (text)
+    frame_data[1] = 126; // Extended length marker
+    frame_data[2] = 0;
+    frame_data[3] = 200; // 200 bytes
+
+    try parser.feed(&frame_data);
+
+    const result = parser.parse();
+    try std.testing.expectError(error.PayloadTooLarge, result);
+}
+
+test "FrameParser handles incremental data feeding" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    const frame_data = [_]u8{ 0x81, 0x05, 'H', 'e', 'l', 'l', 'o' };
+
+    // Feed one byte at a time
+    for (frame_data[0..6]) |byte| {
+        try parser.feed(&[_]u8{byte});
+        const result = try parser.parse();
+        try std.testing.expect(result == null); // Not complete yet
+    }
+
+    // Feed final byte
+    try parser.feed(&[_]u8{frame_data[6]});
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqualStrings("Hello", f.payload);
+    }
+}
+
+test "FrameParser handles multiple frames in buffer" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Two text frames back-to-back
+    const frame1 = [_]u8{ 0x81, 0x02, 'H', 'i' };
+    const frame2 = [_]u8{ 0x81, 0x05, 'H', 'e', 'l', 'l', 'o' };
+
+    try parser.feed(&frame1);
+    try parser.feed(&frame2);
+
+    // Parse first frame
+    const f1 = try parser.parse();
+    try std.testing.expect(f1 != null);
+    if (f1) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqualStrings("Hi", f.payload);
+    }
+
+    // Parse second frame
+    const f2 = try parser.parse();
+    try std.testing.expect(f2 != null);
+    if (f2) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqualStrings("Hello", f.payload);
+    }
+
+    // No more frames
+    const f3 = try parser.parse();
+    try std.testing.expect(f3 == null);
+}
+
+test "FrameParser binary frame" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Binary frame with non-UTF8 data
+    const frame_data = [_]u8{ 0x82, 0x04, 0xFF, 0xFE, 0x00, 0x01 };
+    try parser.feed(&frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqual(Opcode.binary, f.header.opcode);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0xFF, 0xFE, 0x00, 0x01 }, f.payload);
+    }
+}
+
+test "FrameParser ping frame" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Ping frame with payload
+    const frame_data = [_]u8{ 0x89, 0x04, 'p', 'i', 'n', 'g' };
+    try parser.feed(&frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expect(f.isPing());
+        try std.testing.expectEqualStrings("ping", f.payload);
+    }
+}
+
+test "FrameParser pong frame" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Pong frame with payload
+    const frame_data = [_]u8{ 0x8A, 0x04, 'p', 'o', 'n', 'g' };
+    try parser.feed(&frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expect(f.isPong());
+        try std.testing.expectEqualStrings("pong", f.payload);
+    }
+}
+
+test "FrameParser close frame" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Close frame with code 1000 and reason "bye"
+    const frame_data = [_]u8{ 0x88, 0x05, 0x03, 0xE8, 'b', 'y', 'e' };
+    try parser.feed(&frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expect(f.isClose());
+        const info = f.getCloseInfo();
+        try std.testing.expectEqual(CloseCode.normal, info.code);
+        try std.testing.expectEqualStrings("bye", info.reason);
+    }
+}
+
+test "FrameParser continuation frame (fragmentation)" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // First fragment (FIN=0, text)
+    const frame1 = [_]u8{ 0x01, 0x03, 'H', 'e', 'l' };
+    try parser.feed(&frame1);
+
+    const f1 = try parser.parse();
+    try std.testing.expect(f1 != null);
+    if (f1) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expect(!f.header.fin);
+        try std.testing.expectEqual(Opcode.text, f.header.opcode);
+        try std.testing.expectEqualStrings("Hel", f.payload);
+    }
+
+    // Continuation fragment (FIN=1, continuation)
+    const frame2 = [_]u8{ 0x80, 0x02, 'l', 'o' };
+    try parser.feed(&frame2);
+
+    const f2 = try parser.parse();
+    try std.testing.expect(f2 != null);
+    if (f2) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expect(f.header.fin);
+        try std.testing.expectEqual(Opcode.continuation, f.header.opcode);
+        try std.testing.expectEqualStrings("lo", f.payload);
+    }
+}
+
+test "FrameParser reset clears buffer" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Feed partial data
+    try parser.feed(&[_]u8{ 0x81, 0x05, 'H' });
+
+    // Reset
+    parser.reset();
+
+    // Buffer should be empty, feeding new complete frame should work
+    const frame_data = [_]u8{ 0x81, 0x02, 'O', 'K' };
+    try parser.feed(&frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqualStrings("OK", f.payload);
+    }
+}
+
+test "FrameEncoder encode binary" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    const data = [_]u8{ 0xFF, 0x00, 0xAB, 0xCD };
+    const frame = try encoder.encodeBinary(&data);
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x82), frame[0]); // FIN=1, Opcode=2 (binary)
+    try std.testing.expectEqual(@as(u8, 0x04), frame[1]); // Mask=0, Length=4
+    try std.testing.expectEqualSlices(u8, &data, frame[2..]);
+}
+
+test "FrameEncoder encode ping" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    const frame = try encoder.encodePing("test");
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x89), frame[0]); // FIN=1, Opcode=9 (ping)
+    try std.testing.expectEqual(@as(u8, 0x04), frame[1]); // Mask=0, Length=4
+    try std.testing.expectEqualStrings("test", frame[2..]);
+}
+
+test "FrameEncoder encode pong" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    const frame = try encoder.encodePong("test");
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x8A), frame[0]); // FIN=1, Opcode=A (pong)
+    try std.testing.expectEqual(@as(u8, 0x04), frame[1]); // Mask=0, Length=4
+    try std.testing.expectEqualStrings("test", frame[2..]);
+}
+
+test "FrameEncoder encode empty payload" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    const frame = try encoder.encodeText("");
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(usize, 2), frame.len);
+    try std.testing.expectEqual(@as(u8, 0x81), frame[0]); // FIN=1, Opcode=1
+    try std.testing.expectEqual(@as(u8, 0x00), frame[1]); // Mask=0, Length=0
+}
+
+test "FrameEncoder encode with mask (client-side)" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    const mask_key = [_]u8{ 0x37, 0xFA, 0x21, 0x3D };
+    const frame = try encoder.encodeWithMask(.text, "Hello", true, mask_key);
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x81), frame[0]); // FIN=1, Opcode=1
+    try std.testing.expectEqual(@as(u8, 0x85), frame[1]); // Mask=1, Length=5
+    try std.testing.expectEqualSlices(u8, &mask_key, frame[2..6]);
+
+    // Verify masked payload by unmasking
+    var payload: [5]u8 = undefined;
+    @memcpy(&payload, frame[6..11]);
+    unmaskPayload(&payload, mask_key);
+    try std.testing.expectEqualStrings("Hello", &payload);
+}
+
+test "FrameEncoder encode 64-bit length" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    // Create payload larger than 65535 bytes
+    const payload = try allocator.alloc(u8, 70000);
+    defer allocator.free(payload);
+    @memset(payload, 'X');
+
+    const frame = try encoder.encode(.binary, payload, true);
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x82), frame[0]); // FIN=1, Opcode=2
+    try std.testing.expectEqual(@as(u8, 127), frame[1]); // Extended 64-bit length
+
+    // Verify 64-bit length encoding
+    const encoded_len: u64 = (@as(u64, frame[2]) << 56) |
+        (@as(u64, frame[3]) << 48) |
+        (@as(u64, frame[4]) << 40) |
+        (@as(u64, frame[5]) << 32) |
+        (@as(u64, frame[6]) << 24) |
+        (@as(u64, frame[7]) << 16) |
+        (@as(u64, frame[8]) << 8) |
+        @as(u64, frame[9]);
+    try std.testing.expectEqual(@as(u64, 70000), encoded_len);
+}
+
+test "FrameEncoder encode non-final frame (fragmentation)" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    // First fragment (FIN=0)
+    const frame = try encoder.encode(.text, "Hello", false);
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x01), frame[0]); // FIN=0, Opcode=1
+    try std.testing.expectEqual(@as(u8, 0x05), frame[1]); // Mask=0, Length=5
+    try std.testing.expectEqualStrings("Hello", frame[2..]);
+}
+
+test "FrameEncoder encode continuation frame" {
+    const allocator = std.testing.allocator;
+    var encoder = FrameEncoder.init(allocator);
+
+    // Continuation fragment (FIN=1)
+    const frame = try encoder.encode(.continuation, " World", true);
+    defer encoder.free(frame);
+
+    try std.testing.expectEqual(@as(u8, 0x80), frame[0]); // FIN=1, Opcode=0
+    try std.testing.expectEqual(@as(u8, 0x06), frame[1]); // Mask=0, Length=6
+    try std.testing.expectEqualStrings(" World", frame[2..]);
+}
+
+test "maskPayload and unmaskPayload are symmetric" {
+    var data1 = [_]u8{ 'H', 'e', 'l', 'l', 'o' };
+    var data2 = [_]u8{ 'H', 'e', 'l', 'l', 'o' };
+    const mask_key = [_]u8{ 0x12, 0x34, 0x56, 0x78 };
+
+    maskPayload(&data1, mask_key);
+    try std.testing.expect(!std.mem.eql(u8, &data1, "Hello")); // Should be masked
+
+    unmaskPayload(&data1, mask_key);
+    try std.testing.expectEqualSlices(u8, &data2, &data1); // Should be unmasked
+}
+
+test "FrameParser 64-bit length frame" {
+    const allocator = std.testing.allocator;
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Frame with 64-bit length encoding for 300 bytes
+    var frame_data = try allocator.alloc(u8, 10 + 300);
+    defer allocator.free(frame_data);
+
+    frame_data[0] = 0x82; // FIN=1, Opcode=2 (binary)
+    frame_data[1] = 127; // 64-bit length marker
+    // 64-bit length = 300
+    frame_data[2] = 0;
+    frame_data[3] = 0;
+    frame_data[4] = 0;
+    frame_data[5] = 0;
+    frame_data[6] = 0;
+    frame_data[7] = 0;
+    frame_data[8] = 1; // 256
+    frame_data[9] = 44; // + 44 = 300
+
+    @memset(frame_data[10..], 'Y');
+
+    try parser.feed(frame_data);
+
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqual(@as(u64, 300), f.header.payload_len);
+        try std.testing.expectEqual(@as(usize, 300), f.payload.len);
+    }
+}
+
+test "FrameEncoder round-trip with FrameParser" {
+    const allocator = std.testing.allocator;
+
+    var encoder = FrameEncoder.init(allocator);
+    var parser = FrameParser.init(allocator, 1024 * 1024);
+    defer parser.deinit();
+
+    // Encode a frame
+    const original = "Hello, WebSocket!";
+    const encoded = try encoder.encodeText(original);
+    defer encoder.free(encoded);
+
+    // Parse it back
+    try parser.feed(encoded);
+    const frame = try parser.parse();
+    try std.testing.expect(frame != null);
+
+    if (frame) |f| {
+        defer parser.freeFrame(f);
+        try std.testing.expectEqualStrings(original, f.payload);
+        try std.testing.expect(f.header.fin);
+        try std.testing.expectEqual(Opcode.text, f.header.opcode);
+    }
+}
