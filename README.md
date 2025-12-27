@@ -94,6 +94,17 @@ SQLite is bundled with Engine12, so the ORM works out of the box with no additio
 - **OpenAPI/Swagger Documentation** - Automatic API documentation generation with Swagger UI
 
 
+- **Cross-Platform** - Fully compatible with Linux, macOS, and Windows.
+
+## Cross-Compilation
+
+Engine12 supports cross-compilation to Windows and other platforms out of the box.
+
+```bash
+# Build for Windows x86_64
+zig build -Dtarget=x86_64-windows
+```
+
 ## Documentation
 
 - [API Reference](docs/api-reference.md) - Complete API documentation

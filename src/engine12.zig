@@ -29,6 +29,7 @@ const rest_api_mod = @import("rest_api.zig");
 const openapi = @import("openapi.zig");
 const validation = @import("validation.zig");
 const shutdown_utils = @import("utils/shutdown.zig");
+const builtin = @import("builtin");
 
 const allocator = std.heap.page_allocator;
 
@@ -98,6 +99,15 @@ fn handleSigint(_: c_int) callconv(.c) void {
     }
 }
 
+fn closeSocket(socket: posix.socket_t) void {
+    if (builtin.os.tag == .windows) {
+        // On Windows, specific closesocket is required for sockets, handling return value manually
+        _ = std.os.windows.ws2_32.closesocket(socket);
+    } else {
+        posix.close(socket);
+    }
+}
+
 const ConnectionQueue = struct {
     const Self = @This();
     const MAX_QUEUE_SIZE = 4096;
@@ -120,7 +130,7 @@ const ConnectionQueue = struct {
         }
 
         if (self.shutdown) {
-            posix.close(socket);
+            closeSocket(socket);
             return;
         }
 
@@ -171,7 +181,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
     const server = global_server_for_workers orelse return;
     const config = global_server_config orelse return;
 
-    defer posix.close(socket);
+    defer closeSocket(socket);
 
     setSocketTimeouts(socket, config) catch return;
 
@@ -191,7 +201,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
         var buf: [65536]u8 = undefined; // 64KB buffer
         var total_read: usize = 0;
 
-        const read_result = posix.read(socket, &buf);
+        const read_result = posix.recv(socket, &buf, 0);
         if (read_result) |bytes_read| {
             if (bytes_read == 0) return; // Connection closed by client
             total_read = bytes_read;
@@ -207,7 +217,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
         }
 
         while (header_end_pos == null and total_read < buf.len) {
-            const additional_result = posix.read(socket, buf[total_read..]);
+            const additional_result = posix.recv(socket, buf[total_read..], 0);
             if (additional_result) |bytes| {
                 if (bytes == 0) break;
                 total_read += bytes;
@@ -225,7 +235,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
 
         request.parse(buf[0..total_read]) catch {
             const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
-            _ = posix.write(socket, bad_request) catch {};
+            _ = posix.send(socket, bad_request, 0) catch {};
             return;
         };
 
@@ -239,7 +249,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
 
                 var body_read: usize = 0;
                 while (body_read < remaining and (total_read + body_read) < buf.len) {
-                    const chunk_result = posix.read(socket, buf[total_read + body_read ..]);
+                    const chunk_result = posix.recv(socket, buf[total_read + body_read ..], 0);
                     if (chunk_result) |bytes| {
                         if (bytes == 0) break;
                         body_read += bytes;
@@ -253,7 +263,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
                 request = ziggurat.request.Request.init(allocator);
                 request.parse(buf[0..total_read]) catch {
                     const bad_request = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nBad Request";
-                    _ = posix.write(socket, bad_request) catch {};
+                    _ = posix.send(socket, bad_request, 0) catch {};
                     return;
                 };
             }
@@ -279,7 +289,7 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
             }
 
             response_mod.releasePendingBuffer();
-            _ = posix.write(socket, formatted) catch {};
+            _ = posix.send(socket, formatted, 0) catch {};
             if (!keep_alive) return;
             continue;
         }
@@ -303,24 +313,32 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
         }
 
         response_mod.releasePendingBuffer();
-        _ = posix.write(socket, formatted_response) catch {};
+        _ = posix.send(socket, formatted_response, 0) catch {};
 
         if (!keep_alive) return;
     }
 }
 
 fn setSocketTimeouts(socket: posix.socket_t, config: ServerConfig) !void {
-    const read_timeout = posix.timeval{
-        .sec = @intCast(config.read_timeout / 1000),
-        .usec = @intCast((config.read_timeout % 1000) * 1000),
-    };
-    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(read_timeout));
+    if (builtin.os.tag == .windows) {
+        const read_timeout_ms: u32 = config.read_timeout;
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(read_timeout_ms));
 
-    const write_timeout = posix.timeval{
-        .sec = @intCast(config.write_timeout / 1000),
-        .usec = @intCast((config.write_timeout % 1000) * 1000),
-    };
-    try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(write_timeout));
+        const write_timeout_ms: u32 = config.write_timeout;
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(write_timeout_ms));
+    } else {
+        const read_timeout = posix.timeval{
+            .sec = @intCast(config.read_timeout / 1000),
+            .usec = @intCast((config.read_timeout % 1000) * 1000),
+        };
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(read_timeout));
+
+        const write_timeout = posix.timeval{
+            .sec = @intCast(config.write_timeout / 1000),
+            .usec = @intCast((config.write_timeout % 1000) * 1000),
+        };
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(write_timeout));
+    }
 }
 
 fn workerThreadFn() void {
@@ -1659,12 +1677,18 @@ pub const Engine12 = struct {
         global_engine12_instance = self;
 
         // Install SIGINT handler for graceful shutdown on Ctrl+C
-        const act = posix.Sigaction{
-            .handler = .{ .handler = handleSigint },
-            .mask = posix.sigemptyset(),
-            .flags = 0,
-        };
-        posix.sigaction(posix.SIG.INT, &act, null);
+        // Install SIGINT handler for graceful shutdown on Ctrl+C
+        if (builtin.os.tag != .windows) {
+            const act = posix.Sigaction{
+                .handler = .{ .handler = handleSigint },
+                .mask = posix.sigemptyset(),
+                .flags = 0,
+            };
+            posix.sigaction(posix.SIG.INT, &act, null);
+        } else {
+            // Suppress unused function warning on Windows
+            _ = &handleSigint;
+        }
 
         try self.start();
         self.printStatus();
@@ -1695,7 +1719,7 @@ pub const Engine12 = struct {
 
         // Close the listener socket to unblock the accept thread
         if (self.built_server) |*server| {
-            posix.close(server.inner.listener);
+            closeSocket(server.inner.listener);
         }
 
         const timeout_ms = self.profile.graceful_shutdown_timeout_ms;

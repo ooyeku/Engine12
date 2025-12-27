@@ -93,9 +93,15 @@ pub fn withORMResult(comptime T: type, comptime callback: fn (*ORM) T) T {
 /// Load database configuration from environment variables
 fn loadConfigFromEnv() DbConfig {
     var config = DbConfig{};
+    // Helper to get env var, leaking memory (acceptable for global config)
+    const getEnv = struct {
+        fn get(alloc: std.mem.Allocator, key: []const u8) ?[]const u8 {
+            return std.process.getEnvVarOwned(alloc, key) catch null;
+        }
+    }.get;
 
     // Check for driver selection
-    if (std.posix.getenv("DB_DRIVER")) |driver_env| {
+    if (getEnv(allocator, "DB_DRIVER")) |driver_env| {
         if (std.mem.eql(u8, driver_env, "sqlite")) {
             config.driver = .sqlite;
         } else if (std.mem.eql(u8, driver_env, "postgresql") or std.mem.eql(u8, driver_env, "postgres")) {
@@ -104,24 +110,24 @@ fn loadConfigFromEnv() DbConfig {
     }
 
     // PostgreSQL settings
-    if (std.posix.getenv("PGHOST")) |host| {
+    if (getEnv(allocator, "PGHOST")) |host| {
         config.pg_host = host;
     }
-    if (std.posix.getenv("PGPORT")) |port_str| {
+    if (getEnv(allocator, "PGPORT")) |port_str| {
         config.pg_port = std.fmt.parseInt(u16, port_str, 10) catch 5432;
     }
-    if (std.posix.getenv("PGDATABASE")) |db| {
+    if (getEnv(allocator, "PGDATABASE")) |db| {
         config.pg_database = db;
     }
-    if (std.posix.getenv("PGUSER")) |user| {
+    if (getEnv(allocator, "PGUSER")) |user| {
         config.pg_username = user;
     }
-    if (std.posix.getenv("PGPASSWORD")) |pass| {
+    if (getEnv(allocator, "PGPASSWORD")) |pass| {
         config.pg_password = pass;
     }
 
     // SQLite settings
-    if (std.posix.getenv("SQLITE_PATH")) |path| {
+    if (getEnv(allocator, "SQLITE_PATH")) |path| {
         config.sqlite_path = path;
     }
 

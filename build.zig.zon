@@ -1,7 +1,7 @@
 .{
     .name = .engine12,
 
-    .version = "0.17.1",
+    .version = "0.17.2",
     .fingerprint = 0x3c1cb3191ea1e4d2,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
@@ -10,8 +10,8 @@
             .hash = "vigil-1.0.1-0NlCVCBuBAAH9R8ILSaFqtDyArMhACw7pwvteqnOAxzH",
         },
         .ziggurat = .{
-            .url = "git+https://github.com/ooyeku/ziggurat.git#44a0a22d0ca4fe6886a5dc9f27b5149544f2387e",
-            .hash = "ziggurat-1.2.0-RWNIDB58AwAI3M9fo8QW4z7z4O0lvDA59ZkiT3Xhve1y",
+            .url = "git+https://github.com/ooyeku/ziggurat.git#49412017ce2e2d0bf190b885681ce6d6a5039127",
+            .hash = "ziggurat-1.3.0-RWNIDO99AwDx-nzcmvRHMRjQ5H9z1s0K6wsCniCM3JuW",
         },
         .engine12 = .{
             .url = "git+https://github.com/ooyeku/engine12.git#c94d22bbce1f3c968c03145f6c303cd3a1cf0ad3",
