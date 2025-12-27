@@ -69,12 +69,7 @@ const engine12_dep = b.dependency("engine12", .{
 exe.addModule("engine12", engine12_dep.module("engine12"));
 ```
 
-If you're using the ORM, you'll also need to link libc:
-
-```zig
-// Link libc (required for ORM/SQLite functionality)
-exe.linkLibC();
-```
+SQLite is bundled with Engine12, so the ORM works out of the box with no additional setup required.
 
 ## Features
 

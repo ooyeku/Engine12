@@ -193,6 +193,7 @@ pub const QueryResult = struct {
     owns_stmt: bool = true,
 
     sqlite_stmt: ?*sqlite.sqlite3_stmt = null,
+    sqlite_exhausted: bool = false,
 
     pg_rows: ?std.ArrayListUnmanaged(PostgresStoredRow) = null,
     pg_column_names: ?[][]const u8 = null,
@@ -277,11 +278,18 @@ pub const QueryResult = struct {
     pub fn nextRow(self: *QueryResult) ?Row {
         return switch (self.driver) {
             .sqlite => {
+                // Once exhausted, always return null to avoid undefined behavior
+                // from calling sqlite3_step after SQLITE_DONE
+                if (self.sqlite_exhausted) {
+                    return null;
+                }
                 if (self.sqlite_stmt) |stmt| {
                     const rc = sqlite.step(stmt);
                     if (rc == sqlite.SQLITE_ROW) {
                         return Row.fromSqlite(SqliteRow{ .stmt = stmt });
                     }
+                    // Mark as exhausted when we get SQLITE_DONE or any other result
+                    self.sqlite_exhausted = true;
                 }
                 return null;
             },
@@ -482,7 +490,6 @@ pub const QueryResult = struct {
         return instance;
     }
 };
-
 
 test "Row getText" {
     const allocator = std.testing.allocator;
@@ -817,7 +824,6 @@ test "QueryResult toArrayList with reordered columns in SELECT" {
         try std.testing.expectEqualStrings("Description", desc);
     }
 }
-
 
 test "Row getText with NULL value" {
     const allocator = std.testing.allocator;
@@ -1484,4 +1490,3 @@ test "QueryResult multiple iterations" {
     try std.testing.expectEqualStrings("B", values.items[1]);
     try std.testing.expectEqualStrings("C", values.items[2]);
 }
-
