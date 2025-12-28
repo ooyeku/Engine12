@@ -21,6 +21,13 @@ pub const form_builder = @import("form_builder.zig");
 pub const optimistic = @import("optimistic.zig");
 pub const fragment_cache = @import("cache.zig");
 
+// Tier 4: Architecture Improvements
+pub const composer = @import("composer.zig");
+pub const template = @import("template.zig");
+pub const request_context = @import("request_context.zig");
+pub const error_boundary = @import("error_boundary.zig");
+pub const declarative_routes = @import("declarative_routes.zig");
+
 pub const HtmxConfig = config.HtmxConfig;
 pub const HtmxRequestInfo = request.HtmxRequestInfo;
 
@@ -192,6 +199,35 @@ pub const cacheResponse = fragment_cache.cacheResponse;
 pub const getCachedResponse = fragment_cache.getCachedResponse;
 pub const invalidateCache = fragment_cache.invalidateCache;
 pub const invalidateCachePrefix = fragment_cache.invalidateCachePrefix;
+
+// Response composition (Tier 4)
+pub const ResponseComposer = composer.ResponseComposer;
+pub const compose = composer.compose;
+
+// Template integration (Tier 4)
+pub const TemplateRenderer = template.TemplateRenderer;
+pub const TemplateContext = template.TemplateContext;
+pub const TemplateConfig = template.TemplateConfig;
+pub const createRenderer = template.createRenderer;
+pub const createRendererWithConfig = template.createRendererWithConfig;
+pub const renderTemplate = template.renderTemplate;
+
+// Request context helpers (Tier 4)
+pub const HtmxContext = request_context.HtmxContext;
+pub const htmx = request_context.htmx;
+
+// Error boundary middleware (Tier 4)
+pub const ErrorBoundary = error_boundary.ErrorBoundary;
+pub const ErrorBoundaryConfig = error_boundary.ErrorBoundaryConfig;
+pub const createErrorBoundary = error_boundary.create;
+pub const createErrorBoundaryWithConfig = error_boundary.createWithConfig;
+pub const catchError = error_boundary.catchError;
+
+// Declarative route handlers (Tier 4)
+pub const HtmxRouter = declarative_routes.HtmxRouter;
+pub const HtmxResourceConfig = declarative_routes.HtmxResourceConfig;
+pub const RouteBinding = declarative_routes.RouteBinding;
+pub const createHtmxRouter = declarative_routes.createRouter;
 
 test "module exports" {
     _ = HtmxConfig{};

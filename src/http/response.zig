@@ -584,6 +584,12 @@ pub const Response = struct {
         return Response.html(body).withHeader("X-HTMX-Fragment", "true");
     }
 
+    /// Create a response composer for combining multiple fragments with OOB swaps
+    /// Usage: Response.compose(allocator).fragment("#content", html).oob("#stats", stats).build()
+    pub fn compose(alloc: std.mem.Allocator) @import("../htmx/composer.zig").ResponseComposer {
+        return @import("../htmx/composer.zig").compose(alloc);
+    }
+
     pub fn htmxTrigger(self: Response, event: []const u8) Response {
         return self.withHeader("HX-Trigger", event);
     }

@@ -29,6 +29,11 @@ Complete reference for Engine12's public APIs.
 - [Background Tasks](#background-tasks)
 - [WebSocket API](#websocket-api)
 - [HTMX Integration](#htmx-integration)
+  - [Response Composition](#response-composition)
+  - [Request Context Helpers](#request-context-helpers)
+  - [Template Integration](#template-integration)
+  - [Error Boundary Middleware](#error-boundary-middleware)
+  - [Declarative Route Handlers](#declarative-route-handlers)
 - [Error Handling](#error-handling)
 
 ## Engine12 Core
@@ -5473,6 +5478,255 @@ Template (HTML):
     </div>
 </body>
 </html>
+```
+
+### Response Composition
+
+#### `Response.compose(allocator: std.mem.Allocator) ResponseComposer`
+
+Create a fluent response composer for building complex HTMX responses with multiple fragments, OOB swaps, and triggers.
+
+```zig
+var composer = Response.compose(allocator);
+defer composer.deinit();
+
+return composer
+    .fragment("#todo-list", "<li>New Todo</li>")
+    .oob("#stats", "<span>5 items</span>")
+    .oob("#notifications", "<div>Todo created!</div>")
+    .trigger("todosUpdated")
+    .status(201)
+    .build();
+```
+
+#### `ResponseComposer` Methods
+
+| Method | Description |
+|--------|-------------|
+| `.fragment(target, html)` | Set primary fragment with target |
+| `.oob(target, html)` | Add out-of-band swap |
+| `.oobWithSwap(target, html, swap_type)` | Add OOB swap with custom swap type |
+| `.trigger(event)` | Add HX-Trigger event |
+| `.header(name, value)` | Add custom header |
+| `.status(code)` | Set response status code |
+| `.build()` | Build final Response |
+| `.deinit()` | Free allocated resources |
+
+**Example: Todo CRUD with OOB Updates**
+```zig
+pub fn handleCreateTodo(req: *Request) Response {
+    // ... create todo logic ...
+    
+    const success_toast = htmx.toast(allocator, "Created!", .success) catch "";
+    
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
+    
+    return composer
+        .fragment("#todo-list", renderNewTodo(todo))
+        .oob("#toast", success_toast)
+        .oob("#stats", renderStats())
+        .trigger("todoCreated")
+        .status(201)
+        .build();
+}
+```
+
+### Request Context Helpers
+
+#### `htmx.htmx(req: *Request) HtmxContext`
+
+Get type-safe access to HTMX request state. Provides convenient helpers for checking HTMX headers and request type.
+
+```zig
+const htmx = @import("engine12").htmx;
+
+pub fn handleRequest(req: *Request) Response {
+    const ctx = htmx.htmx(req);
+    
+    if (ctx.shouldReturnPartial()) {
+        return Response.fragment(partial_html);
+    } else {
+        return Response.html(full_page);
+    }
+}
+```
+
+#### `HtmxContext` Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `.isHtmx()` | `bool` | True if HX-Request header present |
+| `.isBoosted()` | `bool` | True if HX-Boosted header present |
+| `.isPartial()` | `bool` | True if HTMX or boosted request |
+| `.shouldReturnPartial()` | `bool` | True if should return fragment |
+| `.shouldReturnFullPage()` | `bool` | True if should return full page |
+| `.target()` | `?[]const u8` | HX-Target header value |
+| `.trigger()` | `?[]const u8` | HX-Trigger header value |
+| `.triggerName()` | `?[]const u8` | HX-Trigger-Name header value |
+| `.currentUrl()` | `?[]const u8` | HX-Current-URL header value |
+| `.prompt()` | `?[]const u8` | HX-Prompt header value |
+| `.isHistoryRestore()` | `bool` | True if history restore request |
+| `.activeElement()` | `?[]const u8` | HX-Active-Element header value |
+| `.activeElementName()` | `?[]const u8` | HX-Active-Element-Name value |
+| `.activeElementValue()` | `?[]const u8` | HX-Active-Element-Value value |
+
+**Example: Conditional Caching**
+```zig
+pub fn handleGetStats(req: *Request) Response {
+    const ctx = htmx.htmx(req);
+    
+    // Only cache for HTMX partial requests
+    if (ctx.shouldReturnPartial()) {
+        if (htmx.getCachedResponse("stats")) |entry| {
+            return Response.fragment(entry.html);
+        }
+    }
+    
+    // ... generate stats ...
+}
+```
+
+### Template Integration
+
+#### `htmx.TemplateContext`
+
+Template context for rendering templates with variable substitution.
+
+```zig
+var ctx = htmx.TemplateContext.init(allocator);
+defer ctx.deinit();
+
+try ctx.set("title", "My Todo");
+try ctx.set("status", "completed");
+
+const html = try htmx.renderTemplate(allocator, "todo-item", ctx);
+```
+
+#### `htmx.TemplateRenderer`
+
+Template renderer with configurable options.
+
+```zig
+var renderer = htmx.createRendererWithConfig(allocator, .{
+    .template_dir = "views",
+    .extension = ".html",
+    .cache_enabled = true,
+    .cache_ttl_ms = 60000,
+});
+
+const response = try renderer.render("dashboard", ctx);
+```
+
+#### Template Format
+
+Templates use `{{ variable }}` syntax:
+
+```html
+<!-- templates/todo-item.zt.html -->
+<div class="todo">
+    <h3>{{ title }}</h3>
+    <span class="status">{{ status }}</span>
+</div>
+```
+
+### Error Boundary Middleware
+
+#### `htmx.catchError(allocator, handler, request) Response`
+
+Wrap a fallible handler and return an error fragment if it fails.
+
+```zig
+pub fn handleRequest(req: *Request) Response {
+    return htmx.catchError(allocator, myFallibleHandler, req);
+}
+
+fn myFallibleHandler(req: *Request) !Response {
+    const data = try fetchData();
+    return Response.fragment(data);
+}
+```
+
+If `myFallibleHandler` returns an error, `catchError` returns an error fragment with status 500.
+
+#### `htmx.ErrorBoundary`
+
+Configurable error boundary for consistent error handling.
+
+```zig
+const boundary = htmx.createErrorBoundaryWithConfig(allocator, .{
+    .show_stack_traces = false,  // Disable in production
+    .log_errors = true,
+    .include_request_details = false,
+});
+
+// Generate error fragment manually
+const html = boundary.errorFragment(error.OutOfMemory, "Operation failed");
+return Response.fragment(html).withStatus(500);
+```
+
+#### Handler Wrapping
+
+```zig
+const boundary = htmx.createErrorBoundary(allocator);
+
+// Wrap a handler for use with middleware chains
+const wrapped = boundary.wrap(myHandler);
+```
+
+### Declarative Route Handlers
+
+#### `htmx.HtmxRouter`
+
+Declarative resource-based routing for HTMX endpoints.
+
+```zig
+var router = htmx.createHtmxRouter(allocator);
+defer router.deinit();
+
+try router.resource("/todos", .{
+    .list = &handleListTodos,      // GET /todos
+    .create = &handleCreateTodo,   // POST /todos
+    .show = &handleShowTodo,       // GET /todos/:id
+    .update = &handleUpdateTodo,   // PUT /todos/:id
+    .delete = &handleDeleteTodo,   // DELETE /todos/:id
+    .new_form = &handleNewForm,    // GET /todos/new
+    .edit_form = &handleEditForm,  // GET /todos/:id/edit
+});
+
+// Get registered routes
+const routes = router.getRoutes();
+for (routes) |route| {
+    std.debug.print("{s} {s}\n", .{route.method, route.path});
+}
+```
+
+#### `htmx.HtmxResourceConfig`
+
+Configuration for resource handlers (all fields are optional):
+
+```zig
+pub const HtmxResourceConfig = struct {
+    list: ?*const fn (*Request) Response = null,
+    show: ?*const fn (*Request) Response = null,
+    create: ?*const fn (*Request) Response = null,
+    update: ?*const fn (*Request) Response = null,
+    delete: ?*const fn (*Request) Response = null,
+    edit_form: ?*const fn (*Request) Response = null,
+    new_form: ?*const fn (*Request) Response = null,
+};
+```
+
+**Partial Resources**
+
+Only register the handlers you need:
+
+```zig
+try router.resource("/comments", .{
+    .list = &handleListComments,
+    .create = &handleCreateComment,
+    // Other handlers remain null
+});
 ```
 
 ## Error Handling

@@ -334,6 +334,12 @@ pub fn createApp() !*E12.Engine12 {
     try app.post("/htmx/todos/clear-completed", handlers.htmx.handleClearCompleted);
     try app.get("/htmx/todos/stats", handlers.htmx.handleGetStats);
 
+    // New interactive HTMX handlers (Tier 4 features)
+    try app.get("/htmx/todos/filter", handlers.htmx.handleFilterByPriority);
+    try app.get("/htmx/todos/completed-count", handlers.htmx.handleCompletedCount);
+    try app.post("/htmx/todos/toggle-all", handlers.htmx.handleToggleAll);
+    try app.post("/htmx/todos/restore", handlers.htmx.handleRestoreTodo);
+
     // HTMX analytics page
     try app.get("/htmx/analytics", handlers.htmx.handleAnalyticsPage);
 

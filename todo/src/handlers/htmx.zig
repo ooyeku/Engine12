@@ -300,7 +300,7 @@ pub fn handleListTodos(req: *Request) Response {
     defer buf.deinit(allocator);
 
     if (todos.items.len == 0) {
-        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">📝</div><p>No todos yet. Add one above!</p></li>") catch {};
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>No todos yet. Add one above!</p></li>") catch {};
     } else {
         const start_idx = (page - 1) * per_page;
         const end_idx = @min(start_idx + per_page, todos.items.len);
@@ -379,7 +379,7 @@ pub fn handleSearchTodos(req: *Request) Response {
     }
 
     if (count == 0) {
-        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">🔍</div><p>No matching todos found.</p></li>") catch {};
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>No matching todos found.</p></li>") catch {};
     }
 
     return Response.fragment(buf.toOwnedSlice(allocator) catch "");
@@ -497,15 +497,15 @@ pub fn handleCreateTodo(req: *Request) Response {
         return htmx.errors.errorFragment("Failed to render todo");
     };
 
-    // Use OOB swaps to update multiple elements + show success toast
+    // Use Response.compose() for cleaner fragment composition (Tier 4)
     const success_toast = htmx.toast(allocator, "Todo created successfully!", .success) catch "";
 
-    var oob_builder = htmx.OobSwapBuilder.init(allocator);
-    defer oob_builder.deinit();
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
 
-    return oob_builder
-        .primary(buf.toOwnedSlice(allocator) catch "")
-        .swap("#toast", success_toast)
+    return composer
+        .fragment("#todo-list", buf.toOwnedSlice(allocator) catch "")
+        .oob("#toast", success_toast)
         .trigger("todoCreated")
         .status(201)
         .build();
@@ -580,15 +580,15 @@ pub fn handleToggleTodo(req: *Request) Response {
         return htmx.errors.errorFragment("Failed to render todo");
     };
 
-    // Use OOB swaps to show success toast
+    // Use Response.compose() for cleaner fragment composition (Tier 4)
     const success_toast = htmx.toast(allocator, "Todo updated successfully!", .success) catch "";
 
-    var oob_builder = htmx.OobSwapBuilder.init(allocator);
-    defer oob_builder.deinit();
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
 
-    return oob_builder
-        .primary(buf.toOwnedSlice(allocator) catch "")
-        .swap("#toast", success_toast)
+    return composer
+        .fragment("#todo-item", buf.toOwnedSlice(allocator) catch "")
+        .oob("#toast", success_toast)
         .trigger("todoUpdated")
         .build();
 }
@@ -885,27 +885,33 @@ pub fn handleDeleteTodo(req: *Request) Response {
     // Invalidate stats cache
     htmx.invalidateCache("todo:stats");
 
-    // Use OOB swaps to show success toast
+    // Use Response.compose() for cleaner fragment composition (Tier 4)
     const success_toast = htmx.toast(allocator, "Todo deleted successfully!", .success) catch "";
 
-    var oob_builder = htmx.OobSwapBuilder.init(allocator);
-    defer oob_builder.deinit();
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
 
-    return oob_builder
-        .primary("")
-        .swap("#toast", success_toast)
+    return composer
+        .fragment("", "")
+        .oob("#toast", success_toast)
         .trigger("todoDeleted")
         .build();
 }
 
 /// Handle getting todo stats
 pub fn handleGetStats(req: *Request) Response {
-    _ = req;
+    // Use HtmxContext for type-safe access to HTMX request state (Tier 4)
+    const ctx = htmx.htmx(req);
+
+    // Only cache for HTMX partial requests (not full page loads)
+    const should_cache = ctx.shouldReturnPartial();
 
     // Try cache first (5 second TTL)
     const cache_key = "todo:stats";
-    if (htmx.getCachedResponse(cache_key)) |entry| {
-        return Response.fragment(entry.html);
+    if (should_cache) {
+        if (htmx.getCachedResponse(cache_key)) |entry| {
+            return Response.fragment(entry.html);
+        }
     }
 
     const orm = database.getORM() catch {
@@ -1027,7 +1033,7 @@ pub fn handlePageActive(req: *Request) Response {
     }
 
     if (count == 0) {
-        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">✅</div><p>All caught up! No active todos.</p></li>\n") catch {};
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>All caught up! No active todos.</p></li>\n") catch {};
     }
 
     buf.appendSlice(allocator, "</ul>") catch {};
@@ -1061,7 +1067,7 @@ pub fn handlePageCompleted(req: *Request) Response {
     }
 
     if (count == 0) {
-        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">📋</div><p>No completed todos yet.</p></li>\n") catch {};
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>No completed todos yet.</p></li>\n") catch {};
     }
 
     buf.appendSlice(allocator, "</ul>") catch {};
@@ -1087,7 +1093,7 @@ pub fn handlePageAll(req: *Request) Response {
     buf.appendSlice(allocator, "<ul id=\"todo-list\" class=\"todo-list\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     if (todos.items.len == 0) {
-        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">📝</div><p>No todos yet. Add one above!</p></li>\n") catch {};
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>No todos yet. Add one above!</p></li>\n") catch {};
     } else {
         for (todos.items) |todo| {
             renderTodoItem(todo, &buf) catch continue;
@@ -1480,4 +1486,194 @@ pub fn handleAnalyticsPage(req: *Request) Response {
     ) catch return Response.html("").withStatus(500);
 
     return Response.html(buf.toOwnedSlice(allocator) catch "");
+}
+
+/// Handle filtering todos by priority
+pub fn handleFilterByPriority(req: *Request) Response {
+    const path = req.path();
+
+    // Get priority from query parameter
+    var priority_buf: [32]u8 = undefined;
+    var priority: []const u8 = "all";
+
+    if (getQueryParam(path, "priority")) |p| {
+        priority = urlDecode(p, &priority_buf);
+    }
+
+    const orm = database.getORM() catch {
+        return htmx.errors.errorFragment("Database not initialized");
+    };
+
+    var todos = orm.findAll(Todo) catch {
+        return htmx.errors.errorFragment("Failed to load todos");
+    };
+    defer todos.deinit(orm.allocator);
+
+    var buf = std.ArrayListUnmanaged(u8){};
+    defer buf.deinit(allocator);
+
+    var count: usize = 0;
+    for (todos.items) |todo| {
+        const matches = std.mem.eql(u8, priority, "all") or std.mem.eql(u8, todo.priority, priority);
+        if (matches) {
+            renderTodoItem(todo, &buf) catch continue;
+            count += 1;
+        }
+    }
+
+    if (count == 0) {
+        var msg_buf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&msg_buf, "<li class=\"empty-state\"><div class=\"empty-state-icon\"></div><p>No {s} priority todos found.</p></li>", .{priority}) catch "<li class=\"empty-state\">No todos found.</li>";
+        buf.appendSlice(allocator, msg) catch {};
+    }
+
+    return Response.fragment(buf.toOwnedSlice(allocator) catch "");
+}
+
+/// Handle getting completed count for clear button badge
+pub fn handleCompletedCount(req: *Request) Response {
+    _ = req;
+
+    const orm = database.getORM() catch {
+        return Response.fragment("<span class=\"count-badge\">0</span>");
+    };
+
+    var todos = orm.findAll(Todo) catch {
+        return Response.fragment("<span class=\"count-badge\">0</span>");
+    };
+    defer todos.deinit(orm.allocator);
+
+    var completed: u32 = 0;
+    for (todos.items) |todo| {
+        if (todo.completed) {
+            completed += 1;
+        }
+    }
+
+    var num_buf: [20]u8 = undefined;
+    var buf = std.ArrayListUnmanaged(u8){};
+    defer buf.deinit(allocator);
+
+    if (completed > 0) {
+        buf.appendSlice(allocator, "<span class=\"count-badge\">") catch {};
+        buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{completed}) catch "0") catch {};
+        buf.appendSlice(allocator, "</span>") catch {};
+    }
+
+    return Response.fragment(buf.toOwnedSlice(allocator) catch "");
+}
+
+/// Handle toggling all todos (mark all complete/incomplete)
+pub fn handleToggleAll(req: *Request) Response {
+    const orm = database.getORM() catch {
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
+    };
+
+    // Check current state from form data
+    var form_parser = req.getFormParser();
+    const set_completed = form_parser.getBool("completed") catch true;
+
+    // Use driver-aware SQL
+    const completed_val = if (database.getDriver() == .postgresql)
+        (if (set_completed) "TRUE" else "FALSE")
+    else
+        (if (set_completed) "1" else "0");
+
+    const now = std.time.timestamp();
+    const sql = std.fmt.allocPrint(orm.allocator, "UPDATE todos SET completed = {s}, updated_at = {}", .{ completed_val, now }) catch {
+        return htmx.errors.errorFragmentWithStatus("Memory error", 500);
+    };
+    defer orm.allocator.free(sql);
+
+    _ = orm.db.execute(sql) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to update todos", 500);
+    };
+
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
+
+    // Use Response.compose() for success feedback
+    const success_msg = if (set_completed) "All todos marked complete!" else "All todos marked active!";
+    const success_toast = htmx.toast(allocator, success_msg, .success) catch "";
+
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
+
+    return composer
+        .fragment("", "")
+        .oob("#toast", success_toast)
+        .trigger("todosUpdated")
+        .build();
+}
+
+/// Handle restoring a deleted todo (for undo functionality)
+pub fn handleRestoreTodo(req: *Request) Response {
+    // Get todo data from form (sent by undo action)
+    var form_parser = req.getFormParser();
+
+    const title = form_parser.get("title") catch null orelse {
+        return htmx.errors.errorFragment("Missing title for restore");
+    };
+    defer req.allocator().free(title);
+
+    const description = form_parser.get("description") catch null orelse "";
+    defer if (description.len > 0) req.allocator().free(description);
+
+    const priority = form_parser.get("priority") catch null orelse "medium";
+    defer if (!std.mem.eql(u8, priority, "medium")) req.allocator().free(priority);
+
+    const tags = form_parser.get("tags") catch null orelse "";
+    defer if (tags.len > 0) req.allocator().free(tags);
+
+    const orm = database.getORM() catch {
+        return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
+    };
+
+    // Create copies for the Todo struct
+    const title_copy = allocator.dupe(u8, title) catch {
+        return htmx.errors.errorFragmentWithStatus("Memory error", 500);
+    };
+    const desc_copy = if (description.len > 0) allocator.dupe(u8, description) catch "" else "";
+    const priority_copy = allocator.dupe(u8, priority) catch "medium";
+    const tags_copy = if (tags.len > 0) allocator.dupe(u8, tags) catch "" else "";
+
+    var todo = Todo{
+        .id = 0,
+        .user_id = 1,
+        .title = @constCast(title_copy),
+        .description = @constCast(desc_copy),
+        .completed = false,
+        .priority = @constCast(priority_copy),
+        .due_date = null,
+        .tags = @constCast(tags_copy),
+        .created_at = std.time.timestamp(),
+        .updated_at = std.time.timestamp(),
+    };
+
+    const created_id = orm.create(Todo, todo) catch {
+        return htmx.errors.errorFragmentWithStatus("Failed to restore todo", 500);
+    };
+
+    todo.id = created_id;
+
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
+
+    var buf = std.ArrayListUnmanaged(u8){};
+    defer buf.deinit(allocator);
+
+    renderTodoItem(todo, &buf) catch {
+        return htmx.errors.errorFragment("Failed to render restored todo");
+    };
+
+    const success_toast = htmx.toast(allocator, "Todo restored!", .success) catch "";
+
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
+
+    return composer
+        .fragment("#todo-list", buf.toOwnedSlice(allocator) catch "")
+        .oob("#toast", success_toast)
+        .trigger("todoCreated")
+        .build();
 }

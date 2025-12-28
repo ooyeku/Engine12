@@ -18,6 +18,13 @@ Engine12 provides comprehensive HTMX support for building modern, interactive we
 - [Optimistic UI](#optimistic-ui)
 - [Fragment Caching](#fragment-caching)
 
+### Tier 4 Features (Architecture Improvements)
+- [Declarative Route Handlers](#declarative-route-handlers)
+- [Response Composition](#response-composition)
+- [Template Integration](#template-integration)
+- [Request Context Helpers](#request-context-helpers)
+- [Error Boundary Middleware](#error-boundary-middleware)
+
 ### Additional
 - [Best Practices](#best-practices)
 
@@ -905,6 +912,241 @@ std.debug.print("Total: {}, Active: {}, Expired: {}\n", .{
     stats.expired_entries,
 });
 ```
+
+## Tier 4 Features (Architecture Improvements)
+
+### Declarative Route Handlers
+
+Simplify HTMX resource routing with a RESTful-style API.
+
+#### Basic Usage
+
+```zig
+const htmx = @import("engine12").htmx;
+const allocator = std.heap.page_allocator;
+
+// Create an HTMX router
+var router = htmx.createHtmxRouter(allocator);
+defer router.deinit();
+
+// Register a resource with CRUD handlers
+try router.resource("/todos", .{
+    .list = &handleListTodos,      // GET /todos
+    .create = &handleCreateTodo,   // POST /todos
+    .show = &handleShowTodo,       // GET /todos/:id
+    .update = &handleUpdateTodo,   // PUT /todos/:id
+    .delete = &handleDeleteTodo,   // DELETE /todos/:id
+    .new_form = &handleNewForm,    // GET /todos/new
+    .edit_form = &handleEditForm,  // GET /todos/:id/edit
+});
+
+// Get registered routes
+const routes = router.getRoutes();
+for (routes) |route| {
+    std.debug.print("{s} {s}\n", .{route.method, route.path});
+}
+```
+
+#### Partial Resources
+
+Only register the handlers you need:
+
+```zig
+try router.resource("/comments", .{
+    .list = &handleListComments,
+    .create = &handleCreateComment,
+    // Other handlers remain null
+});
+```
+
+### Response Composition
+
+Combine multiple fragments with OOB swaps using a fluent builder.
+
+#### Basic Usage
+
+```zig
+const Response = @import("engine12").Response;
+const allocator = std.heap.page_allocator;
+
+pub fn handleCreateTodo(request: *Request) Response {
+    var composer = Response.compose(allocator);
+    defer composer.deinit();
+
+    return composer
+        .fragment("#todo-list", "<li>New Todo</li>")
+        .oob("#stats", "<span>5 items</span>")
+        .oob("#notifications", "<div>Todo created!</div>")
+        .trigger("todosUpdated")
+        .status(201)
+        .build();
+}
+```
+
+#### OOB Swap Strategies
+
+```zig
+var composer = Response.compose(allocator);
+defer composer.deinit();
+
+// Default innerHTML swap
+_ = composer.oob("#stats", "<span>Content</span>");
+
+// Custom swap type
+_ = composer.oobWithSwap("#element", "<div>New</div>", "outerHTML");
+
+// Multiple triggers
+_ = composer.trigger("dataUpdated");
+_ = composer.trigger("statsRefreshed");
+
+// Custom headers
+_ = composer.header("X-Custom-Header", "value");
+```
+
+### Template Integration
+
+First-class template support with variable substitution.
+
+#### Basic Rendering
+
+```zig
+const htmx = @import("engine12").htmx;
+const allocator = std.heap.page_allocator;
+
+pub fn handleShowTodo(request: *Request) Response {
+    var ctx = htmx.TemplateContext.init(allocator);
+    defer ctx.deinit();
+    
+    try ctx.set("title", "My Todo");
+    try ctx.set("status", "completed");
+    
+    return try htmx.renderTemplate(allocator, "todo-item", ctx);
+}
+```
+
+#### Custom Renderer Configuration
+
+```zig
+var renderer = htmx.createRendererWithConfig(allocator, .{
+    .template_dir = "views",
+    .extension = ".html",
+    .cache_enabled = true,
+    .cache_ttl_ms = 60000,
+});
+
+const response = try renderer.render("dashboard", ctx);
+```
+
+#### Template Format
+
+Templates use `{{ variable }}` syntax:
+
+```html
+<!-- templates/todo-item.zt.html -->
+<div class="todo">
+    <h3>{{ title }}</h3>
+    <span class="status">{{ status }}</span>
+</div>
+```
+
+### Request Context Helpers
+
+Type-safe access to HTMX request state.
+
+#### Basic Usage
+
+```zig
+const htmx = @import("engine12").htmx;
+
+pub fn handleRequest(request: *Request) Response {
+    const ctx = htmx.htmx(request);
+    
+    // Check request type
+    if (ctx.isHtmx()) {
+        // This is an HTMX request
+    }
+    
+    if (ctx.isBoosted()) {
+        // This is a boosted navigation
+    }
+    
+    // Conditional rendering
+    if (ctx.shouldReturnPartial()) {
+        return Response.fragment(partial_html);
+    } else {
+        return Response.html(full_page);
+    }
+}
+```
+
+#### Available Methods
+
+```zig
+const ctx = htmx.htmx(request);
+
+ctx.isHtmx()           // true if HX-Request header present
+ctx.isBoosted()        // true if HX-Boosted header present
+ctx.isPartial()        // true if HTMX or boosted request
+ctx.target()           // HX-Target header value
+ctx.trigger()          // HX-Trigger header value
+ctx.triggerName()      // HX-Trigger-Name header value
+ctx.currentUrl()       // HX-Current-URL header value
+ctx.prompt()           // HX-Prompt header value
+ctx.isHistoryRestore() // true if history restore request
+ctx.activeElement()    // HX-Active-Element header value
+ctx.activeElementName()    // HX-Active-Element-Name value
+ctx.activeElementValue()   // HX-Active-Element-Value value
+ctx.shouldReturnPartial()  // true if should return fragment
+ctx.shouldReturnFullPage() // true if should return full page
+```
+
+### Error Boundary Middleware
+
+Catch handler errors and return consistent error fragments.
+
+#### Basic Usage
+
+```zig
+const htmx = @import("engine12").htmx;
+const allocator = std.heap.page_allocator;
+
+pub fn handleRequest(request: *Request) Response {
+    return htmx.catchError(allocator, myFallibleHandler, request);
+}
+
+fn myFallibleHandler(request: *Request) !Response {
+    // This can return an error
+    const data = try fetchData();
+    return Response.fragment(data);
+}
+```
+
+If `myFallibleHandler` returns an error, `catchError` returns an error fragment with status 500.
+
+#### Custom Error Boundary
+
+```zig
+const boundary = htmx.createErrorBoundaryWithConfig(allocator, .{
+    .show_stack_traces = false,  // Disable in production
+    .log_errors = true,
+    .include_request_details = false,
+});
+
+// Generate error fragment manually
+const html = boundary.errorFragment(error.OutOfMemory, "Operation failed");
+return Response.fragment(html).withStatus(500);
+```
+
+#### Handler Wrapping
+
+```zig
+const boundary = htmx.createErrorBoundary(allocator);
+
+// Wrap a handler (for use with middleware chains)
+const wrapped = boundary.wrap(myHandler);
+```
+
+---
 
 ## Best Practices
 
