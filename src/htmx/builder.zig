@@ -60,12 +60,16 @@ test "HtmxResponseBuilder.init" {
 
     try std.testing.expect(resp.getBody().len > 0);
     try std.testing.expectEqualStrings(html, resp.getBody());
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    try std.testing.expectEqualStrings("200 OK", resp.inner.status.toString());
 }
 
 test "HtmxResponseBuilder.init with empty string" {
     const builder = HtmxResponseBuilder.init("");
     const resp = builder.build();
     try std.testing.expectEqualStrings("", resp.getBody());
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    try std.testing.expectEqualStrings("200 OK", resp.inner.status.toString());
 }
 
 test "HtmxResponseBuilder.trigger" {
@@ -76,6 +80,8 @@ test "HtmxResponseBuilder.trigger" {
     const headers = resp.getCustomHeaders() orelse return error.NoHeaders;
     try std.testing.expect(headers.get("HX-Trigger") != null);
     try std.testing.expectEqualStrings("todoCreated", headers.get("HX-Trigger").?);
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    try std.testing.expectEqualStrings("200 OK", resp.inner.status.toString());
 }
 
 test "HtmxResponseBuilder.target" {
@@ -86,6 +92,8 @@ test "HtmxResponseBuilder.target" {
     const headers = resp.getCustomHeaders() orelse return error.NoHeaders;
     try std.testing.expect(headers.get("HX-Retarget") != null);
     try std.testing.expectEqualStrings("#todo-list", headers.get("HX-Retarget").?);
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    try std.testing.expectEqualStrings("200 OK", resp.inner.status.toString());
 }
 
 test "HtmxResponseBuilder.swap" {
@@ -96,6 +104,8 @@ test "HtmxResponseBuilder.swap" {
     const headers = resp.getCustomHeaders() orelse return error.NoHeaders;
     try std.testing.expect(headers.get("HX-Reswap") != null);
     try std.testing.expectEqualStrings("beforeend", headers.get("HX-Reswap").?);
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    try std.testing.expectEqualStrings("200 OK", resp.inner.status.toString());
 }
 
 test "HtmxResponseBuilder.status" {
@@ -104,6 +114,9 @@ test "HtmxResponseBuilder.status" {
         .build();
 
     try std.testing.expect(resp.getBody().len > 0);
+    try std.testing.expectEqualStrings("text/html", resp.inner.content_type);
+    // withStatus sets _status_code, not inner.status
+    try std.testing.expectEqual(@as(u16, 201), resp._status_code.?);
 }
 
 test "HtmxResponseBuilder.pushUrl" {
@@ -169,25 +182,18 @@ test "HtmxResponseBuilder.complex chain" {
         .build();
 
     const headers = resp.getCustomHeaders() orelse return error.NoHeaders;
-
     try std.testing.expect(headers.get("HX-Trigger") != null);
     try std.testing.expectEqualStrings("todoCreated", headers.get("HX-Trigger").?);
-
     try std.testing.expect(headers.get("HX-Retarget") != null);
     try std.testing.expectEqualStrings("#todo-list", headers.get("HX-Retarget").?);
-
     try std.testing.expect(headers.get("HX-Reswap") != null);
     try std.testing.expectEqualStrings("beforeend", headers.get("HX-Reswap").?);
-
     try std.testing.expect(headers.get("HX-Push-Url") != null);
     try std.testing.expectEqualStrings("/todos/new", headers.get("HX-Push-Url").?);
-
     try std.testing.expect(headers.get("HX-Trigger-After-Swap") != null);
     try std.testing.expectEqualStrings("updateCount", headers.get("HX-Trigger-After-Swap").?);
-
     try std.testing.expect(headers.get("HX-Trigger-After-Settle") != null);
     try std.testing.expectEqualStrings("refreshStats", headers.get("HX-Trigger-After-Settle").?);
-
     try std.testing.expect(headers.get("X-Custom") != null);
     try std.testing.expectEqualStrings("value", headers.get("X-Custom").?);
 }

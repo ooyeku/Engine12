@@ -1,7 +1,6 @@
 const std = @import("std");
 const Response = @import("../http/response.zig").Response;
 
-
 pub const ToastType = enum {
     success,
     err,
@@ -10,10 +9,10 @@ pub const ToastType = enum {
 
     pub fn toClass(self: ToastType) []const u8 {
         return switch (self) {
-            .success => "toast toast-success",
-            .err => "toast toast-error",
-            .warning => "toast toast-warning",
-            .info => "toast toast-info",
+            .success => "toast success",
+            .err => "toast error",
+            .warning => "toast warning",
+            .info => "toast info",
         };
     }
 
@@ -413,7 +412,7 @@ test "toast generation" {
     const html = try toast(allocator, "Item saved!", .success);
     defer allocator.free(html);
 
-    try std.testing.expect(std.mem.indexOf(u8, html, "toast-success") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "toast success") != null);
     try std.testing.expect(std.mem.indexOf(u8, html, "Item saved!") != null);
     try std.testing.expect(std.mem.indexOf(u8, html, "hx-swap-oob") != null);
 }
@@ -424,7 +423,7 @@ test "toast with duration" {
     defer allocator.free(html);
 
     try std.testing.expect(std.mem.indexOf(u8, html, "delay:3000ms") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "toast-warning") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "toast warning") != null);
 }
 
 test "modal generation" {

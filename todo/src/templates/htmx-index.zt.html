@@ -4,43 +4,36 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ .title | capitalize }}</title>
+    <title>{{ .title | capitalize }} — Engine12</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
         rel="stylesheet" />
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    {# Inline styles for the HTMX template with modern dark theme #}
     <style>
         :root {
-            --bg-deep: #0a0a0b;
-            --bg: #101012;
-            --bg-card: #18181b;
-            --bg-elevated: #1f1f23;
-            --bg-input: #27272a;
-            --text: #fafafa;
-            --text-secondary: #a1a1aa;
-            --text-muted: #71717a;
-            --border: #27272a;
-            --border-hover: #3f3f46;
-            --accent: #a78bfa;
-            --accent-dim: rgba(167, 139, 250, 0.15);
-            --accent-glow: rgba(167, 139, 250, 0.3);
-            --success: #4ade80;
-            --success-dim: rgba(74, 222, 128, 0.15);
-            --warning: #fbbf24;
-            --warning-dim: rgba(251, 191, 36, 0.15);
-            --danger: #f87171;
-            --danger-dim: rgba(248, 113, 113, 0.15);
+            --black: #0a0a0a;
+            --black-light: #111111;
+            --black-lighter: #181818;
+            --black-surface: #1f1f1f;
+            --black-elevated: #262626;
+            --border: #2a2a2a;
+            --border-light: #333333;
+            --gold: #f7a41d;
+            --gold-light: #ffc857;
+            --gold-dim: rgba(247, 164, 29, 0.12);
+            --gold-glow: rgba(247, 164, 29, 0.25);
+            --white: #fafafa;
+            --gray-100: #e5e5e5;
+            --gray-200: #cccccc;
+            --gray-300: #a3a3a3;
+            --gray-400: #737373;
+            --gray-500: #525252;
+            --green: #22c55e;
+            --red: #ef4444;
             --radius: 8px;
             --radius-lg: 12px;
-            --shadow:
-                0 4px 6px -1px rgba(0, 0, 0, 0.3),
-                0 2px 4px -2px rgba(0, 0, 0, 0.2);
-            --shadow-lg:
-                0 10px 15px -3px rgba(0, 0, 0, 0.4),
-                0 4px 6px -4px rgba(0, 0, 0, 0.3);
         }
 
         * {
@@ -50,590 +43,635 @@
         }
 
         body {
-            font-family:
-                "Space Grotesk",
-                -apple-system,
-                BlinkMacSystemFont,
-                sans-serif;
-            background: var(--bg-deep);
-            color: var(--text);
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--black);
+            color: var(--white);
             min-height: 100vh;
-            line-height: 1.6;
-            font-size: 15px;
+            line-height: 1.5;
+            font-size: 14px;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
-        /* Subtle background pattern */
-        body::before {
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background:
-                radial-gradient(ellipse at top,
-                    rgba(167, 139, 250, 0.03) 0%,
-                    transparent 50%),
-                radial-gradient(ellipse at bottom right,
-                    rgba(74, 222, 128, 0.02) 0%,
-                    transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .container {
-            max-width: 680px;
+        /* Layout */
+        .app {
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 3rem 1.5rem;
+            padding: 48px 40px;
         }
 
         /* Header */
-        header {
-            margin-bottom: 2rem;
-            text-align: center;
+        .header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 48px;
+            padding-bottom: 32px;
+            border-bottom: 1px solid var(--border);
         }
 
-        .header-row {
+        .brand {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 0.75rem;
-            margin-bottom: 0.5rem;
+            gap: 16px;
         }
 
-        h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--text);
-            letter-spacing: -0.03em;
-            background: linear-gradient(135deg,
-                    var(--text) 0%,
-                    var(--accent) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .badge {
+        .logo {
             font-family: "JetBrains Mono", monospace;
-            font-size: 0.65rem;
-            font-weight: 500;
-            color: var(--accent);
-            background: var(--accent-dim);
-            padding: 0.3rem 0.6rem;
-            border-radius: 4px;
-            letter-spacing: 0.05em;
-            border: 1px solid rgba(167, 139, 250, 0.2);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--black);
+            background: var(--gold);
+            padding: 8px 12px;
+            border-radius: 6px;
+            letter-spacing: -0.02em;
         }
 
-        .subtitle {
-            color: var(--text-muted);
-            font-size: 0.95rem;
+        .title-group h1 {
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            color: var(--white);
         }
 
-        /* Stats Bar */
-        .stats-bar {
+        .title-group p {
+            font-size: 14px;
+            color: var(--gray-400);
+            margin-top: 4px;
+        }
+
+        .header-stats {
             display: flex;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 1rem;
-            background: var(--bg-card);
+            gap: 40px;
+        }
+
+        .header-stat {
+            text-align: right;
+        }
+
+        .header-stat-value {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 32px;
+            font-weight: 600;
+            color: var(--white);
+            letter-spacing: -0.02em;
+        }
+
+        .header-stat-value.gold {
+            color: var(--gold);
+        }
+
+        .header-stat-label {
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--gray-500);
+            margin-top: 4px;
+        }
+
+        /* Main Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 32px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--black-light);
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow);
+            padding: 24px;
         }
 
-        .stat-pill {
+        .card+.card {
+            margin-top: 24px;
+        }
+
+        .card-header {
             display: flex;
             align-items: center;
-            gap: 0.4rem;
-            padding: 0.4rem 0.8rem;
-            background: var(--bg-elevated);
-            border-radius: 20px;
-            font-size: 0.8rem;
+            justify-content: space-between;
+            margin-bottom: 20px;
         }
 
-        .stat-pill .value {
+        .card-title {
+            font-size: 11px;
             font-weight: 600;
-            color: var(--text);
-            font-family: "JetBrains Mono", monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-500);
         }
 
-        .stat-pill .label {
-            color: var(--text-muted);
-            text-transform: lowercase;
-            font-size: 0.75rem;
+        .card-badge {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 10px;
+            font-weight: 500;
+            padding: 4px 8px;
+            background: var(--gold-dim);
+            color: var(--gold);
+            border-radius: 4px;
             letter-spacing: 0.02em;
         }
 
-        .stat-pill.progress {
-            background: var(--accent-dim);
-            border: 1px solid rgba(167, 139, 250, 0.2);
-        }
-
-        .stat-pill.progress .value {
-            color: var(--accent);
-        }
-
-        /* Messages */
-        #messages:not(:empty) {
-            margin-bottom: 1rem;
-        }
-
-        .error,
-        .success {
-            padding: 0.75rem 1rem;
-            border-radius: var(--radius);
-            font-size: 0.875rem;
+        /* Form */
+        .form-grid {
             display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .error {
-            background: var(--danger-dim);
-            color: var(--danger);
-            border: 1px solid rgba(248, 113, 113, 0.25);
-        }
-
-        .success {
-            background: var(--success-dim);
-            color: var(--success);
-            border: 1px solid rgba(74, 222, 128, 0.25);
-        }
-
-        /* Add Form */
-        .add-form {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow);
-            transition: border-color 0.2s;
-        }
-
-        .add-form:focus-within {
-            border-color: var(--accent);
-            box-shadow:
-                var(--shadow),
-                0 0 0 3px var(--accent-dim);
+            flex-direction: column;
+            gap: 16px;
         }
 
         .form-row {
             display: flex;
-            gap: 0.5rem;
+            gap: 12px;
         }
 
-        .form-row+.form-row {
-            margin-top: 0.75rem;
-        }
-
-        input[type="text"],
-        input[type="date"],
+        input,
         select {
-            padding: 0.7rem 0.875rem;
-            background: var(--bg-input);
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--black-surface);
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            color: var(--text);
-            font-size: 0.9rem;
+            color: var(--white);
             font-family: inherit;
-            transition: all 0.15s;
+            font-size: 14px;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
 
-        input[type="text"] {
-            flex: 1;
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px var(--gold-dim);
+        }
+
+        input::placeholder {
+            color: var(--gray-500);
+        }
+
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23525252' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+            padding-right: 36px;
         }
 
         input[type="date"] {
             color-scheme: dark;
             min-width: 140px;
-        }
-
-        input[type="text"]:focus,
-        input[type="date"]:focus,
-        select:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px var(--accent-dim);
-        }
-
-        input[type="text"]::placeholder {
-            color: var(--text-muted);
-        }
-
-        select {
-            cursor: pointer;
-            min-width: 110px;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 0.75rem center;
-            padding-right: 2rem;
+            flex: 0 0 auto;
         }
 
         .btn {
-            padding: 0.7rem 1.25rem;
+            padding: 12px 24px;
+            border: none;
             border-radius: var(--radius);
-            font-size: 0.875rem;
-            font-weight: 500;
             font-family: inherit;
+            font-size: 14px;
+            font-weight: 500;
             cursor: pointer;
             transition: all 0.15s;
-            border: 1px solid transparent;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.4rem;
         }
 
         .btn-primary {
-            background: var(--accent);
-            color: var(--bg-deep);
+            background: var(--gold);
+            color: var(--black);
         }
 
         .btn-primary:hover {
-            background: #b69dfc;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px var(--accent-glow);
+            background: var(--gold-light);
         }
 
         .btn-secondary {
-            background: var(--bg-elevated);
-            color: var(--text-secondary);
-            border-color: var(--border);
+            background: var(--black-surface);
+            color: var(--gray-300);
+            border: 1px solid var(--border);
         }
 
         .btn-secondary:hover {
-            background: var(--bg-input);
-            color: var(--text);
-            border-color: var(--border-hover);
+            background: var(--black-elevated);
+            color: var(--white);
+            border-color: var(--border-light);
         }
 
-        .btn-secondary.active {
-            background: var(--accent-dim);
-            color: var(--accent);
-            border-color: rgba(167, 139, 250, 0.3);
-        }
-
-        /* Filter Bar */
-        .filter-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .filter-buttons {
-            display: flex;
-            gap: 0.4rem;
-        }
-
-        .filter-buttons .btn {
-            padding: 0.5rem 0.875rem;
-            font-size: 0.8rem;
-        }
-
-        /* Todo List */
-        .todo-list {
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-
-        .todo-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 0.875rem;
-            padding: 1rem 1.25rem;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            transition: all 0.2s;
-            box-shadow: var(--shadow);
-        }
-
-        .todo-item:hover {
-            border-color: var(--border-hover);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .todo-item.completed {
-            opacity: 0.7;
-        }
-
-        .todo-item.completed .todo-title {
-            color: var(--text-muted);
-            text-decoration: line-through;
-        }
-
-        /* Priority indicators */
-        .todo-item.priority-high {
-            border-left: 3px solid var(--danger);
-        }
-
-        .todo-item.priority-medium {
-            border-left: 3px solid var(--warning);
-        }
-
-        .todo-item.priority-low {
-            border-left: 3px solid var(--success);
-        }
-
-        /* Checkbox */
-        .todo-checkbox {
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--border);
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.15s;
-            flex-shrink: 0;
-            margin-top: 2px;
-            position: relative;
-            background: var(--bg-elevated);
-        }
-
-        .todo-checkbox:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-        }
-
-        .todo-checkbox:checked {
-            background: var(--accent);
-            border-color: var(--accent);
-        }
-
-        .todo-checkbox:checked::after {
-            content: "";
-            position: absolute;
-            left: 6px;
-            top: 2px;
-            width: 5px;
-            height: 10px;
-            border: solid var(--bg-deep);
-            border-width: 0 2px 2px 0;
-            transform: rotate(45deg);
-        }
-
-        .todo-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .todo-title {
-            font-size: 0.95rem;
-            font-weight: 500;
-            color: var(--text);
-            margin-bottom: 0.25rem;
-        }
-
-        .todo-description {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-
-        /* Todo Meta (tags, dates) */
-        .todo-meta {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
-        }
-
-        .todo-tag {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 0.7rem;
-            padding: 0.2rem 0.5rem;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--text-secondary);
-        }
-
-        .todo-due {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-        }
-
-        .todo-due svg {
-            width: 14px;
-            height: 14px;
-            stroke: currentColor;
-            opacity: 0.7;
-        }
-
-        .todo-due.overdue {
-            color: var(--danger);
-            font-weight: 500;
-        }
-
-        .todo-due.overdue svg {
-            stroke: var(--danger);
-            opacity: 1;
-        }
-
-        /* Todo Actions */
-        .todo-actions {
-            display: flex;
-            gap: 0.25rem;
-            opacity: 0;
-            transition: opacity 0.15s;
-        }
-
-        .todo-item:hover .todo-actions {
-            opacity: 1;
-        }
-
-        .btn-icon {
-            width: 32px;
-            height: 32px;
-            padding: 0;
-            border: none;
-            background: transparent;
-            color: var(--text-muted);
-            cursor: pointer;
-            border-radius: var(--radius);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.15s;
-        }
-
-        .btn-icon svg {
-            width: 16px;
-            height: 16px;
-            stroke: currentColor;
-            stroke-width: 2;
-            fill: none;
-        }
-
-        .btn-icon:hover {
-            background: var(--bg-elevated);
-            color: var(--text);
-        }
-
-        .btn-icon.btn-edit:hover {
-            background: var(--warning-dim);
-            color: var(--warning);
-        }
-
-        .btn-icon.btn-delete:hover {
-            background: var(--danger-dim);
-            color: var(--danger);
-        }
-
-        /* Edit Form */
-        .edit-form {
-            background: var(--bg-elevated);
-            border: 1px solid var(--accent);
-            border-radius: var(--radius-lg);
-            padding: 1.25rem;
-            box-shadow: 0 0 0 3px var(--accent-dim);
-        }
-
-        .edit-form .form-group {
-            margin-bottom: 0.75rem;
-        }
-
-        .edit-form .form-group:last-of-type {
-            margin-bottom: 1rem;
-        }
-
-        .edit-form label {
-            display: block;
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: var(--text-muted);
-            margin-bottom: 0.35rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .edit-form input[type="text"],
-        .edit-form input[type="date"],
-        .edit-form select {
-            width: 100%;
-        }
-
-        .edit-form .form-row-inline {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 0.75rem;
-        }
-
-        .edit-form .form-actions {
-            display: flex;
-            gap: 0.5rem;
-            justify-content: flex-end;
-        }
-
-        .btn-save {
-            background: var(--success);
-            color: var(--bg-deep);
-            border: none;
-            font-weight: 500;
-        }
-
-        .btn-save:hover {
-            background: #5ee890;
+        .btn-sm {
+            padding: 8px 14px;
+            font-size: 13px;
         }
 
         .btn-cancel {
-            background: var(--bg-input);
-            color: var(--text-secondary);
+            background: var(--black-surface);
+            color: var(--gray-300);
             border: 1px solid var(--border);
         }
 
         .btn-cancel:hover {
-            background: var(--bg-elevated);
-            color: var(--text);
+            background: var(--black-elevated);
+            color: var(--white);
+        }
+
+        .btn-save {
+            background: var(--gold);
+            color: var(--black);
+        }
+
+        .btn-save:hover {
+            background: var(--gold-light);
+        }
+
+        /* Search */
+        .search-wrapper {
+            margin-bottom: 16px;
+        }
+
+        .search-wrapper input {
+            width: 100%;
+        }
+
+        /* Task List */
+        .task-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 440px;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+
+        .task-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .task-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .task-list::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 16px 18px;
+            background: var(--black-surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            transition: all 0.15s;
+        }
+
+        .task-item:hover {
+            background: var(--black-elevated);
+            border-color: var(--border);
+        }
+
+        .task-item.priority-high {
+            border-left: 3px solid var(--red);
+        }
+
+        .task-item.priority-medium {
+            border-left: 3px solid var(--gold);
+        }
+
+        .task-item.priority-low {
+            border-left: 3px solid var(--green);
+        }
+
+        .task-item.completed {
+            opacity: 0.5;
+        }
+
+        .task-item.completed .task-title {
+            text-decoration: line-through;
+        }
+
+        .task-checkbox {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            min-width: 18px;
+            max-width: 18px;
+            min-height: 18px;
+            max-height: 18px;
+            flex: 0 0 18px;
+            border: 1.5px solid var(--border-light);
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 2px;
+            transition: all 0.15s;
+            position: relative;
+            background: transparent;
+        }
+
+        .task-checkbox:hover {
+            border-color: var(--gold);
+        }
+
+        .task-checkbox:checked {
+            background: var(--gold);
+            border-color: var(--gold);
+        }
+
+        .task-checkbox:checked::after {
+            content: "";
+            position: absolute;
+            left: 5px;
+            top: 2px;
+            width: 5px;
+            height: 9px;
+            border: solid var(--black);
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
+        .task-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .task-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--white);
+            margin-bottom: 4px;
+        }
+
+        .task-desc {
+            font-size: 13px;
+            color: var(--gray-400);
+            margin-bottom: 8px;
+        }
+
+        .task-meta {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .task-date {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 11px;
+            color: var(--gray-500);
+        }
+
+        .task-tag {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 11px;
+            padding: 2px 8px;
+            background: var(--black-lighter);
+            border-radius: 4px;
+            color: var(--gray-400);
+        }
+
+        .task-actions {
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .task-item:hover .task-actions {
+            opacity: 1;
+        }
+
+        .action-btn {
+            padding: 6px 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--gray-400);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .action-btn:hover {
+            background: var(--black-elevated);
+            color: var(--white);
+        }
+
+        .action-btn.delete:hover {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Progress Ring */
+        .progress-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 32px 24px;
+        }
+
+        .progress-ring {
+            position: relative;
+            width: 120px;
+            height: 120px;
+            margin-bottom: 16px;
+        }
+
+        .progress-ring svg {
+            transform: rotate(-90deg);
+        }
+
+        .progress-ring circle {
+            fill: transparent;
+            stroke-width: 6;
+        }
+
+        .progress-ring .bg {
+            stroke: var(--border);
+        }
+
+        .progress-ring .fg {
+            stroke: var(--gold);
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.5s;
+        }
+
+        .progress-ring-text {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .progress-ring-value {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--gold);
+        }
+
+        .progress-ring-label {
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--gray-500);
+            margin-top: 2px;
+        }
+
+        /* Filter Section */
+        .filter-section {
+            margin-bottom: 20px;
+        }
+
+        .filter-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .filter-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-500);
+            margin-bottom: 10px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .filter-btn {
+            padding: 8px 14px;
+            background: var(--black-surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--gray-400);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .filter-btn:hover {
+            background: var(--black-elevated);
+            color: var(--white);
+        }
+
+        .filter-btn.active {
+            background: var(--gold);
+            border-color: var(--gold);
+            color: var(--black);
+        }
+
+        .priority-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .priority-dot.high {
+            background: var(--red);
+        }
+
+        .priority-dot.medium {
+            background: var(--gold);
+        }
+
+        .priority-dot.low {
+            background: var(--green);
+        }
+
+        /* Links */
+        .nav-links {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-link {
+            flex: 1;
+            padding: 12px;
+            background: var(--black-surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--gray-400);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            text-align: center;
+            transition: all 0.15s;
+        }
+
+        .nav-link:hover {
+            background: var(--black-elevated);
+            color: var(--white);
+        }
+
+        /* Features */
+        .feature-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .feature-item {
+            padding: 14px 16px;
+            background: var(--black-surface);
+            border-radius: var(--radius);
+        }
+
+        .feature-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--white);
+            margin-bottom: 2px;
+        }
+
+        .feature-desc {
+            font-size: 12px;
+            color: var(--gray-500);
         }
 
         /* Empty State */
         .empty-state {
             text-align: center;
-            padding: 4rem 2rem;
-            color: var(--text-muted);
-        }
-
-        .empty-state .icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            opacity: 0.5;
+            padding: 48px 24px;
+            color: var(--gray-500);
         }
 
         .empty-state p {
-            font-size: 0.95rem;
+            font-size: 14px;
         }
 
         /* Loading */
         .loading {
             display: flex;
             justify-content: center;
-            padding: 3rem;
+            padding: 32px;
         }
 
         .spinner {
-            width: 24px;
-            height: 24px;
+            width: 20px;
+            height: 20px;
             border: 2px solid var(--border);
-            border-top-color: var(--accent);
+            border-top-color: var(--gold);
             border-radius: 50%;
-            animation: spin 0.7s linear infinite;
+            animation: spin 0.6s linear infinite;
         }
 
         @keyframes spin {
@@ -642,391 +680,414 @@
             }
         }
 
-        /* Responsive */
-        @media (max-width: 600px) {
-            .container {
-                padding: 2rem 1rem;
-            }
-
-            .stats-bar {
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-
-            .form-row {
-                flex-direction: column;
-            }
-
-            .form-row-inline {
-                grid-template-columns: 1fr;
-            }
-
-            select,
-            input[type="date"] {
-                width: 100%;
-            }
-
-            .filter-bar {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .filter-buttons {
-                justify-content: center;
-            }
-
-            .todo-actions {
-                opacity: 1;
-            }
-
-            h1 {
-                font-size: 1.5rem;
-            }
+        /* Toast */
+        #toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 1000;
         }
 
-        /* Animations */
-        @keyframes fadeIn {
+        .toast {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background: var(--black-light);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            animation: slideIn 0.2s ease-out;
+            margin-bottom: 8px;
+            font-size: 13px;
+            min-width: 280px;
+            max-width: 400px;
+        }
+
+        .toast-content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toast-icon {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .toast.success .toast-icon {
+            color: var(--green);
+        }
+
+        .toast.error .toast-icon {
+            color: var(--red);
+        }
+
+        .toast-message {
+            flex: 1;
+            color: var(--gray-100);
+        }
+
+        .toast-close {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            color: var(--gray-500);
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 400;
+            line-height: 1;
+            transition: all 0.15s;
+            margin: -4px -4px -4px 0;
+        }
+
+        .toast-close:hover {
+            background: var(--black-elevated);
+            color: var(--white);
+        }
+
+        .toast.success {
+            border-left: 3px solid var(--green);
+        }
+
+        .toast.error {
+            border-left: 3px solid var(--red);
+        }
+
+        @keyframes slideIn {
             from {
                 opacity: 0;
-                transform: translateY(-8px);
+                transform: translateX(20px);
             }
 
             to {
                 opacity: 1;
-                transform: translateY(0);
+                transform: translateX(0);
             }
         }
 
-        .todo-item {
-            animation: fadeIn 0.25s ease-out;
+        /* Count Badge */
+        .count-badge {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 11px;
+            font-weight: 500;
+            background: var(--gold-dim);
+            color: var(--gold);
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-left: 8px;
         }
 
-        /* HTMX indicator */
+        /* Inline Edit Form */
+        .edit-form {
+            background: var(--black-light);
+            border: 1px solid var(--gold);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            margin: 4px 0;
+        }
+
+        .edit-form label {
+            display: block;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--gray-500);
+            margin-bottom: 8px;
+        }
+
+        .edit-form .form-group {
+            margin-bottom: 16px;
+        }
+
+        .edit-form input,
+        .edit-form select,
+        .edit-form textarea {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--black-surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--white);
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .edit-form input:focus,
+        .edit-form select:focus,
+        .edit-form textarea:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px var(--gold-dim);
+        }
+
+        .edit-form input[type="date"] {
+            color-scheme: dark;
+        }
+
+        .edit-form textarea {
+            resize: vertical;
+            min-height: 80px;
+            line-height: 1.5;
+        }
+
+        .edit-form .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .edit-form .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .edit-form .btn {
+            margin-top: 0;
+        }
+
+        /* HTMX */
         .htmx-indicator {
             opacity: 0;
-            transition: opacity 0.2s;
+            transition: opacity 0.15s;
         }
 
         .htmx-request .htmx-indicator {
             opacity: 1;
         }
 
-        /* Toast Notifications */
-        #toast {
-            position: fixed;
-            top: 2rem;
-            right: 2rem;
-            z-index: 1000;
-            max-width: 400px;
-        }
-
-        .toast {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 1rem 1.25rem;
-            box-shadow: var(--shadow-lg);
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            animation: slideInRight 0.3s ease-out;
-            margin-bottom: 0.75rem;
-        }
-
-        @keyframes slideInRight {
-            from {
-                opacity: 0;
-                transform: translateX(100%);
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .app {
+                padding: 32px 24px;
             }
 
-            to {
-                opacity: 1;
-                transform: translateX(0);
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                order: -1;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 24px;
+            }
+
+            .header-stats {
+                justify-content: flex-start;
+            }
+
+            .header-stat {
+                text-align: left;
             }
         }
 
-        @keyframes slideOutRight {
-            from {
-                opacity: 1;
-                transform: translateX(0);
+        @media (max-width: 640px) {
+            .app {
+                padding: 24px 16px;
             }
 
-            to {
-                opacity: 0;
-                transform: translateX(100%);
+            .form-row {
+                flex-direction: column;
             }
-        }
 
-        .toast.dismissing {
-            animation: slideOutRight 0.3s ease-out forwards;
-        }
-
-        .toast.success {
-            border-left: 4px solid var(--success);
-            background: linear-gradient(to right,
-                    var(--success-dim),
-                    var(--bg-card));
-        }
-
-        .toast.error {
-            border-left: 4px solid var(--danger);
-            background: linear-gradient(to right,
-                    var(--danger-dim),
-                    var(--bg-card));
-        }
-
-        .toast.info {
-            border-left: 4px solid var(--accent);
-            background: linear-gradient(to right,
-                    var(--accent-dim),
-                    var(--bg-card));
-        }
-
-        .toast.warning {
-            border-left: 4px solid var(--warning);
-            background: linear-gradient(to right,
-                    var(--warning-dim),
-                    var(--bg-card));
-        }
-
-        .toast-icon {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
-
-        .toast.success .toast-icon {
-            color: var(--success);
-        }
-
-        .toast.error .toast-icon {
-            color: var(--danger);
-        }
-
-        .toast.info .toast-icon {
-            color: var(--accent);
-        }
-
-        .toast.warning .toast-icon {
-            color: var(--warning);
-        }
-
-        .toast-message {
-            flex: 1;
-            color: var(--text);
-            font-size: 0.9rem;
-        }
-
-        .toast-close {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            width: 20px;
-            height: 20px;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            transition: all 0.15s;
-        }
-
-        .toast-close:hover {
-            background: var(--bg-elevated);
-            color: var(--text);
-        }
-
-        @media (max-width: 600px) {
-            #toast {
-                top: 1rem;
-                right: 1rem;
-                left: 1rem;
-                max-width: none;
+            .header-stats {
+                gap: 24px;
             }
         }
     </style>
 </head>
 
 <body>
-    <!-- Toast notification container -->
     <div id="toast"></div>
 
-    <div class="container">
-        {# Header section with HTMX badge #}
-        <header>
-            <div class="header-row">
-                <h1>{{ .title | capitalize }}</h1>
-                <span class="badge">HTMX</span>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="brand">
+                <span class="logo">E12</span>
+                <div class="title-group">
+                    <h1>{{ .title | capitalize }}</h1>
+                    <p>{{ .subtitle }}</p>
+                </div>
             </div>
-            <p class="subtitle">{{ .subtitle }}</p>
+            <div class="header-stats" id="header-stats" hx-get="/htmx/todos/stats"
+                hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body, every 30s"
+                hx-swap="innerHTML">
+                <div class="header-stat">
+                    <div class="header-stat-value">0</div>
+                    <div class="header-stat-label">Total</div>
+                </div>
+                <div class="header-stat">
+                    <div class="header-stat-value gold">0</div>
+                    <div class="header-stat-label">Complete</div>
+                </div>
+            </div>
         </header>
 
-        <div class="stats-bar" id="stats" hx-get="/htmx/todos/stats"
-            hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body, every 30s"
-            hx-swap="innerHTML">
-            <div class="stat-pill">
-                <span class="value">—</span><span class="label">total</span>
-            </div>
-            <div class="stat-pill">
-                <span class="value">—</span><span class="label">pending</span>
-            </div>
-            <div class="stat-pill">
-                <span class="value">—</span><span class="label">done</span>
-            </div>
-            <div class="stat-pill progress">
-                <span class="value">—</span><span class="label">progress</span>
-            </div>
-        </div>
-
-        <div id="messages" hx-swap="innerHTML"></div>
-
-        <form class="add-form" hx-post="/htmx/todos" hx-target="#todo-list" hx-swap="afterbegin">
-            <div class="form-row">
-                <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off"
-                    id="new-todo-input" />
-                <button type="submit" class="btn btn-primary">
-                    Add Task
-                </button>
-            </div>
-            <div class="form-row">
-                <input type="text" name="description" placeholder="Add a description..." />
-                <select name="priority">
-                    <option value="low">Low Priority</option>
-                    <option value="medium" selected>Medium Priority</option>
-                    <option value="high">High Priority</option>
-                </select>
-            </div>
-            <div class="form-row">
-                <input type="date" name="due_date" title="Due date" />
-                <input type="text" name="tags" placeholder="Tags (comma separated)" />
-            </div>
-        </form>
-
-        <!-- Live Search -->
-        <div class="search-container" style="margin-bottom: 1rem;">
-            <input type="search" name="q" placeholder="Search todos..." hx-get="/htmx/todos/search"
-                hx-trigger="input changed delay:300ms, search" hx-target="#todo-list" hx-swap="innerHTML"
-                hx-indicator="#search-indicator"
-                style="width: 100%; padding: 0.7rem 1rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.9rem;" />
-            <span id="search-indicator" class="htmx-indicator" style="margin-left: 0.5rem;">...</span>
-        </div>
-
-        <div class="filter-bar">
-            <!-- Priority Filter Pills -->
-            <div class="priority-filters" style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
-                <button class="btn btn-secondary active" hx-get="/htmx/todos/filter?priority=all" hx-target="#todo-list"
-                    hx-swap="innerHTML"
-                    hx-on::click="document.querySelectorAll('.priority-filters .btn').forEach(b => b.classList.remove('active')); this.classList.add('active');">
-                    All
-                </button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/filter?priority=high" hx-target="#todo-list"
-                    hx-swap="innerHTML"
-                    hx-on::click="document.querySelectorAll('.priority-filters .btn').forEach(b => b.classList.remove('active')); this.classList.add('active');"
-                    style="border-left: 3px solid var(--danger);">
-                    High
-                </button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/filter?priority=medium" hx-target="#todo-list"
-                    hx-swap="innerHTML"
-                    hx-on::click="document.querySelectorAll('.priority-filters .btn').forEach(b => b.classList.remove('active')); this.classList.add('active');"
-                    style="border-left: 3px solid var(--warning);">
-                    Medium
-                </button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/filter?priority=low" hx-target="#todo-list"
-                    hx-swap="innerHTML"
-                    hx-on::click="document.querySelectorAll('.priority-filters .btn').forEach(b => b.classList.remove('active')); this.classList.add('active');"
-                    style="border-left: 3px solid var(--success);">
-                    Low
-                </button>
-            </div>
-
-            <!-- Status Filters -->
-            <div class="filter-buttons">
-                <button class="btn btn-secondary" hx-get="/htmx/todos/active" hx-target="#todo-list"
-                    hx-swap="innerHTML">
-                    Active
-                </button>
-                <button class="btn btn-secondary" hx-get="/htmx/todos/completed" hx-target="#todo-list"
-                    hx-swap="innerHTML">
-                    Completed
-                </button>
-            </div>
-        </div>
-
-        <!-- Bulk Actions Bar -->
-        <div class="bulk-actions"
-            style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <!-- Toggle All Button -->
-                <form hx-post="/htmx/todos/toggle-all" hx-swap="none" style="margin: 0;">
-                    <input type="hidden" name="completed" value="true" />
-                    <button type="submit" class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
-                        Complete All
-                    </button>
-                </form>
-                <form hx-post="/htmx/todos/toggle-all" hx-swap="none" style="margin: 0;">
-                    <input type="hidden" name="completed" value="false" />
-                    <button type="submit" class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
-                        Uncheck All
-                    </button>
-                </form>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <!-- Clear Completed Button with Dynamic Count -->
-                <div style="display: flex; align-items: center;">
-                    <button class="btn btn-secondary" hx-post="/htmx/todos/clear-completed" hx-target="#todo-list"
-                        hx-swap="innerHTML" hx-confirm="Are you sure you want to delete all completed todos?"
-                        hx-trigger="click" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
-                        Clear Completed
-                    </button>
-                    <span id="completed-count" hx-get="/htmx/todos/completed-count"
-                        hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
-                        hx-swap="innerHTML"></span>
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Left Column -->
+            <div class="main-column">
+                <!-- Add Task Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">New Task</span>
+                        <span class="card-badge">HTMX</span>
+                    </div>
+                    <form class="form-grid" hx-post="/htmx/todos" hx-target="#task-list" hx-swap="afterbegin">
+                        <div class="form-row">
+                            <input type="text" name="title" placeholder="What needs to be done?" required
+                                autocomplete="off" />
+                            <button type="submit" class="btn btn-primary">Add Task</button>
+                        </div>
+                        <div class="form-row">
+                            <input type="text" name="description" placeholder="Description" />
+                            <select name="priority">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                            <input type="date" name="due_date" />
+                            <input type="text" name="tags" placeholder="Tags" style="max-width: 120px;" />
+                        </div>
+                    </form>
                 </div>
-                <a href="/htmx/analytics" class="btn btn-secondary"
-                    style="text-decoration: none; padding: 0.4rem 0.75rem; font-size: 0.8rem;">
-                    Analytics
-                </a>
+
+                <!-- Tasks Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">All Tasks</span>
+                        <div style="display: flex; gap: 8px;">
+                            <form hx-post="/htmx/todos/toggle-all" hx-swap="none" style="display: contents;">
+                                <input type="hidden" name="completed" value="true" />
+                                <button type="submit" class="btn btn-secondary btn-sm">Complete All</button>
+                            </form>
+                            <div style="display: flex; align-items: center;">
+                                <button class="btn btn-secondary btn-sm" hx-post="/htmx/todos/clear-completed"
+                                    hx-target="#task-list" hx-swap="innerHTML" hx-confirm="Clear all completed tasks?"
+                                    hx-trigger="click">Clear Done</button>
+                                <span id="completed-count" hx-get="/htmx/todos/completed-count"
+                                    hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
+                                    hx-swap="innerHTML"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="search-wrapper">
+                        <input type="search" name="q" placeholder="Search tasks..." hx-get="/htmx/todos/search"
+                            hx-trigger="input changed delay:300ms" hx-target="#task-list" hx-swap="innerHTML" />
+                    </div>
+
+                    <ul id="task-list" class="task-list" hx-get="/htmx/todos/all" hx-trigger="load" hx-swap="innerHTML">
+                        <li class="loading">
+                            <div class="spinner"></div>
+                        </li>
+                    </ul>
+                </div>
             </div>
+
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <!-- Progress Ring Card -->
+                <div class="card progress-card" id="progress-card" hx-get="/htmx/todos/stats"
+                    hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
+                    hx-swap="innerHTML" hx-target="#progress-card">
+                    <div class="progress-ring">
+                        <svg width="120" height="120">
+                            <circle class="bg" cx="60" cy="60" r="52" />
+                            <circle class="fg" cx="60" cy="60" r="52" stroke-dasharray="327" stroke-dashoffset="327" />
+                        </svg>
+                        <div class="progress-ring-text">
+                            <span class="progress-ring-value">0%</span>
+                            <span class="progress-ring-label">Complete</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Filters</span>
+                    </div>
+
+                    <div class="filter-section">
+                        <div class="filter-label">Status</div>
+                        <div class="filter-group">
+                            <button class="filter-btn active" hx-get="/htmx/todos/filter?priority=all"
+                                hx-target="#task-list" hx-swap="innerHTML">All</button>
+                            <button class="filter-btn" hx-get="/htmx/todos/active" hx-target="#task-list"
+                                hx-swap="innerHTML">Active</button>
+                            <button class="filter-btn" hx-get="/htmx/todos/completed" hx-target="#task-list"
+                                hx-swap="innerHTML">Done</button>
+                        </div>
+                    </div>
+
+                    <div class="filter-section">
+                        <div class="filter-label">Priority</div>
+                        <div class="filter-group">
+                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=high" hx-target="#task-list"
+                                hx-swap="innerHTML"><span class="priority-dot high"></span>High</button>
+                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=medium"
+                                hx-target="#task-list" hx-swap="innerHTML"><span
+                                    class="priority-dot medium"></span>Medium</button>
+                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=low" hx-target="#task-list"
+                                hx-swap="innerHTML"><span class="priority-dot low"></span>Low</button>
+                        </div>
+                    </div>
+
+                    <div class="filter-section">
+                        <div class="nav-links">
+                            <a href="/htmx/analytics" class="nav-link">Analytics</a>
+                            <a href="/docs" class="nav-link" target="_blank">API Docs</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Engine12 Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Engine12</span>
+                    </div>
+
+                    <div class="feature-list">
+                        <div class="feature-item">
+                            <div class="feature-title">Zero JavaScript</div>
+                            <div class="feature-desc">Server-driven UI with HTMX</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-title">Type-Safe</div>
+                            <div class="feature-desc">Built with Zig for performance</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-title">REST + HTMX</div>
+                            <div class="feature-desc">One framework, any frontend</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
         </div>
-
-        <ul id="todo-list" class="todo-list" hx-get="/htmx/todos/all" hx-trigger="load" hx-swap="innerHTML">
-            <li class="loading">
-                <div class="spinner"></div>
-            </li>
-        </ul>
     </div>
-
-    <!-- Count badge styling -->
-    <style>
-        .count-badge {
-            background: var(--accent-dim);
-            color: var(--accent);
-            padding: 0.15rem 0.5rem;
-            border-radius: 10px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-left: 0.4rem;
-        }
-
-        .search-container {
-            position: relative;
-        }
-
-        .search-container input:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px var(--accent-dim);
-        }
-
-        .bulk-actions {
-            transition: all 0.2s;
-        }
-
-        .bulk-actions:hover {
-            border-color: var(--border-hover);
-        }
-    </style>
 </body>
 
 </html>

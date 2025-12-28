@@ -128,13 +128,13 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     // Open list item with priority border
     try buf.appendSlice(allocator, "<li id=\"todo-");
     try buf.appendSlice(allocator, id_str);
-    try buf.appendSlice(allocator, "\" class=\"todo-item ");
+    try buf.appendSlice(allocator, "\" class=\"task-item ");
     try buf.appendSlice(allocator, priority_class);
     try buf.appendSlice(allocator, completed_class);
     try buf.appendSlice(allocator, "\">\n");
 
     // Checkbox with HTMX toggle
-    try buf.appendSlice(allocator, "  <input type=\"checkbox\" class=\"todo-checkbox\" ");
+    try buf.appendSlice(allocator, "  <input type=\"checkbox\" class=\"task-checkbox\" ");
     try buf.appendSlice(allocator, "hx-post=\"/htmx/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "/toggle\" hx-target=\"#todo-");
@@ -144,12 +144,12 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     try buf.appendSlice(allocator, ">\n");
 
     // Content section
-    try buf.appendSlice(allocator, "  <div class=\"todo-content\">\n");
+    try buf.appendSlice(allocator, "  <div class=\"task-content\">\n");
 
     // Title (escaped)
     var title_escaped: [512]u8 = undefined;
     const safe_title = htmlEscape(todo.title, &title_escaped);
-    try buf.appendSlice(allocator, "    <div class=\"todo-title\">");
+    try buf.appendSlice(allocator, "    <div class=\"task-title\">");
     try buf.appendSlice(allocator, safe_title);
     try buf.appendSlice(allocator, "</div>\n");
 
@@ -157,7 +157,7 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     if (todo.description.len > 0) {
         var desc_escaped: [2048]u8 = undefined;
         const safe_desc = htmlEscape(todo.description, &desc_escaped);
-        try buf.appendSlice(allocator, "    <div class=\"todo-description\">");
+        try buf.appendSlice(allocator, "    <div class=\"task-desc\">");
         try buf.appendSlice(allocator, safe_desc);
         try buf.appendSlice(allocator, "</div>\n");
     }
@@ -167,23 +167,15 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     const has_due = todo.due_date != null;
 
     if (has_tags or has_due) {
-        try buf.appendSlice(allocator, "    <div class=\"todo-meta\">\n");
+        try buf.appendSlice(allocator, "    <div class=\"task-meta\">\n");
 
         // Due date first
         if (todo.due_date) |due| {
-            const now = std.time.timestamp();
-            const is_overdue = !todo.completed and due < now;
-            const due_class = if (is_overdue) " overdue" else "";
-
             // Format date
             var date_buf: [32]u8 = undefined;
             const date_str = formatTimestamp(due, &date_buf);
 
-            try buf.appendSlice(allocator, "      <span class=\"todo-due");
-            try buf.appendSlice(allocator, due_class);
-            try buf.appendSlice(allocator, "\">");
-            // Calendar icon SVG
-            try buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"></rect><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"></line><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"></line><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"></line></svg>");
+            try buf.appendSlice(allocator, "      <span class=\"task-date\">");
             try buf.appendSlice(allocator, date_str);
             try buf.appendSlice(allocator, "</span>\n");
         }
@@ -196,7 +188,7 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
                 if (tag.len > 0) {
                     var tag_escaped: [128]u8 = undefined;
                     const safe_tag = htmlEscape(tag, &tag_escaped);
-                    try buf.appendSlice(allocator, "      <span class=\"todo-tag\">#");
+                    try buf.appendSlice(allocator, "      <span class=\"task-tag\">#");
                     try buf.appendSlice(allocator, safe_tag);
                     try buf.appendSlice(allocator, "</span>\n");
                 }
@@ -209,30 +201,24 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     try buf.appendSlice(allocator, "  </div>\n");
 
     // Actions
-    try buf.appendSlice(allocator, "  <div class=\"todo-actions\">\n");
+    try buf.appendSlice(allocator, "  <div class=\"task-actions\">\n");
 
-    // Edit button (icon)
-    try buf.appendSlice(allocator, "    <button class=\"btn-icon btn-edit\" title=\"Edit\" ");
+    // Edit button (text only)
+    try buf.appendSlice(allocator, "    <button class=\"action-btn\" ");
     try buf.appendSlice(allocator, "hx-get=\"/htmx/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "/edit\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
-    try buf.appendSlice(allocator, "\" hx-swap=\"outerHTML\">");
-    // Edit icon SVG
-    try buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"></path><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\"></path></svg>");
-    try buf.appendSlice(allocator, "</button>\n");
+    try buf.appendSlice(allocator, "\" hx-swap=\"outerHTML\">Edit</button>\n");
 
-    // Delete button (icon) with confirmation
-    try buf.appendSlice(allocator, "    <button class=\"btn-icon btn-delete\" title=\"Delete\" ");
+    // Delete button (text only) with confirmation
+    try buf.appendSlice(allocator, "    <button class=\"action-btn delete\" ");
     try buf.appendSlice(allocator, "hx-delete=\"/htmx/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "\" hx-swap=\"outerHTML\" ");
-    try buf.appendSlice(allocator, "hx-confirm=\"Are you sure you want to delete this todo?\">");
-    // Trash icon SVG
-    try buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"></polyline><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"></path><line x1=\"10\" y1=\"11\" x2=\"10\" y2=\"17\"></line><line x1=\"14\" y1=\"11\" x2=\"14\" y2=\"17\"></line></svg>");
-    try buf.appendSlice(allocator, "</button>\n");
+    try buf.appendSlice(allocator, "hx-confirm=\"Delete this task?\">Delete</button>\n");
 
     try buf.appendSlice(allocator, "  </div>\n");
     try buf.appendSlice(allocator, "</li>\n");
@@ -641,17 +627,17 @@ pub fn handleEditTodo(req: *Request) Response {
     buf.appendSlice(allocator, "\" required placeholder=\"Task title\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "    </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
-    // Description input
+    // Description textarea
     buf.appendSlice(allocator, "    <div class=\"form-group\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "      <label>Description</label>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "      <input type=\"text\" name=\"description\" value=\"") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "      <textarea name=\"description\" rows=\"3\" placeholder=\"Add details...\">") catch return Response.fragment("<li class=\"error\">Error</li>");
     var desc_escaped: [2048]u8 = undefined;
     buf.appendSlice(allocator, htmlEscape(todo.description, &desc_escaped)) catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "\" placeholder=\"Add details...\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "</textarea>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "    </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
-    // Priority, Due Date, Tags in a row
-    buf.appendSlice(allocator, "    <div class=\"form-row-inline\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    // Priority and Due Date row
+    buf.appendSlice(allocator, "    <div class=\"form-row\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     // Priority select
     buf.appendSlice(allocator, "      <div class=\"form-group\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
@@ -663,21 +649,21 @@ pub fn handleEditTodo(req: *Request) Response {
     if (std.mem.eql(u8, todo.priority, "low")) {
         buf.appendSlice(allocator, " selected") catch return Response.fragment("<li class=\"error\">Error</li>");
     }
-    buf.appendSlice(allocator, ">Low Priority</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, ">Low</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     // Medium priority
     buf.appendSlice(allocator, "          <option value=\"medium\"") catch return Response.fragment("<li class=\"error\">Error</li>");
     if (std.mem.eql(u8, todo.priority, "medium")) {
         buf.appendSlice(allocator, " selected") catch return Response.fragment("<li class=\"error\">Error</li>");
     }
-    buf.appendSlice(allocator, ">Medium Priority</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, ">Medium</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     // High priority
     buf.appendSlice(allocator, "          <option value=\"high\"") catch return Response.fragment("<li class=\"error\">Error</li>");
     if (std.mem.eql(u8, todo.priority, "high")) {
         buf.appendSlice(allocator, " selected") catch return Response.fragment("<li class=\"error\">Error</li>");
     }
-    buf.appendSlice(allocator, ">High Priority</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, ">High</option>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     buf.appendSlice(allocator, "        </select>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "      </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
@@ -694,15 +680,15 @@ pub fn handleEditTodo(req: *Request) Response {
     buf.appendSlice(allocator, "\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "      </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
-    // Tags input
-    buf.appendSlice(allocator, "      <div class=\"form-group\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "        <label>Tags</label>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "        <input type=\"text\" name=\"tags\" value=\"") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "    </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+
+    // Tags input (full width)
+    buf.appendSlice(allocator, "    <div class=\"form-group\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "      <label>Tags</label>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "      <input type=\"text\" name=\"tags\" value=\"") catch return Response.fragment("<li class=\"error\">Error</li>");
     var tags_escaped: [256]u8 = undefined;
     buf.appendSlice(allocator, htmlEscape(todo.tags, &tags_escaped)) catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "\" placeholder=\"work, urgent\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "      </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-
     buf.appendSlice(allocator, "    </div>\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
     // Action buttons
@@ -949,32 +935,37 @@ pub fn handleGetStats(req: *Request) Response {
     defer buf.deinit(allocator);
     var num_buf: [20]u8 = undefined;
 
-    // Total pill
-    buf.appendSlice(allocator, "<div class=\"stat-pill\"><span class=\"value\">") catch return Response.fragment("");
-    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{total}) catch "0") catch return Response.fragment("");
-    buf.appendSlice(allocator, "</span><span class=\"label\">total</span></div>\n") catch return Response.fragment("");
+    // Calculate stroke-dashoffset for progress ring
+    // Circle circumference = 2 * pi * r = 2 * 3.14159 * 52 = ~327
+    const circumference: u32 = 327;
+    const offset: u32 = if (progress > 0) circumference - ((progress * circumference) / 100) else circumference;
 
-    // Pending pill
-    buf.appendSlice(allocator, "<div class=\"stat-pill\"><span class=\"value\">") catch return Response.fragment("");
-    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{pending}) catch "0") catch return Response.fragment("");
-    buf.appendSlice(allocator, "</span><span class=\"label\">pending</span></div>\n") catch return Response.fragment("");
-
-    // Completed pill
-    buf.appendSlice(allocator, "<div class=\"stat-pill\"><span class=\"value\">") catch return Response.fragment("");
-    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{completed}) catch "0") catch return Response.fragment("");
-    buf.appendSlice(allocator, "</span><span class=\"label\">done</span></div>\n") catch return Response.fragment("");
-
-    // Progress pill (with special styling)
-    buf.appendSlice(allocator, "<div class=\"stat-pill progress\"><span class=\"value\">") catch return Response.fragment("");
+    // Progress Ring SVG
+    buf.appendSlice(allocator, "<div class=\"progress-ring\">\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "<svg width=\"120\" height=\"120\">\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "<circle class=\"bg\" cx=\"60\" cy=\"60\" r=\"52\" />\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "<circle class=\"fg\" cx=\"60\" cy=\"60\" r=\"52\" stroke-dasharray=\"327\" stroke-dashoffset=\"") catch return Response.fragment("");
+    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{offset}) catch "327") catch return Response.fragment("");
+    buf.appendSlice(allocator, "\" />\n</svg>\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "<div class=\"progress-ring-text\">\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "<span class=\"progress-ring-value\">") catch return Response.fragment("");
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}%", .{progress}) catch "0%") catch return Response.fragment("");
-    buf.appendSlice(allocator, "</span><span class=\"label\">progress</span></div>\n") catch return Response.fragment("");
+    buf.appendSlice(allocator, "</span>\n<span class=\"progress-ring-label\">Complete</span>\n</div>\n</div>\n") catch return Response.fragment("");
 
-    // Overdue pill (only if there are overdue items)
-    if (overdue > 0) {
-        buf.appendSlice(allocator, "<div class=\"stat-pill\" style=\"background:rgba(248,113,113,0.15);border:1px solid rgba(248,113,113,0.25)\"><span class=\"value\" style=\"color:#f87171\">") catch return Response.fragment("");
-        buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{overdue}) catch "0") catch return Response.fragment("");
-        buf.appendSlice(allocator, "</span><span class=\"label\" style=\"color:#f87171\">overdue</span></div>") catch return Response.fragment("");
-    }
+    // Also update header stats via OOB swap
+    buf.appendSlice(allocator, "<div id=\"header-stats\" hx-swap-oob=\"innerHTML\">\n") catch return Response.fragment("");
+
+    // Total stat
+    buf.appendSlice(allocator, "<div class=\"header-stat\"><div class=\"header-stat-value\">") catch return Response.fragment("");
+    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{total}) catch "0") catch return Response.fragment("");
+    buf.appendSlice(allocator, "</div><div class=\"header-stat-label\">Total</div></div>\n") catch return Response.fragment("");
+
+    // Completed stat
+    buf.appendSlice(allocator, "<div class=\"header-stat\"><div class=\"header-stat-value gold\">") catch return Response.fragment("");
+    buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{completed}) catch "0") catch return Response.fragment("");
+    buf.appendSlice(allocator, "</div><div class=\"header-stat-label\">Complete</div></div>\n") catch return Response.fragment("");
+
+    buf.appendSlice(allocator, "</div>\n") catch return Response.fragment("");
 
     const html = buf.toOwnedSlice(allocator) catch "";
 
@@ -1217,164 +1208,149 @@ pub fn handleAnalyticsPage(req: *Request) Response {
         \\<head>
         \\    <meta charset="UTF-8">
         \\    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        \\    <title>Todo Analytics</title>
+        \\    <title>Todo Analytics — Engine12</title>
         \\    <link rel="preconnect" href="https://fonts.googleapis.com">
         \\    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        \\    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+        \\    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
         \\    <style>
         \\        :root {
-        \\            --bg-deep: #0a0a0b;
-        \\            --bg: #101012;
-        \\            --bg-card: #18181b;
-        \\            --bg-elevated: #1f1f23;
-        \\            --text: #fafafa;
-        \\            --text-secondary: #a1a1aa;
-        \\            --text-muted: #71717a;
-        \\            --border: #27272a;
-        \\            --accent: #a78bfa;
-        \\            --accent-dim: rgba(167, 139, 250, 0.15);
-        \\            --success: #4ade80;
-        \\            --success-dim: rgba(74, 222, 128, 0.15);
-        \\            --warning: #fbbf24;
-        \\            --danger: #f87171;
-        \\            --danger-dim: rgba(248, 113, 113, 0.15);
-        \\            --radius: 8px;
-        \\            --radius-lg: 12px;
+        \\            --black: #0a0a0a;
+        \\            --black-light: #111111;
+        \\            --black-lighter: #181818;
+        \\            --black-surface: #1f1f1f;
+        \\            --black-elevated: #262626;
+        \\            --border: #2a2a2a;
+        \\            --border-light: #333333;
+        \\            --gold: #f7a41d;
+        \\            --gold-dim: rgba(247, 164, 29, 0.12);
+        \\            --white: #fafafa;
+        \\            --gray-300: #a3a3a3;
+        \\            --gray-400: #737373;
+        \\            --gray-500: #525252;
+        \\            --green: #22c55e;
+        \\            --red: #ef4444;
+        \\            --red-dim: rgba(239, 68, 68, 0.12);
+        \\            --radius: 6px;
+        \\            --radius-lg: 10px;
         \\        }
         \\        * { margin: 0; padding: 0; box-sizing: border-box; }
+        \\        html, body { height: 100%; overflow: hidden; }
         \\        body {
-        \\            font-family: 'Space Grotesk', sans-serif;
-        \\            background: var(--bg-deep);
-        \\            color: var(--text);
-        \\            min-height: 100vh;
-        \\            padding: 3rem 1.5rem;
+        \\            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        \\            background: var(--black);
+        \\            color: var(--white);
+        \\            padding: 24px 32px;
+        \\            -webkit-font-smoothing: antialiased;
+        \\            display: flex;
+        \\            flex-direction: column;
         \\        }
-        \\        body::before {
-        \\            content: '';
-        \\            position: fixed;
-        \\            top: 0; left: 0; right: 0; bottom: 0;
-        \\            background: radial-gradient(ellipse at top, rgba(167, 139, 250, 0.03) 0%, transparent 50%);
-        \\            pointer-events: none;
-        \\            z-index: -1;
+        \\        .container { max-width: 1000px; margin: 0 auto; width: 100%; flex: 1; display: flex; flex-direction: column; }
+        \\        header {
+        \\            display: flex;
+        \\            align-items: center;
+        \\            gap: 12px;
+        \\            margin-bottom: 20px;
+        \\            padding-bottom: 16px;
+        \\            border-bottom: 1px solid var(--border);
+        \\            flex-shrink: 0;
         \\        }
-        \\        .container { max-width: 900px; margin: 0 auto; }
-        \\        header { text-align: center; margin-bottom: 2.5rem; }
-        \\        .header-row { display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 0.5rem; }
-        \\        h1 {
-        \\            font-size: 2rem;
-        \\            font-weight: 700;
-        \\            background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
-        \\            -webkit-background-clip: text;
-        \\            -webkit-text-fill-color: transparent;
-        \\            background-clip: text;
-        \\        }
-        \\        .badge {
+        \\        .logo {
         \\            font-family: 'JetBrains Mono', monospace;
-        \\            font-size: 0.65rem;
-        \\            color: var(--accent);
-        \\            background: var(--accent-dim);
-        \\            padding: 0.3rem 0.6rem;
-        \\            border-radius: 4px;
-        \\            border: 1px solid rgba(167, 139, 250, 0.2);
+        \\            font-size: 11px;
+        \\            font-weight: 600;
+        \\            color: var(--black);
+        \\            background: var(--gold);
+        \\            padding: 6px 10px;
+        \\            border-radius: 5px;
         \\        }
-        \\        .subtitle { color: var(--text-muted); font-size: 0.95rem; }
+        \\        .title-group h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+        \\        .title-group p { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+        \\        .content { flex: 1; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
         \\        .analytics-grid {
         \\            display: grid;
-        \\            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        \\            gap: 1rem;
-        \\            margin-bottom: 2rem;
+        \\            grid-template-columns: repeat(5, 1fr);
+        \\            gap: 10px;
         \\        }
+        \\        .analytics-grid.three { grid-template-columns: repeat(3, 1fr); }
+        \\        .analytics-grid.two { grid-template-columns: repeat(2, 1fr); }
         \\        .card {
-        \\            background: var(--bg-card);
+        \\            background: var(--black-light);
         \\            border: 1px solid var(--border);
         \\            border-radius: var(--radius-lg);
-        \\            padding: 1.5rem;
-        \\            transition: transform 0.2s, box-shadow 0.2s;
-        \\        }
-        \\        .card:hover {
-        \\            transform: translateY(-2px);
-        \\            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        \\            padding: 14px 16px;
         \\        }
         \\        .card-label {
-        \\            font-size: 0.75rem;
-        \\            font-weight: 500;
-        \\            color: var(--text-muted);
+        \\            font-size: 10px;
+        \\            font-weight: 600;
+        \\            color: var(--gray-500);
         \\            text-transform: uppercase;
-        \\            letter-spacing: 0.05em;
-        \\            margin-bottom: 0.5rem;
+        \\            letter-spacing: 0.08em;
+        \\            margin-bottom: 6px;
         \\        }
         \\        .card-value {
         \\            font-family: 'JetBrains Mono', monospace;
-        \\            font-size: 2.5rem;
+        \\            font-size: 28px;
         \\            font-weight: 600;
-        \\            color: var(--text);
+        \\            color: var(--white);
         \\            line-height: 1;
-        \\            margin-bottom: 0.25rem;
+        \\            margin-bottom: 4px;
         \\        }
-        \\        .card-subtitle { font-size: 0.8rem; color: var(--text-muted); }
-        \\        .card.accent { border-color: var(--accent); background: var(--accent-dim); }
-        \\        .card.accent .card-value { color: var(--accent); }
-        \\        .card.success { border-color: var(--success); }
-        \\        .card.success .card-value { color: var(--success); }
-        \\        .card.danger { border-color: var(--danger); background: var(--danger-dim); }
-        \\        .card.danger .card-value { color: var(--danger); }
-        \\        .card.warning { border-color: var(--warning); }
-        \\        .card.warning .card-value { color: var(--warning); }
-        \\        .progress-container { margin-top: 1rem; }
-        \\        .progress-bar {
-        \\            background: var(--bg-elevated);
-        \\            border-radius: 8px;
-        \\            height: 12px;
-        \\            overflow: hidden;
-        \\        }
-        \\        .progress-fill {
-        \\            background: linear-gradient(90deg, var(--accent), var(--success));
-        \\            height: 100%;
-        \\            border-radius: 8px;
-        \\            transition: width 0.5s ease;
-        \\        }
+        \\        .card-subtitle { font-size: 11px; color: var(--gray-400); }
+        \\        .card.gold { border-color: var(--gold); }
+        \\        .card.gold .card-value { color: var(--gold); }
+        \\        .card.green { border-color: var(--green); }
+        \\        .card.green .card-value { color: var(--green); }
+        \\        .card.red { border-left: 3px solid var(--red); background: var(--red-dim); }
+        \\        .card.red .card-value { color: var(--red); }
+        \\        .progress-container { margin-top: 8px; }
+        \\        .progress-bar { background: var(--black-surface); border-radius: 4px; height: 6px; overflow: hidden; }
+        \\        .progress-fill { background: var(--gold); height: 100%; border-radius: 4px; transition: width 0.5s ease; }
         \\        .section-title {
-        \\            font-size: 0.8rem;
+        \\            font-size: 10px;
         \\            font-weight: 600;
-        \\            color: var(--text-secondary);
+        \\            color: var(--gray-500);
         \\            text-transform: uppercase;
         \\            letter-spacing: 0.1em;
-        \\            margin: 2rem 0 1rem;
-        \\            padding-bottom: 0.5rem;
-        \\            border-bottom: 1px solid var(--border);
+        \\            margin-bottom: 10px;
         \\        }
+        \\        .section { display: flex; flex-direction: column; }
         \\        .btn {
         \\            display: inline-flex;
         \\            align-items: center;
-        \\            gap: 0.5rem;
-        \\            padding: 0.75rem 1.5rem;
-        \\            background: var(--bg-card);
-        \\            color: var(--text-secondary);
+        \\            padding: 10px 20px;
+        \\            background: var(--black-light);
+        \\            color: var(--gray-300);
         \\            border: 1px solid var(--border);
         \\            border-radius: var(--radius);
         \\            text-decoration: none;
-        \\            font-size: 0.9rem;
+        \\            font-size: 13px;
         \\            font-weight: 500;
         \\            transition: all 0.15s;
-        \\            margin-top: 1.5rem;
+        \\            margin-top: auto;
+        \\            align-self: flex-start;
         \\        }
-        \\        .btn:hover { background: var(--bg-elevated); color: var(--text); border-color: var(--accent); }
-        \\        @media (max-width: 600px) {
-        \\            .analytics-grid { grid-template-columns: 1fr 1fr; }
-        \\            .card-value { font-size: 2rem; }
+        \\        .btn:hover { background: var(--black-elevated); color: var(--white); border-color: var(--gold); }
+        \\        @media (max-width: 800px) {
+        \\            .analytics-grid { grid-template-columns: repeat(2, 1fr); }
+        \\            .analytics-grid.three { grid-template-columns: repeat(3, 1fr); }
+        \\        }
+        \\        @media (max-width: 500px) {
+        \\            body { padding: 16px; }
+        \\            .analytics-grid, .analytics-grid.three { grid-template-columns: 1fr 1fr; }
+        \\            .card-value { font-size: 22px; }
         \\        }
         \\    </style>
         \\</head>
         \\<body>
         \\    <div class="container">
         \\        <header>
-        \\            <div class="header-row">
+        \\            <span class="logo">E12</span>
+        \\            <div class="title-group">
         \\                <h1>Analytics</h1>
-        \\                <span class="badge">HTMX</span>
+        \\                <p>Task statistics and insights</p>
         \\            </div>
-        \\            <p class="subtitle">Task statistics and insights</p>
         \\        </header>
-        \\
+        \\        <div class="content">
         \\        <div class="analytics-grid">
     ) catch return Response.html("<html><body><h1>Error</h1></body></html>").withStatus(500);
 
@@ -1384,7 +1360,7 @@ pub fn handleAnalyticsPage(req: *Request) Response {
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">All time</div></div>") catch return Response.html("").withStatus(500);
 
     // Completed card
-    buf.appendSlice(allocator, "<div class=\"card success\"><div class=\"card-label\">Completed</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card green\"><div class=\"card-label\">Completed</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{completed}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">") catch return Response.html("").withStatus(500);
     if (total > 0) {
@@ -1400,7 +1376,7 @@ pub fn handleAnalyticsPage(req: *Request) Response {
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Remaining</div></div>") catch return Response.html("").withStatus(500);
 
     // Progress card
-    buf.appendSlice(allocator, "<div class=\"card accent\"><div class=\"card-label\">Progress</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card gold\"><div class=\"card-label\">Progress</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}%", .{progress}) catch "0%") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"progress-container\"><div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}%", .{progress}) catch "0%") catch return Response.html("").withStatus(500);
@@ -1408,10 +1384,7 @@ pub fn handleAnalyticsPage(req: *Request) Response {
 
     // Overdue card (if any)
     if (overdue > 0) {
-        buf.appendSlice(allocator, "<div class=\"card danger\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-        // Alert Triangle SVG
-        buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z\"></path><line x1=\"12\" y1=\"9\" x2=\"12\" y2=\"13\"></line><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"></line></svg>") catch return Response.html("").withStatus(500);
-        buf.appendSlice(allocator, " Overdue</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+        buf.appendSlice(allocator, "<div class=\"card red\"><div class=\"card-label\">Overdue</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
         buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{overdue}) catch "0") catch return Response.html("").withStatus(500);
         buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Need attention</div></div>") catch return Response.html("").withStatus(500);
     }
@@ -1419,42 +1392,30 @@ pub fn handleAnalyticsPage(req: *Request) Response {
     buf.appendSlice(allocator, "</div>") catch return Response.html("").withStatus(500);
 
     // Priority section
-    buf.appendSlice(allocator, "<h2 class=\"section-title\">By Priority</h2><div class=\"analytics-grid\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<h2 class=\"section-title\">By Priority</h2><div class=\"analytics-grid three\">") catch return Response.html("").withStatus(500);
 
     // High priority
-    buf.appendSlice(allocator, "<div class=\"card danger\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-    // Flame SVG or similar for High
-    buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"></circle><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"12\"></line><line x1=\"12\" y1=\"16\" x2=\"12.01\" y2=\"16\"></line></svg>") catch return Response.html("").withStatus(500);
-    buf.appendSlice(allocator, " High</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card red\"><div class=\"card-label\">High</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{high_priority}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Urgent</div></div>") catch return Response.html("").withStatus(500);
 
     // Medium priority
-    buf.appendSlice(allocator, "<div class=\"card warning\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-    // Alert circle or similar
-    buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"></circle><line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"></line><line x1=\"12\" y1=\"8\" x2=\"12.01\" y2=\"8\"></line></svg>") catch return Response.html("").withStatus(500);
-    buf.appendSlice(allocator, " Medium</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card gold\"><div class=\"card-label\">Medium</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{medium_priority}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Normal</div></div>") catch return Response.html("").withStatus(500);
 
     // Low priority
-    buf.appendSlice(allocator, "<div class=\"card success\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-    // Check circle or arrow down
-    buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"></circle><path d=\"M8 12l4 4 4-4\"></path></svg>") catch return Response.html("").withStatus(500);
-    buf.appendSlice(allocator, " Low</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card green\"><div class=\"card-label\">Low</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{low_priority}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Low priority</div></div>") catch return Response.html("").withStatus(500);
 
     buf.appendSlice(allocator, "</div>") catch return Response.html("").withStatus(500);
 
     // Organization section
-    buf.appendSlice(allocator, "<h2 class=\"section-title\">Organization</h2><div class=\"analytics-grid\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<h2 class=\"section-title\">Organization</h2><div class=\"analytics-grid two\">") catch return Response.html("").withStatus(500);
 
     // With due dates
-    buf.appendSlice(allocator, "<div class=\"card\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-    // Calendar SVG
-    buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"></rect><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"></line><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"></line><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"></line></svg>") catch return Response.html("").withStatus(500);
-    buf.appendSlice(allocator, " With Due Dates</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card\"><div class=\"card-label\">With Due Dates</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{with_due_dates}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">") catch return Response.html("").withStatus(500);
     if (total > 0) {
@@ -1465,10 +1426,7 @@ pub fn handleAnalyticsPage(req: *Request) Response {
     buf.appendSlice(allocator, "</div></div>") catch return Response.html("").withStatus(500);
 
     // With tags
-    buf.appendSlice(allocator, "<div class=\"card\"><div class=\"card-label\">") catch return Response.html("").withStatus(500);
-    // Tag SVG
-    buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"></path><line x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"></line></svg>") catch return Response.html("").withStatus(500);
-    buf.appendSlice(allocator, " With Tags</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
+    buf.appendSlice(allocator, "<div class=\"card\"><div class=\"card-label\">With Tags</div><div class=\"card-value\">") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, std.fmt.bufPrint(&num_buf, "{d}", .{with_tags}) catch "0") catch return Response.html("").withStatus(500);
     buf.appendSlice(allocator, "</div><div class=\"card-subtitle\">Categorized</div></div>") catch return Response.html("").withStatus(500);
 
@@ -1476,10 +1434,8 @@ pub fn handleAnalyticsPage(req: *Request) Response {
 
     // Back button
     buf.appendSlice(allocator,
-        \\        <a href="/htmx" class="btn">
-        \\            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-        \\            Back to Tasks
-        \\        </a>
+        \\        <a href="/htmx" class="btn">Back to Tasks</a>
+        \\        </div>
         \\    </div>
         \\</body>
         \\</html>
