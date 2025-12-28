@@ -80,6 +80,13 @@ pub const BasicAuthValve = struct {
         };
     }
 
+    // FIX ME: The middleware registered here is not being called for routes.
+    // The authMiddleware function extracts Bearer tokens from Authorization headers
+    // and stores them in req.context, but this doesn't appear to be working.
+    // Possible issues:
+    // 1. Middleware registration order - auth middleware may need to run before other middleware
+    // 2. The ValveContext.registerMiddleware may not be properly adding to the app's middleware chain
+    // 3. There may be a timing issue where routes are registered before the middleware
     pub fn initValve(v: *Valve, ctx: *ValveContext) !void {
         const offset = @offsetOf(BasicAuthValve, "valve");
         const addr = @intFromPtr(v) - offset;
@@ -89,7 +96,9 @@ pub const BasicAuthValve = struct {
         defer registry_mutex.unlock();
         global_registry = self;
 
+        std.debug.print("[BasicAuth] initValve called, registering middleware\n", .{});
         try ctx.registerMiddleware(&Self.authMiddleware);
+        std.debug.print("[BasicAuth] Middleware registered successfully\n", .{});
     }
 
     pub fn deinitValve(v: *Valve) void {
@@ -158,28 +167,37 @@ pub const BasicAuthValve = struct {
         }
     }
 
+    // FIX ME: This middleware is registered but never gets called.
+    // Debug prints were added but no output appears in the console when making authenticated requests.
+    // The handleGetMe and getCurrentUser functions expect "auth_token" to be in req.context,
+    // but since this middleware doesn't run, the token is never extracted from the Authorization header.
     fn authMiddleware(req: *Request) middleware.MiddlewareResult {
         const auth_header = req.header("Authorization") orelse {
             return .proceed;
         };
 
         if (!std.mem.startsWith(u8, auth_header, "Bearer ")) {
+            std.debug.print("[Auth] Invalid Authorization header format (not Bearer)\n", .{});
             return .proceed; // Invalid format, but allow through
         }
 
         const token_slice = auth_header["Bearer ".len..];
         if (token_slice.len == 0) {
+            std.debug.print("[Auth] Empty token in Bearer header\n", .{});
             return .proceed;
         }
 
         const token = req.arena.allocator().dupe(u8, token_slice) catch {
+            std.debug.print("[Auth] Failed to allocate token\n", .{});
             return .proceed;
         };
 
         req.context.put("auth_token", token) catch {
+            std.debug.print("[Auth] Failed to store token in context\n", .{});
             return .proceed;
         };
 
+        std.debug.print("[Auth] Successfully stored token in context: {s}\n", .{token[0..@min(20, token.len)]});
         return .proceed;
     }
 
@@ -448,6 +466,10 @@ pub const BasicAuthValve = struct {
         return Response.ok();
     }
 
+    // FIX ME: This handler always returns "Unauthorized" because req.context.get("auth_token")
+    // returns null. The authMiddleware that should populate this value is not being called.
+    // As a workaround, this function could extract the token directly from the Authorization header
+    // instead of relying on the middleware.
     pub fn handleGetMe(req: *Request) Response {
         const self = Self.getInstance(req) orelse {
             return Response.errorResponse("Authentication valve not initialized", 500);
@@ -455,8 +477,22 @@ pub const BasicAuthValve = struct {
 
         const allocator = req.arena.allocator();
 
-        const token = req.context.get("auth_token") orelse {
-            return Response.errorResponse("Unauthorized", 401);
+        // FIX ME: Middleware doesn't populate auth_token, so we try to extract it directly
+        const token = req.context.get("auth_token") orelse blk: {
+            // Fallback: extract token directly from header since middleware isn't working
+            const auth_header = req.header("Authorization") orelse {
+                return Response.errorResponse("Unauthorized", 401);
+            };
+            if (!std.mem.startsWith(u8, auth_header, "Bearer ")) {
+                return Response.errorResponse("Unauthorized", 401);
+            }
+            const token_slice = auth_header["Bearer ".len..];
+            if (token_slice.len == 0) {
+                return Response.errorResponse("Unauthorized", 401);
+            }
+            break :blk allocator.dupe(u8, token_slice) catch {
+                return Response.errorResponse("Unauthorized", 401);
+            };
         };
 
         const claims = jwt.decode(token, self.config.secret_key, allocator) catch {
@@ -517,13 +553,27 @@ pub const BasicAuthValve = struct {
         return Response.jsonFrom(@TypeOf(user_response), user_response, std.heap.page_allocator);
     }
 
+    // FIX ME: Same issue as handleGetMe - relies on middleware to populate auth_token
     pub fn getCurrentUser(req: *Request) !?User {
         const self = Self.getInstance(req) orelse {
             return null;
         };
 
-        const token = req.context.get("auth_token") orelse {
-            return null;
+        // FIX ME: Middleware doesn't populate auth_token, try extracting directly
+        const token = req.context.get("auth_token") orelse blk: {
+            const auth_header = req.header("Authorization") orelse {
+                return null;
+            };
+            if (!std.mem.startsWith(u8, auth_header, "Bearer ")) {
+                return null;
+            }
+            const token_slice = auth_header["Bearer ".len..];
+            if (token_slice.len == 0) {
+                return null;
+            }
+            break :blk req.arena.allocator().dupe(u8, token_slice) catch {
+                return null;
+            };
         };
 
         const allocator = req.arena.allocator();

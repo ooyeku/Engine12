@@ -475,7 +475,10 @@ pub const Request = struct {
 
     pub fn cache(self: *Request) ?*@import("../data/cache.zig").ResponseCache {
         _ = self;
-        return @import("../engine12.zig").global_cache;
+        if (@import("../engine12.zig").global_context) |ctx| {
+            return ctx.cache;
+        }
+        return null;
     }
 
     pub fn cacheGet(self: *Request, key: []const u8) !?*@import("../data/cache.zig").CacheEntry {
@@ -889,8 +892,31 @@ test "Request cache access methods" {
     var response_cache = @import("../data/cache.zig").ResponseCache.init(std.testing.allocator, 60000);
     defer response_cache.deinit();
 
-    @import("../engine12.zig").global_cache = &response_cache;
-    defer @import("../engine12.zig").global_cache = null;
+    // Create a test context
+    const EngineContext = @import("../context.zig").EngineContext;
+    var test_metrics = @import("../observability/metrics.zig").MetricsCollector.init(std.testing.allocator);
+    var test_logger = @import("../observability/dev_tools.zig").Logger.init(std.testing.allocator, .debug);
+    defer test_logger.deinit();
+    var test_error_handler = @import("../error_handler.zig").ErrorHandlerRegistry.init(std.testing.allocator);
+    var test_runtime_routes = @import("../valve/runtime_routes.zig").RuntimeRouteRegistry.init(std.testing.allocator);
+    defer test_runtime_routes.deinit();
+    var test_tracker = @import("../utils/shutdown.zig").ActiveRequestTracker.init();
+    const test_mw = @import("../middleware/middleware.zig").MiddlewareChain{};
+
+    var test_ctx = EngineContext{
+        .middleware = &test_mw,
+        .metrics = &test_metrics,
+        .rate_limiter = null,
+        .cache = &response_cache,
+        .logger = &test_logger,
+        .error_handler = &test_error_handler,
+        .runtime_routes = &test_runtime_routes,
+        .active_request_tracker = &test_tracker,
+        .limits = @import("../config/module.zig").LimitsConfig{},
+    };
+
+    @import("../engine12.zig").global_context = &test_ctx;
+    defer @import("../engine12.zig").global_context = null;
 
     const cache_instance = req.cache();
     try std.testing.expect(cache_instance != null);
@@ -914,7 +940,7 @@ test "Request cache methods return null when cache not configured" {
     var req = Request.fromZiggurat(&ziggurat_req, std.testing.allocator);
     defer req.deinit();
 
-    @import("../engine12.zig").global_cache = null;
+    @import("../engine12.zig").global_context = null;
 
     const cache_instance = req.cache();
     try std.testing.expect(cache_instance == null);

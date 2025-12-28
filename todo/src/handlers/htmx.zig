@@ -8,6 +8,7 @@ const ParamList = E12.orm.ParamList;
 const database = @import("../database.zig");
 const models = @import("../models.zig");
 const Todo = models.Todo;
+const BasicAuthValve = E12.BasicAuthValve;
 
 const allocator = std.heap.page_allocator;
 
@@ -282,8 +283,28 @@ fn isLeapYear(year: u32) bool {
 /// Handle listing todos (returns HTML fragment for HTMX)
 pub fn handleListTodos(req: *Request) Response {
     _ = req;
-    // Super simple - just return static HTML to test if the route works
-    return Response.fragment("<li class=\"todo-item\"><span class=\"todo-title\">Test Todo</span></li>");
+
+    const orm = database.getORM() catch {
+        return htmx.errors.errorFragment("Database not initialized");
+    };
+
+    var todos = orm.findAll(Todo) catch {
+        return htmx.errors.errorFragment("Failed to load todos");
+    };
+    defer todos.deinit(orm.allocator);
+
+    var buf = std.ArrayListUnmanaged(u8){};
+    defer buf.deinit(allocator);
+
+    if (todos.items.len == 0) {
+        buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">📝</div><p>No todos yet. Add one above!</p></li>") catch {};
+    } else {
+        for (todos.items) |todo| {
+            renderTodoItem(todo, &buf) catch continue;
+        }
+    }
+
+    return Response.fragment(buf.toOwnedSlice(allocator) catch "");
 }
 
 /// Handle searching todos
@@ -385,6 +406,16 @@ pub fn handleCreateTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Database not initialized", 500);
     };
 
+    // Get authenticated user - if no auth, use default user_id = 1 for demo purposes
+    // In production, you should require authentication
+    const user_id: i64 = if (BasicAuthValve.requireAuth(req)) |user| blk: {
+        const id = user.id;
+        allocator.free(user.username);
+        allocator.free(user.email);
+        allocator.free(user.password_hash);
+        break :blk id;
+    } else |_| 1; // Default to user_id = 1 for demo/testing
+
     // Allocate strings for Todo struct (using page allocator since they persist)
     const title_copy = allocator.dupe(u8, form.title) catch {
         return htmx.errors.errorFragmentWithStatus("Memory error", 500);
@@ -410,7 +441,7 @@ pub fn handleCreateTodo(req: *Request) Response {
 
     var todo = Todo{
         .id = 0,
-        .user_id = 0,
+        .user_id = user_id,
         .title = title_copy,
         .description = @constCast(desc_copy),
         .completed = false,

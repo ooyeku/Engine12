@@ -368,11 +368,17 @@ test "RateLimiter multiple IPs tracked separately" {
     });
     defer limiter.deinit();
 
-    var req1 = Request.fromZiggurat(&(@import("ziggurat").request.Request{
+    const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
+    const user_data = std.StringHashMap([]const u8).init(std.testing.allocator);
+    var ziggurat_req1 = @import("ziggurat").request.Request{
         .path = "/test",
         .method = .GET,
         .body = "",
-    }), std.testing.allocator);
+        .headers = headers,
+        .allocator = std.testing.allocator,
+        .user_data = user_data,
+    };
+    var req1 = Request.fromZiggurat(&ziggurat_req1, std.testing.allocator);
     defer req1.deinit();
 
     _ = try limiter.check(&req1, "/test");

@@ -54,9 +54,7 @@ pub const ValveContext = struct {
                 .writeTimeout(5000)
                 .build();
 
-            engine12.global_middleware = &self.app.middleware;
-            engine12.global_metrics = &self.app.metrics_collector;
-            engine12.global_runtime_routes = &self.app.runtime_routes;
+            // Global context is already set by Engine12.init, no need to set individual globals
 
             if (!self.app.static_root_mounted and !self.app.custom_root_handler) {
                 const default_handler = struct {
@@ -73,9 +71,7 @@ pub const ValveContext = struct {
             self.app.http_server = @ptrCast(&server);
         }
 
-        engine12.global_middleware = &self.app.middleware;
-        engine12.global_metrics = &self.app.metrics_collector;
-        engine12.global_runtime_routes = &self.app.runtime_routes;
+        // Global context is already set by Engine12.init, no need to set individual globals
 
         const wrapped_handler = createRuntimeRouteWrapper();
 

@@ -285,116 +285,33 @@ pub fn createApp() !*E12.Engine12 {
 
     // Allocate Engine12 on heap - it's too large for stack (~500KB+)
     const app = try allocator.create(E12.Engine12);
-    app.* = try E12.Engine12.initDevelopment();
-
-    // Set port from environment (E12_PORT) or default to 8085
-    const port_str = std.posix.getenv("E12_PORT");
-    const port: u16 = if (port_str) |p| std.fmt.parseInt(u16, p, 10) catch 8085 else 8085;
-    app.setPort(port);
+    // Use initFromEnv() to load configuration from .env file and environment variables
+    // This automatically configures server settings, database, logging, cache, and resource limits
+    app.* = try E12.Engine12.initFromEnv();
 
     // Register root route FIRST before anything else that might build the server
     std.debug.print("[Todo] Registering root route / FIRST\n", .{});
     try app.get("/", handlers.views.handleIndex);
     std.debug.print("[Todo] Root route registered, custom_root_handler should be true\n", .{});
 
-    // Initialize and register authentication valve
-    const orm = database.getORM() catch {
+    // Authentication disabled for this demo app
+    // All todos use user_id = 1 by default
+    _ = database.getORM() catch {
         return error.DatabaseNotInitialized;
     };
-    var auth_valve = BasicAuthValve.init(.{
-        .secret_key = "todo-app-secret-key-change-in-production",
-        .orm = orm,
-        .token_expiry_seconds = 3600,
-        .user_table_name = "users",
-    });
-    try app.registerValve(&auth_valve.valve);
 
-    // Example: Check valve state and handle errors
-    // This demonstrates the new valve system improvements:
-    // - Thread-safe state queries
-    // - Structured error reporting
-    // - Automatic route cleanup on unregistration
-    if (app.getValveRegistry()) |registry| {
-        // Check valve state (thread-safe)
-        if (registry.getValveState("basic_auth")) |state| {
-            switch (state) {
-                .registered => std.debug.print("[Valve] basic_auth: registered\n", .{}),
-                .initialized => std.debug.print("[Valve] basic_auth: initialized\n", .{}),
-                .started => std.debug.print("[Valve] basic_auth: started\n", .{}),
-                .stopped => std.debug.print("[Valve] basic_auth: stopped\n", .{}),
-                .failed => {
-                    std.debug.print("[Valve] basic_auth: failed\n", .{});
-                    // Get structured error information
-                    if (registry.getErrorInfo("basic_auth")) |error_info| {
-                        std.debug.print("[Valve] Error phase: {}\n", .{error_info.phase});
-                        std.debug.print("[Valve] Error type: {s}\n", .{error_info.error_type});
-                        std.debug.print("[Valve] Error message: {s}\n", .{error_info.message});
-                        std.debug.print("[Valve] Error timestamp: {}\n", .{error_info.timestamp});
-                    }
-                    // Or get formatted error string (backward compatible)
-                    const error_msg = registry.getValveErrors("basic_auth");
-                    if (error_msg.len > 0) {
-                        std.debug.print("[Valve] Error: {s}\n", .{error_msg});
-                    }
-                },
-            }
-        }
-
-        // Check if valve is healthy (thread-safe)
-        if (registry.isValveHealthy("basic_auth")) {
-            std.debug.print("[Valve] basic_auth is healthy\n", .{});
-        } else {
-            std.debug.print("[Valve] basic_auth is unhealthy\n", .{});
-        }
-
-        // Get all failed valves (thread-safe)
-        const failed_valves = registry.getFailedValves(allocator) catch |err| {
-            std.debug.print("[Valve] Failed to get failed valves: {}\n", .{err});
-            return err;
-        };
-        defer allocator.free(failed_valves);
-        if (failed_valves.len > 0) {
-            std.debug.print("[Valve] Failed valves: ", .{});
-            for (failed_valves, 0..) |name, i| {
-                if (i > 0) std.debug.print(", ", .{});
-                std.debug.print("{s}", .{name});
-            }
-            std.debug.print("\n", .{});
-        }
-
-        // Example: Unregistering a valve automatically cleans up its routes
-        // try app.unregisterValve("basic_auth");
-        // All routes registered by basic_auth would be automatically removed
-    }
-
-    // Use template auto-discovery to automatically load templates
-    // Scans templates/ directory for .zt.html files
+    // Load HTMX template
     const template_registry_result = app.discoverTemplates("todo/src/templates");
     if (template_registry_result) |template_registry| {
-        // Store template registry globally for handlers to access
-        // TemplateRegistry is moved (not copied) into global storage
         database.setGlobalTemplateRegistry(template_registry);
-        if (database.getGlobalTemplateRegistry()) |registry| {
-            std.debug.print("[Todo] Template registry set with {} templates\n", .{registry.count()});
-        }
+        std.debug.print("[Todo] Template registry set with {} templates\n", .{template_registry.count()});
     } else |err| {
         std.debug.print("[Todo] Warning: Template discovery failed: {}\n", .{err});
-        // Fall back to manual template loading if discovery fails
-        const template_path = "todo/src/templates/index.zt.html";
-        if (app.loadTemplate(template_path)) |template| {
-            database.setGlobalTemplate(template);
-            std.debug.print("[Todo] Fallback: Loaded template manually\n", .{});
-        } else |load_err| {
-            std.debug.print("[Todo] Error: Failed to load template manually: {}\n", .{load_err});
-            // Continue without template - handler will return error
-        }
+        const htmx_template_path = "todo/src/templates/htmx-index.zt.html";
+        _ = app.loadTemplate(htmx_template_path) catch |load_err| {
+            std.debug.print("[Todo] Error: Failed to load HTMX template: {}\n", .{load_err});
+        };
     }
-
-    // Also try loading HTMX template manually as fallback
-    const htmx_template_path = "todo/src/templates/htmx-index.zt.html";
-    _ = app.loadTemplate(htmx_template_path) catch |err| {
-        std.debug.print("[Todo] Warning: Could not load HTMX template: {}\n", .{err});
-    };
 
     // Note: Root route "/" is registered first in createApp() before any other initialization
 
@@ -427,11 +344,7 @@ pub fn createApp() !*E12.Engine12 {
         .description = "A simple todo management API with user authentication and filtering",
     });
 
-    // Register auth routes directly (valve system doesn't support runtime route registration yet)
-    try app.post("/auth/register", BasicAuthValve.handleRegister);
-    try app.post("/auth/login", BasicAuthValve.handleLogin);
-    try app.post("/auth/logout", BasicAuthValve.handleLogout);
-    try app.get("/auth/me", BasicAuthValve.handleGetMe);
+    // Auth routes disabled - authentication removed from this demo app
 
     // Store app globally for background tasks to access logger
     database.setGlobalApp(app);
@@ -495,14 +408,10 @@ pub fn createApp() !*E12.Engine12 {
     // Metrics endpoint
     try app.get("/metrics", handlers.metrics.handleMetrics);
 
-    // Use static file auto-discovery to automatically register static routes
-    // Scans static/ directory for subdirectories and registers them
-    // Convention: static/css/ -> /css/*, static/js/ -> /js/*
+    // Serve static CSS files
     app.discoverStaticFiles("todo/static") catch |err| {
         std.debug.print("[Todo] Warning: Static file discovery failed: {}\n", .{err});
-        // Fall back to manual static file registration if discovery fails
         try app.serveStatic("/css", "todo/static/css");
-        try app.serveStatic("/js", "todo/static/js");
     };
 
     // API routes

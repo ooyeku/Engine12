@@ -123,6 +123,21 @@ Engine12 provides a centralized configuration system for cloud-ready deployments
 | `E12_CACHE_TTL` | u32 | `60000` | Cache TTL in milliseconds |
 | `E12_SECRET_KEY` | string | - | Application secret (required in production) |
 
+#### Resource Limits (Advanced)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `E12_MAX_ROUTES` | usize | `5000` | Maximum HTTP routes |
+| `E12_MAX_BACKGROUND_WORKERS` | usize | `32` | Maximum background tasks |
+| `E12_MAX_HEALTH_CHECKS` | usize | `8` | Maximum health check functions |
+| `E12_MAX_STATIC_ROUTES` | usize | `500` | Maximum static file routes |
+| `E12_MAX_WS_ROUTES` | usize | `1000` | Maximum WebSocket routes |
+| `E12_MAX_QUEUE_SIZE` | usize | `4096` | Connection queue size |
+| `E12_MAX_MIDDLEWARE` | usize | `16` | Maximum middleware functions |
+| `E12_MAX_CONTEXT_ENTRIES` | usize | `16` | Maximum request context entries |
+| `E12_MAX_ROUTE_PARAMS` | usize | `8` | Maximum route parameters |
+| `E12_MAX_VALVES` | usize | `32` | Maximum valve (plugin) count |
+
 ### Example .env File
 
 ```env
@@ -152,6 +167,15 @@ E12_SECRET_KEY=your-secret-key-here
 - **System environment variables** take precedence over `.env` file values
 - **Legacy variables** (`PGHOST`, `PGUSER`, `DB_DRIVER`, etc.) are supported for backward compatibility
 - The `.env` file is optional and silently ignored if missing
+
+> **For detailed configuration guide, see [docs/configuration.md](docs/configuration.md)**
+>
+> The configuration guide includes:
+> - Complete documentation of all environment variables
+> - Resource limits tuning guide
+> - Environment-specific best practices
+> - Performance tuning recommendations
+> - Example configurations for different deployment scenarios
 
 ## Features
 

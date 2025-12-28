@@ -133,18 +133,21 @@ pub const WebSocketManager = struct {
     pub fn stop(self: *WebSocketManager) void {
         self.is_running.store(false, .monotonic);
 
-        // Stop all servers
+        // Stop all servers first
         for (self.servers.items) |*entry| {
             if (entry.server_instance) |ws_server| {
                 ws_server.stop();
             }
+        }
 
+        // Wait for threads to finish (they will clean up app_data and thread_ctx via defer)
+        for (self.servers.items) |*entry| {
             if (entry.thread) |thread| {
-                thread.detach();
+                thread.join();
             }
         }
 
-        // Clean up
+        // Clean up server resources (app_data is already cleaned by thread defer)
         for (self.servers.items) |entry| {
             self.allocator.free(entry.path);
             if (entry.server_instance) |ws_server| {
@@ -439,7 +442,16 @@ fn closeSocket(socket: posix.socket_t) void {
     if (builtin.os.tag == .windows) {
         _ = std.os.windows.ws2_32.closesocket(socket);
     } else {
-        posix.close(socket);
+        // Use system call directly to avoid unreachable on BADF
+        // Socket may already be closed, so we silently ignore BADF errors
+        switch (posix.errno(posix.system.close(socket))) {
+            .SUCCESS => {},
+            .BADF => {}, // Socket already closed, ignore
+            .INTR => {}, // Interrupted, but still successful
+            else => |err| {
+                std.debug.print("[WebSocket] Error closing socket: {}\n", .{err});
+            },
+        }
     }
 }
 

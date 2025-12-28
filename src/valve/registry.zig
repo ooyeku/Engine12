@@ -167,11 +167,14 @@ pub const ValveRegistry = struct {
 
         var i: usize = 0;
         while (i < self.valves.items.len) : (i += 1) {
-            if (self.contexts.items[i].state == .failed) continue;
+            const valve_ptr = self.valves.items[i];
+            const ctx_ptr = &self.contexts.items[i];
 
-            if (self.valves.items[i].onAppStart) |callback| {
-                callback(self.valves.items[i], &self.contexts.items[i]) catch |err| {
-                    self.contexts.items[i].state = .failed;
+            if (ctx_ptr.state == .failed) continue;
+
+            if (valve_ptr.onAppStart) |callback| {
+                callback(valve_ptr, ctx_ptr) catch |err| {
+                    ctx_ptr.state = .failed;
                     if (self.valve_error_info.items[i]) |*old_error_info| {
                         old_error_info.deinit(self.allocator);
                     }
@@ -184,19 +187,19 @@ pub const ValveRegistry = struct {
                         error_msg,
                     ) catch |alloc_err| {
                         self.valve_error_info.items[i] = null;
-                        std.debug.print("[Valve] Error in onAppStart for '{s}': {} (also failed to create error info: {})\n", .{ self.valves.items[i].metadata.name, err, alloc_err });
+                        std.debug.print("[Valve] Error in onAppStart for '{s}': {} (also failed to create error info: {})\n", .{ valve_ptr.metadata.name, err, alloc_err });
                         continue;
                     };
                     self.valve_error_info.items[i] = error_info_val;
-                    std.debug.print("[Valve] Error in onAppStart for '{s}': {}\n", .{ self.valves.items[i].metadata.name, err });
+                    std.debug.print("[Valve] Error in onAppStart for '{s}': {}\n", .{ valve_ptr.metadata.name, err });
                     continue;
                 };
-                if (self.contexts.items[i].state == .initialized) {
-                    self.contexts.items[i].state = .started;
+                if (ctx_ptr.state == .initialized) {
+                    ctx_ptr.state = .started;
                 }
             } else {
-                if (self.contexts.items[i].state == .initialized) {
-                    self.contexts.items[i].state = .started;
+                if (ctx_ptr.state == .initialized) {
+                    ctx_ptr.state = .started;
                 }
             }
         }
@@ -442,7 +445,6 @@ test "ValveRegistry getContext" {
 
     try std.testing.expect(registry.getContext("nonexistent") == null);
 }
-
 
 test "ValveRegistry structured error info" {
     var app = try Engine12.initTesting();

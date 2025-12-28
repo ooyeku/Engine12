@@ -39,7 +39,7 @@ pub const HandlerCtx = struct {
             .get_orm_fn = options.get_orm,
         };
 
-        ctx.logger = engine12_mod.global_logger;
+        ctx.logger = if (engine12_mod.global_context) |gctx| gctx.logger else null;
 
         if (options.require_orm or options.get_orm != null) {
             ctx.orm_instance = if (options.get_orm) |get_fn|

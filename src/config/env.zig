@@ -12,8 +12,8 @@ pub const Env = struct {
         return Env{
             .allocator = alloc,
             .values = std.StringHashMap([]const u8).init(alloc),
-            .owned_keys = std.ArrayList([]const u8).init(alloc),
-            .owned_values = std.ArrayList([]const u8).init(alloc),
+            .owned_keys = std.ArrayList([]const u8){},
+            .owned_values = std.ArrayList([]const u8){},
         };
     }
 
@@ -24,8 +24,8 @@ pub const Env = struct {
         for (self.owned_values.items) |val| {
             self.allocator.free(val);
         }
-        self.owned_keys.deinit();
-        self.owned_values.deinit();
+        self.owned_keys.deinit(self.allocator);
+        self.owned_values.deinit(self.allocator);
         self.values.deinit();
     }
 
@@ -41,21 +41,21 @@ pub const Env = struct {
         };
         defer file.close();
 
-        const reader = file.reader();
-        var line_buf: [4096]u8 = undefined;
+        // Read entire file into memory for simplicity
+        const max_size = 1024 * 1024; // 1MB max for .env file
+        const contents = file.readToEndAlloc(self.allocator, max_size) catch |err| {
+            return err;
+        };
+        defer self.allocator.free(contents);
 
-        while (true) {
-            const line = reader.readUntilDelimiterOrEof(&line_buf, '\n') catch |err| {
-                // Handle stream ended error gracefully
-                if (err == error.EndOfStream) break;
-                return err;
-            } orelse break;
-
+        // Parse line by line
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+        while (lines.next()) |line| {
             try self.parseLine(line);
         }
     }
 
-    fn parseLine(self: *Env, line: []const u8) !void {
+    pub fn parseLine(self: *Env, line: []const u8) !void {
         // Trim whitespace and carriage return
         var trimmed = std.mem.trim(u8, line, " \t\r\n");
 
@@ -97,11 +97,11 @@ pub const Env = struct {
         // Store the value
         const key_copy = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(key_copy);
-        try self.owned_keys.append(key_copy);
+        try self.owned_keys.append(self.allocator, key_copy);
 
         const value_copy = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(value_copy);
-        try self.owned_values.append(value_copy);
+        try self.owned_values.append(self.allocator, value_copy);
 
         try self.values.put(key_copy, value_copy);
     }

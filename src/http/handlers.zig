@@ -20,8 +20,8 @@ pub fn handleReadyEndpoint(request: *Request) Response {
 pub fn handleMetricsEndpoint(request: *Request) Response {
     _ = request;
 
-    if (@import("../engine12.zig").global_metrics) |mc| {
-        const prometheus_output = mc.getPrometheusMetrics() catch {
+    if (@import("../engine12.zig").global_context) |ctx| {
+        const prometheus_output = ctx.metrics.getPrometheusMetrics() catch {
             return Response.json("{\"error\":\"Failed to generate metrics\"}").withStatus(500);
         };
         defer std.heap.page_allocator.free(prometheus_output);

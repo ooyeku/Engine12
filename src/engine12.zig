@@ -44,9 +44,9 @@ fn generateRequestId(alloc: std.mem.Allocator) ![]const u8 {
     return alloc.dupe(u8, id_str);
 }
 
-pub var global_middleware: ?*const middleware_chain.MiddlewareChain = null;
-
-pub var global_metrics: ?*metrics.MetricsCollector = null;
+// Single global context pointer (replaces 8 separate globals)
+// Required because Zig comptime closures in wrapHandler() cannot capture runtime values
+pub var global_context: ?*@import("context.zig").EngineContext = null;
 
 var hot_reload_manager_for_ws: ?*hot_reload_mod.HotReloadManager = null;
 
@@ -64,18 +64,6 @@ fn hotReloadWebSocketHandler(conn: *websocket_mod.connection.WebSocketConnection
         }
     }
 }
-
-pub var global_rate_limiter: ?*rate_limit.RateLimiter = null;
-
-pub var global_cache: ?*cache.ResponseCache = null;
-
-pub var global_logger: ?*dev_tools.Logger = null;
-
-pub var global_error_handler: ?*error_handler.ErrorHandlerRegistry = null;
-
-pub var global_runtime_routes: ?*runtime_routes_mod.RuntimeRouteRegistry = null;
-
-pub var global_active_request_tracker: ?*shutdown_utils.ActiveRequestTracker = null;
 
 var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 
@@ -116,9 +104,9 @@ fn closeSocket(socket: posix.socket_t) void {
 
 const ConnectionQueue = struct {
     const Self = @This();
-    const MAX_QUEUE_SIZE = 4096;
 
-    queue: [MAX_QUEUE_SIZE]posix.socket_t = undefined,
+    queue: []posix.socket_t,
+    max_size: usize,
     head: usize = 0,
     tail: usize = 0,
     count: usize = 0,
@@ -126,12 +114,28 @@ const ConnectionQueue = struct {
     not_empty: std.Thread.Condition = .{},
     not_full: std.Thread.Condition = .{},
     shutdown: bool = false,
+    allocator: std.mem.Allocator,
+
+    pub fn init(alloc: std.mem.Allocator, max_size: usize) !*Self {
+        const self = try alloc.create(Self);
+        self.* = Self{
+            .queue = try alloc.alloc(posix.socket_t, max_size),
+            .max_size = max_size,
+            .allocator = alloc,
+        };
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.queue);
+        self.allocator.destroy(self);
+    }
 
     pub fn push(self: *Self, socket: posix.socket_t) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        while (self.count >= MAX_QUEUE_SIZE and !self.shutdown) {
+        while (self.count >= self.max_size and !self.shutdown) {
             self.not_full.wait(&self.mutex);
         }
 
@@ -141,7 +145,7 @@ const ConnectionQueue = struct {
         }
 
         self.queue[self.tail] = socket;
-        self.tail = (self.tail + 1) % MAX_QUEUE_SIZE;
+        self.tail = (self.tail + 1) % self.max_size;
         self.count += 1;
 
         self.not_empty.signal();
@@ -160,7 +164,7 @@ const ConnectionQueue = struct {
         }
 
         const socket = self.queue[self.head];
-        self.head = (self.head + 1) % MAX_QUEUE_SIZE;
+        self.head = (self.head + 1) % self.max_size;
         self.count -= 1;
 
         self.not_full.signal();
@@ -195,12 +199,12 @@ fn handleConnectionThreaded(socket: posix.socket_t) void {
     var requests_handled: usize = 0;
 
     while (requests_handled < max_requests_per_connection) : (requests_handled += 1) {
-        if (global_active_request_tracker) |tracker| {
-            tracker.increment();
+        if (global_context) |ctx| {
+            ctx.active_request_tracker.increment();
         }
         defer {
-            if (global_active_request_tracker) |tracker| {
-                tracker.decrement();
+            if (global_context) |ctx| {
+                ctx.active_request_tracker.decrement();
             }
         }
 
@@ -359,16 +363,19 @@ fn workerThreadFn() void {
 pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.response.Response {
     return struct {
         fn wrapper(ziggurat_request: *ziggurat.request.Request) ziggurat.response.Response {
-            if (global_active_request_tracker) |tracker| {
-                tracker.increment();
-                defer tracker.decrement();
-            }
-
-            const runtime_registry = global_runtime_routes orelse {
-                return Response.text("Runtime routes not available").withStatus(500).toZiggurat();
+            const ctx = global_context orelse {
+                return Response.text("Engine context not initialized").withStatus(500).toZiggurat();
             };
 
-            const mw_chain = global_middleware orelse {
+            ctx.active_request_tracker.increment();
+            defer ctx.active_request_tracker.decrement();
+
+            const mw_chain = ctx.middleware;
+            const runtime_registry = ctx.runtime_routes;
+            const metrics_collector = ctx.metrics;
+
+            // Fallback if no middleware chain
+            if (false) {
                 var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
                 defer engine12_request.deinit();
 
@@ -384,9 +391,7 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
                 }
 
                 return Response.text("Not Found").withStatus(404).toZiggurat();
-            };
-
-            const metrics_collector = global_metrics;
+            }
 
             var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
 
@@ -398,20 +403,16 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
             defer engine12_request.deinit();
 
             if (mw_chain.executePreRequest(&engine12_request)) |abort_response| {
-                if (metrics_collector) |mc| {
-                    mc.incrementError();
-                    timing.finish(mc) catch {};
-                }
+                metrics_collector.incrementError();
+                timing.finish(metrics_collector) catch {};
                 return abort_response.toZiggurat();
             }
 
             const method_str = @tagName(ziggurat_request.method);
             const route = runtime_registry.findRoute(method_str, engine12_request.path(), &engine12_request) catch |err| {
                 std.debug.print("[Runtime Route] Error finding route: {}\n", .{err});
-                if (metrics_collector) |mc| {
-                    mc.incrementError();
-                    timing.finish(mc) catch {};
-                }
+                metrics_collector.incrementError();
+                timing.finish(metrics_collector) catch {};
                 return Response.text("Internal server error").withStatus(500).toZiggurat();
             };
 
@@ -420,17 +421,13 @@ pub fn createRuntimeRouteWrapper() fn (*ziggurat.request.Request) ziggurat.respo
 
                 engine12_response = mw_chain.executeResponse(engine12_response, &engine12_request);
 
-                if (metrics_collector) |mc| {
-                    timing.finish(mc) catch {};
-                }
+                timing.finish(metrics_collector) catch {};
 
                 return engine12_response.toZiggurat();
             }
 
-            if (metrics_collector) |mc| {
-                mc.incrementError();
-                timing.finish(mc) catch {};
-            }
+            metrics_collector.incrementError();
+            timing.finish(metrics_collector) catch {};
             return Response.text("Not Found").withStatus(404).toZiggurat();
         }
     }.wrapper;
@@ -447,19 +444,19 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
         const pattern = route_pattern;
 
         fn wrapper(ziggurat_request: *ziggurat.request.Request) ziggurat.response.Response {
-            if (global_active_request_tracker) |tracker| {
-                tracker.increment();
-                defer tracker.decrement();
-            }
-
-            const mw_chain = global_middleware orelse {
+            const ctx = global_context orelse {
+                // Fallback when context not initialized
                 var engine12_request = Request.fromZiggurat(ziggurat_request, allocator);
                 defer engine12_request.deinit();
                 const engine12_response = handler(&engine12_request);
                 return engine12_response.toZiggurat();
             };
 
-            const metrics_collector = global_metrics;
+            ctx.active_request_tracker.increment();
+            defer ctx.active_request_tracker.decrement();
+
+            const mw_chain = ctx.middleware;
+            const metrics_collector = ctx.metrics;
 
             const route_pattern_str = if (pattern) |p| p else ziggurat_request.path;
             var timing = metrics.RequestTiming.start(route_pattern_str);
@@ -472,10 +469,8 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
             defer engine12_request.deinit();
 
             if (mw_chain.executePreRequest(&engine12_request)) |abort_response| {
-                if (metrics_collector) |mc| {
-                    mc.incrementError();
-                    timing.finish(mc) catch {};
-                }
+                metrics_collector.incrementError();
+                timing.finish(metrics_collector) catch {};
                 return abort_response.toZiggurat();
             }
 
@@ -484,9 +479,7 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
                     var route_pattern_parsed = router.RoutePattern.parse(allocator, pattern_str) catch {
                         const engine12_response = handler(&engine12_request);
                         var final_response = mw_chain.executeResponse(engine12_response, &engine12_request);
-                        if (metrics_collector) |mc| {
-                            timing.finish(mc) catch {};
-                        }
+                        timing.finish(metrics_collector) catch {};
                         return final_response.toZiggurat();
                     };
                     defer route_pattern_parsed.deinit(allocator);
@@ -503,9 +496,7 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
 
             engine12_response = mw_chain.executeResponse(engine12_response, &engine12_request);
 
-            if (metrics_collector) |mc| {
-                timing.finish(mc) catch {};
-            }
+            timing.finish(metrics_collector) catch {};
 
             return engine12_response.toZiggurat();
         }
@@ -523,13 +514,12 @@ pub const ServerConfig = struct {
     max_body_size: usize = 10 * 1024 * 1024,
 };
 
-pub const Engine12 = struct {
-    const MAX_ROUTES = 5000;
-    const MAX_WORKERS = 32;
-    const MAX_HEALTH_CHECKS = 8;
-    const MAX_STATIC_ROUTES = 500;
-    const MAX_WS_ROUTES = 1000;
+pub const TemplateRouteEntry = struct {
+    path: []const u8,
+    context_fn: *const anyopaque,
+};
 
+pub const Engine12 = struct {
     allocator: std.mem.Allocator,
     profile: types.ServerProfile,
     server_config: ServerConfig = .{},
@@ -537,24 +527,25 @@ pub const Engine12 = struct {
     request_count: u64 = 0,
     start_time: i64 = 0,
 
-    http_routes: [MAX_ROUTES]?types.Route = [_]?types.Route{null} ** MAX_ROUTES,
+    // Dynamic arrays for routes and workers
+    http_routes: std.ArrayListUnmanaged(?types.Route),
     routes_count: usize = 0,
     custom_root_handler: bool = false, // Track if custom root handler is registered
     server_builder: ?ziggurat.ServerBuilder = null,
     server_built: bool = false,
     built_server: ?ziggurat.Server = null,
 
-    static_routes: [MAX_STATIC_ROUTES]?fileserver.FileServer = [_]?fileserver.FileServer{null} ** MAX_STATIC_ROUTES,
+    static_routes: std.ArrayListUnmanaged(?fileserver.FileServer),
     static_routes_count: usize = 0,
     static_root_mounted: bool = false, // Track if static files are mounted at "/"
 
-    template_routes: [MAX_ROUTES]struct { path: []const u8, context_fn: *const anyopaque } = undefined,
+    template_routes: std.ArrayListUnmanaged(TemplateRouteEntry),
     template_routes_count: usize = 0,
 
-    background_workers: [MAX_WORKERS]?types.BackgroundWorker = [_]?types.BackgroundWorker{null} ** MAX_WORKERS,
+    background_workers: std.ArrayListUnmanaged(?types.BackgroundWorker),
     workers_count: usize = 0,
 
-    health_checks: [MAX_HEALTH_CHECKS]?types.HealthCheckFn = [_]?types.HealthCheckFn{null} ** MAX_HEALTH_CHECKS,
+    health_checks: std.ArrayListUnmanaged(?types.HealthCheckFn),
     health_checks_count: usize = 0,
 
     middleware: middleware_chain.MiddlewareChain,
@@ -572,7 +563,7 @@ pub const Engine12 = struct {
     orm_instance: ?*orm.ORM = null,
 
     ws_manager: ?websocket_mod.manager.WebSocketManager = null,
-    ws_routes: [MAX_WS_ROUTES]?types.WebSocketRoute = [_]?types.WebSocketRoute{null} ** MAX_WS_ROUTES,
+    ws_routes: std.ArrayListUnmanaged(?types.WebSocketRoute),
     ws_routes_count: usize = 0,
 
     hot_reload_manager: ?*hot_reload_mod.HotReloadManager = null,
@@ -588,10 +579,45 @@ pub const Engine12 = struct {
     active_request_tracker: shutdown_utils.ActiveRequestTracker,
     shutdown_hooks: shutdown_utils.ShutdownHookRegistry,
 
+    // Configurable limits
+    limits: config_mod.LimitsConfig,
+
+    // Engine context for dependency injection
+    engine_context: ?*@import("context.zig").EngineContext = null,
+
     pub fn initWithProfile(profile: types.ServerProfile) !Engine12 {
+        const default_limits = config_mod.LimitsConfig{};
+        return initWithProfileAndLimits(profile, default_limits);
+    }
+
+    fn initWithProfileAndLimits(profile: types.ServerProfile, limits: config_mod.LimitsConfig) !Engine12 {
+        var http_routes = std.ArrayListUnmanaged(?types.Route){};
+        try http_routes.ensureTotalCapacity(allocator, limits.max_routes);
+
+        var static_routes = std.ArrayListUnmanaged(?fileserver.FileServer){};
+        try static_routes.ensureTotalCapacity(allocator, limits.max_static_routes);
+
+        var template_routes = std.ArrayListUnmanaged(TemplateRouteEntry){};
+        try template_routes.ensureTotalCapacity(allocator, limits.max_routes);
+
+        var background_workers = std.ArrayListUnmanaged(?types.BackgroundWorker){};
+        try background_workers.ensureTotalCapacity(allocator, limits.max_background_workers);
+
+        var health_checks = std.ArrayListUnmanaged(?types.HealthCheckFn){};
+        try health_checks.ensureTotalCapacity(allocator, limits.max_health_checks);
+
+        var ws_routes = std.ArrayListUnmanaged(?types.WebSocketRoute){};
+        try ws_routes.ensureTotalCapacity(allocator, limits.max_ws_routes);
+
         var app = Engine12{
             .allocator = allocator,
             .profile = profile,
+            .http_routes = http_routes,
+            .static_routes = static_routes,
+            .template_routes = template_routes,
+            .background_workers = background_workers,
+            .health_checks = health_checks,
+            .ws_routes = ws_routes,
             .middleware = middleware_chain.MiddlewareChain{},
             .error_handler_registry = error_handler.ErrorHandlerRegistry.init(allocator),
             .metrics_collector = metrics.MetricsCollector.init(allocator),
@@ -599,9 +625,25 @@ pub const Engine12 = struct {
             .runtime_routes = runtime_routes_mod.RuntimeRouteRegistry.init(allocator),
             .active_request_tracker = shutdown_utils.ActiveRequestTracker.init(),
             .shutdown_hooks = shutdown_utils.ShutdownHookRegistry.init(allocator),
+            .limits = limits,
         };
-        global_logger = &app.logger;
-        global_active_request_tracker = &app.active_request_tracker;
+
+        // Create and set the global context for dependency injection
+        const ctx = try allocator.create(@import("context.zig").EngineContext);
+        ctx.* = .{
+            .middleware = &app.middleware,
+            .metrics = &app.metrics_collector,
+            .rate_limiter = null,
+            .cache = null,
+            .logger = &app.logger,
+            .error_handler = &app.error_handler_registry,
+            .runtime_routes = &app.runtime_routes,
+            .active_request_tracker = &app.active_request_tracker,
+            .limits = limits,
+        };
+        app.engine_context = ctx;
+        global_context = ctx;
+
         return app;
     }
 
@@ -652,7 +694,7 @@ pub const Engine12 = struct {
             .production => types.ServerProfile_Production,
         };
 
-        var app = try Engine12.initWithProfile(profile);
+        var app = try Engine12.initWithProfileAndLimits(profile, cfg.limits);
 
         // Copy host string to page allocator (it will live for app lifetime)
         const host_copy = try allocator.dupe(u8, cfg.server.host);
@@ -763,6 +805,20 @@ pub const Engine12 = struct {
         self.runtime_routes.deinit();
 
         self.shutdown_hooks.deinit(self.allocator);
+
+        // Free dynamic arrays
+        self.http_routes.deinit(self.allocator);
+        self.static_routes.deinit(self.allocator);
+        self.template_routes.deinit(self.allocator);
+        self.background_workers.deinit(self.allocator);
+        self.health_checks.deinit(self.allocator);
+        self.ws_routes.deinit(self.allocator);
+
+        // Free engine context if allocated
+        if (self.engine_context) |ctx| {
+            self.allocator.destroy(ctx);
+            self.engine_context = null;
+        }
     }
 
     pub fn registerValve(self: *Engine12, valve_ptr: *valve_mod.Valve) !void {
@@ -791,7 +847,7 @@ pub const Engine12 = struct {
     }
 
     pub fn get(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
-        if (self.routes_count >= MAX_ROUTES) {
+        if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
         }
         if (self.server_built) {
@@ -811,8 +867,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            global_middleware = &self.middleware;
-            global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
                 try server.get("/", wrapHandler(handlers.handleDefaultRoot, "/"));
             }
@@ -823,9 +877,6 @@ pub const Engine12 = struct {
             self.built_server = server;
             self.http_server = @ptrCast(&server);
         }
-
-        global_middleware = &self.middleware;
-        global_metrics = &self.metrics_collector;
 
         const wrapped_handler = wrapHandler(handler, path_pattern);
 
@@ -838,11 +889,11 @@ pub const Engine12 = struct {
             .pointer => |ptr_info| if (ptr_info.size == .one) handler.* else handler,
             else => handler,
         };
-        self.http_routes[self.routes_count] = types.Route{
+        try self.http_routes.append(self.allocator, types.Route{
             .path = path_pattern,
             .method = "GET",
             .handler_ptr = &handler_for_storage,
-        };
+        });
         self.routes_count += 1;
     }
 
@@ -872,14 +923,14 @@ pub const Engine12 = struct {
 
         const template_path_copy = try self.allocator.dupe(u8, template_path);
 
-        if (self.template_routes_count >= MAX_ROUTES) {
+        if (self.template_routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
         }
-        const route_index = self.template_routes_count;
-        self.template_routes[route_index] = .{
+        try self.template_routes.append(self.allocator, .{
             .path = template_path_copy,
             .context_fn = @ptrCast(&context_fn),
-        };
+        });
+        const route_index = self.template_routes_count;
         self.template_routes_count += 1;
 
         const captured_route_idx = route_index;
@@ -889,7 +940,7 @@ pub const Engine12 = struct {
             fn create(route_idx: usize, app: *Engine12) fn (*Request) Response {
                 const Handler = struct {
                     fn handler(req: *Request) Response {
-                        const route_info = app.template_routes[route_idx];
+                        const route_info = app.template_routes.items[route_idx];
                         const template_path_ptr = route_info.path;
                         const context_fn_ptr = @as(ContextFn, @ptrCast(@alignCast(route_info.context_fn)));
 
@@ -914,7 +965,7 @@ pub const Engine12 = struct {
     }
 
     pub fn post(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
-        if (self.routes_count >= MAX_ROUTES) {
+        if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
         }
         if (self.server_built) {
@@ -930,8 +981,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            global_middleware = &self.middleware;
-            global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
                 try server.get("/", wrapHandler(handlers.handleDefaultRoot, "/"));
             }
@@ -954,11 +1003,11 @@ pub const Engine12 = struct {
             .pointer => |ptr_info| if (ptr_info.size == .one) handler.* else handler,
             else => handler,
         };
-        self.http_routes[self.routes_count] = types.Route{
+        try self.http_routes.append(self.allocator, types.Route{
             .path = path_pattern,
             .method = "POST",
             .handler_ptr = &handler_for_storage_post,
-        };
+        });
         self.routes_count += 1;
     }
 
@@ -967,7 +1016,7 @@ pub const Engine12 = struct {
     }
 
     pub fn put(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
-        if (self.routes_count >= MAX_ROUTES) {
+        if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
         }
         if (self.server_built) {
@@ -983,8 +1032,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            global_middleware = &self.middleware;
-            global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
                 try server.get("/", wrapHandler(handlers.handleDefaultRoot, "/"));
             }
@@ -1007,16 +1054,16 @@ pub const Engine12 = struct {
             .pointer => |ptr_info| if (ptr_info.size == .one) handler.* else handler,
             else => handler,
         };
-        self.http_routes[self.routes_count] = types.Route{
+        try self.http_routes.append(self.allocator, types.Route{
             .path = path_pattern,
             .method = "PUT",
             .handler_ptr = &handler_for_storage_put,
-        };
+        });
         self.routes_count += 1;
     }
 
     pub fn delete(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
-        if (self.routes_count >= MAX_ROUTES) {
+        if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
         }
         if (self.server_built) {
@@ -1032,8 +1079,6 @@ pub const Engine12 = struct {
                 .writeTimeout(self.server_config.write_timeout)
                 .build();
 
-            global_middleware = &self.middleware;
-            global_metrics = &self.metrics_collector;
             if (!self.static_root_mounted and !self.custom_root_handler) {
                 try server.get("/", wrapHandler(handlers.handleDefaultRoot, "/"));
             }
@@ -1056,11 +1101,11 @@ pub const Engine12 = struct {
             .pointer => |ptr_info| if (ptr_info.size == .one) handler.* else handler,
             else => handler,
         };
-        self.http_routes[self.routes_count] = types.Route{
+        try self.http_routes.append(self.allocator, types.Route{
             .path = path_pattern,
             .method = "DELETE",
             .handler_ptr = &handler_for_storage_delete,
-        };
+        });
         self.routes_count += 1;
     }
 
@@ -1156,7 +1201,7 @@ pub const Engine12 = struct {
                     \\      // Calculate JSON URL relative to current page
                     \\      const path = window.location.pathname;
                     \\      const jsonUrl = path.endsWith('/') ? path + 'openapi.json' : path + '/openapi.json';
-                    \\      
+                    \\
                     \\      window.ui = SwaggerUIBundle({
                     \\        url: jsonUrl,
                     \\        dom_id: '#swagger-ui',
@@ -1242,18 +1287,22 @@ pub const Engine12 = struct {
     }
 
     pub fn setRateLimiter(self: *Engine12, limiter: *rate_limit.RateLimiter) void {
-        _ = self;
-        global_rate_limiter = limiter;
+        if (self.engine_context) |ctx| {
+            ctx.rate_limiter = limiter;
+        }
     }
 
     pub fn setCache(self: *Engine12, response_cache: *cache.ResponseCache) void {
-        _ = self;
-        global_cache = response_cache;
+        if (self.engine_context) |ctx| {
+            ctx.cache = response_cache;
+        }
     }
 
     pub fn getCache(self: *Engine12) ?*cache.ResponseCache {
-        _ = self;
-        return global_cache;
+        if (self.engine_context) |ctx| {
+            return ctx.cache;
+        }
+        return null;
     }
 
     pub fn getLogger(self: *Engine12) *dev_tools.Logger {
@@ -1394,7 +1443,7 @@ pub const Engine12 = struct {
     }
 
     pub fn websocket(self: *Engine12, comptime path_pattern: []const u8, handler: types.WebSocketHandler) !void {
-        if (self.ws_routes_count >= MAX_WS_ROUTES) {
+        if (self.ws_routes_count >= self.limits.max_ws_routes) {
             return error.TooManyWebSocketRoutes;
         }
 
@@ -1402,10 +1451,10 @@ pub const Engine12 = struct {
             self.ws_manager = try websocket_mod.manager.WebSocketManager.init(self.allocator);
         }
 
-        self.ws_routes[self.ws_routes_count] = types.WebSocketRoute{
+        try self.ws_routes.append(self.allocator, types.WebSocketRoute{
             .path = path_pattern,
             .handler_ptr = handler, // Store function pointer value directly, not address
-        };
+        });
         self.ws_routes_count += 1;
 
         if (self.ws_manager) |*manager| {
@@ -1468,7 +1517,7 @@ pub const Engine12 = struct {
     }
 
     pub fn serveStatic(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
-        if (self.static_routes_count >= MAX_STATIC_ROUTES) {
+        if (self.static_routes_count >= self.limits.max_static_routes) {
             return error.TooManyStaticRoutes;
         }
 
@@ -1485,11 +1534,11 @@ pub const Engine12 = struct {
             self.static_root_mounted = true;
         }
 
-        self.static_routes[self.static_routes_count] = file_server;
+        try self.static_routes.append(self.allocator, file_server);
         self.static_routes_count += 1;
 
         if (self.hot_reload_manager) |hr_manager| {
-            hr_manager.watchStaticFiles(&self.static_routes[self.static_routes_count - 1].?) catch |err| {
+            hr_manager.watchStaticFiles(&self.static_routes.items[self.static_routes_count - 1].?) catch |err| {
                 std.debug.print("[HotReload] Warning: Failed to watch static files: {}\n", .{err});
             };
         }
@@ -1657,34 +1706,34 @@ pub const Engine12 = struct {
     }
 
     pub fn runTask(self: *Engine12, name: []const u8, task: types.BackgroundTask) !void {
-        if (self.workers_count >= MAX_WORKERS) {
+        if (self.workers_count >= self.limits.max_background_workers) {
             return error.TooManyWorkers;
         }
-        self.background_workers[self.workers_count] = types.BackgroundWorker{
+        try self.background_workers.append(self.allocator, types.BackgroundWorker{
             .name = name,
             .task = task,
             .interval_ms = null,
-        };
+        });
         self.workers_count += 1;
     }
 
     pub fn schedulePeriodicTask(self: *Engine12, name: []const u8, task: types.BackgroundTask, interval_ms: u32) !void {
-        if (self.workers_count >= MAX_WORKERS) {
+        if (self.workers_count >= self.limits.max_background_workers) {
             return error.TooManyWorkers;
         }
-        self.background_workers[self.workers_count] = types.BackgroundWorker{
+        try self.background_workers.append(self.allocator, types.BackgroundWorker{
             .name = name,
             .task = task,
             .interval_ms = interval_ms,
-        };
+        });
         self.workers_count += 1;
     }
 
     pub fn registerHealthCheck(self: *Engine12, check: types.HealthCheckFn) !void {
-        if (self.health_checks_count >= MAX_HEALTH_CHECKS) {
+        if (self.health_checks_count >= self.limits.max_health_checks) {
             return error.TooManyHealthChecks;
         }
-        self.health_checks[self.health_checks_count] = check;
+        try self.health_checks.append(self.allocator, check);
         self.health_checks_count += 1;
     }
 
@@ -1692,7 +1741,7 @@ pub const Engine12 = struct {
         var overall_status: types.HealthStatus = .healthy;
         var i: usize = 0;
         while (i < self.health_checks_count) {
-            if (self.health_checks[i]) |check| {
+            if (self.health_checks.items[i]) |check| {
                 const status = check();
                 if (status == .unhealthy) {
                     return .unhealthy;
@@ -1776,6 +1825,9 @@ pub const Engine12 = struct {
 
         self.is_running = false;
 
+        // Clear global context
+        global_context = null;
+
         // Immediately signal connection queue to stop accepting new connections
         if (global_connection_queue) |queue| {
             queue.signalShutdown();
@@ -1809,6 +1861,12 @@ pub const Engine12 = struct {
         self.stopWebSocketManager();
         try self.stopHttpServer();
         self.stopBackgroundTasks();
+
+        // Cleanup connection queue if it was created
+        if (global_connection_queue) |queue| {
+            queue.deinit();
+            global_connection_queue = null;
+        }
 
         const uptime = self.getUptimeMs();
         std.debug.print("[System] Shutdown complete. Uptime: {d}ms\n", .{uptime});
@@ -1848,8 +1906,7 @@ pub const Engine12 = struct {
 
             std.debug.print("[HTTP] Starting with {d} worker threads\n", .{num_workers});
 
-            const queue = try self.allocator.create(ConnectionQueue);
-            queue.* = ConnectionQueue{};
+            const queue = try ConnectionQueue.init(self.allocator, self.limits.max_queue_size);
             global_connection_queue = queue;
             global_server_for_workers = server;
             global_server_config = self.server_config;
@@ -1904,7 +1961,7 @@ pub const Engine12 = struct {
 
         var i: usize = 0;
         while (i < self.workers_count) {
-            if (self.background_workers[i]) |worker| {
+            if (self.background_workers.items[i]) |worker| {
                 _ = supervisor.child(worker.name, worker.task) catch |err| {
                     std.debug.print("[ERROR] Failed to start task '{s}': {any}\n", .{ worker.name, err });
                 };
@@ -1951,11 +2008,11 @@ pub const Engine12 = struct {
 
             script_injector_mod.setHotReloadManager(manager);
 
-            if (self.ws_routes_count < MAX_WS_ROUTES) {
-                self.ws_routes[self.ws_routes_count] = types.WebSocketRoute{
+            if (self.ws_routes_count < self.limits.max_ws_routes) {
+                try self.ws_routes.append(self.allocator, types.WebSocketRoute{
                     .path = "/ws/hot-reload",
                     .handler_ptr = hotReloadWebSocketHandler, // Store function pointer value directly
-                };
+                });
                 self.ws_routes_count += 1;
 
                 if (self.ws_manager) |*ws_mgr| {
@@ -1977,7 +2034,7 @@ pub const Engine12 = struct {
     fn hasRoute(self: *Engine12, path: []const u8) bool {
         var i: usize = 0;
         while (i < self.routes_count) : (i += 1) {
-            if (self.http_routes[i]) |route| {
+            if (self.http_routes.items[i]) |route| {
                 if (std.mem.eql(u8, route.path, path)) {
                     return true;
                 }
@@ -2080,8 +2137,8 @@ test "Engine12 runTask registration" {
     defer app.deinit();
     try app.runTask("test_task", &testDummyTask);
     try std.testing.expectEqual(app.workers_count, 1);
-    try std.testing.expect(app.background_workers[0] != null);
-    if (app.background_workers[0]) |worker| {
+    try std.testing.expect(app.background_workers.items[0] != null);
+    if (app.background_workers.items[0]) |worker| {
         try std.testing.expectEqualStrings(worker.name, "test_task");
         try std.testing.expect(worker.interval_ms == null);
     }
@@ -2092,8 +2149,8 @@ test "Engine12 schedulePeriodicTask registration" {
     defer app.deinit();
     try app.schedulePeriodicTask("periodic_task", &testDummyTask, 1000);
     try std.testing.expectEqual(app.workers_count, 1);
-    try std.testing.expect(app.background_workers[0] != null);
-    if (app.background_workers[0]) |worker| {
+    try std.testing.expect(app.background_workers.items[0] != null);
+    if (app.background_workers.items[0]) |worker| {
         try std.testing.expectEqualStrings(worker.name, "periodic_task");
         try std.testing.expect(worker.interval_ms != null);
         try std.testing.expectEqual(worker.interval_ms.?, 1000);
@@ -2104,7 +2161,7 @@ test "Engine12 runTask fails when max workers exceeded" {
     var app = try Engine12.initTesting();
     defer app.deinit();
     var i: usize = 0;
-    while (i < Engine12.MAX_WORKERS) : (i += 1) {
+    while (i < app.limits.max_background_workers) : (i += 1) {
         try app.runTask("task", &testDummyTask);
     }
     try std.testing.expectError(error.TooManyWorkers, app.runTask("task", &testDummyTask));
@@ -2115,14 +2172,14 @@ test "Engine12 registerHealthCheck" {
     defer app.deinit();
     try app.registerHealthCheck(&testDummyHealthCheck);
     try std.testing.expectEqual(app.health_checks_count, 1);
-    try std.testing.expect(app.health_checks[0] != null);
+    try std.testing.expect(app.health_checks.items[0] != null);
 }
 
 test "Engine12 registerHealthCheck fails when max checks exceeded" {
     var app = try Engine12.initTesting();
     defer app.deinit();
     var i: usize = 0;
-    while (i < Engine12.MAX_HEALTH_CHECKS) : (i += 1) {
+    while (i < app.limits.max_health_checks) : (i += 1) {
         try app.registerHealthCheck(&testDummyHealthCheck);
     }
     try std.testing.expectError(error.TooManyHealthChecks, app.registerHealthCheck(&testDummyHealthCheck));

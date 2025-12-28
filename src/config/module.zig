@@ -19,6 +19,7 @@ pub const ServerConfig = @import("config.zig").ServerConfig;
 pub const DatabaseConfig = @import("config.zig").DatabaseConfig;
 pub const LogConfig = @import("config.zig").LogConfig;
 pub const CacheConfig = @import("config.zig").CacheConfig;
+pub const LimitsConfig = @import("config.zig").LimitsConfig;
 pub const Environment = @import("config.zig").Environment;
 pub const LogLevel = @import("config.zig").LogLevel;
 pub const DatabaseDriver = @import("config.zig").DatabaseDriver;

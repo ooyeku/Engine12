@@ -57,6 +57,20 @@ pub const CacheConfig = struct {
     ttl_ms: u32,
 };
 
+/// Engine limits configuration.
+pub const LimitsConfig = struct {
+    max_routes: usize = 5000,
+    max_background_workers: usize = 32,
+    max_health_checks: usize = 8,
+    max_static_routes: usize = 500,
+    max_ws_routes: usize = 1000,
+    max_queue_size: usize = 4096,
+    max_middleware: usize = 16,
+    max_context_entries: usize = 16,
+    max_route_params: usize = 8,
+    max_valves: usize = 32,
+};
+
 /// Complete application configuration.
 /// Note: String values are owned by this struct's arena allocator.
 pub const Config = struct {
@@ -65,6 +79,7 @@ pub const Config = struct {
     database: DatabaseConfig,
     logging: LogConfig,
     cache: CacheConfig,
+    limits: LimitsConfig,
     secret_key: ?[]const u8,
 
     /// Arena allocator that owns all string memory in this config.
@@ -151,6 +166,20 @@ pub const Config = struct {
             .ttl_ms = env.getInt(u32, "E12_CACHE_TTL", 60000),
         };
 
+        // Limits config
+        const limits = LimitsConfig{
+            .max_routes = env.getInt(usize, "E12_MAX_ROUTES", 5000),
+            .max_background_workers = env.getInt(usize, "E12_MAX_BACKGROUND_WORKERS", 32),
+            .max_health_checks = env.getInt(usize, "E12_MAX_HEALTH_CHECKS", 8),
+            .max_static_routes = env.getInt(usize, "E12_MAX_STATIC_ROUTES", 500),
+            .max_ws_routes = env.getInt(usize, "E12_MAX_WS_ROUTES", 1000),
+            .max_queue_size = env.getInt(usize, "E12_MAX_QUEUE_SIZE", 4096),
+            .max_middleware = env.getInt(usize, "E12_MAX_MIDDLEWARE", 16),
+            .max_context_entries = env.getInt(usize, "E12_MAX_CONTEXT_ENTRIES", 16),
+            .max_route_params = env.getInt(usize, "E12_MAX_ROUTE_PARAMS", 8),
+            .max_valves = env.getInt(usize, "E12_MAX_VALVES", 32),
+        };
+
         // Secret key (required in production) - copy to arena
         const secret_key = if (env.get("E12_SECRET_KEY")) |v| try aa.dupe(u8, v) else null;
         if (is_prod and secret_key == null) {
@@ -163,6 +192,7 @@ pub const Config = struct {
             .database = database,
             .logging = logging,
             .cache = cache,
+            .limits = limits,
             .secret_key = secret_key,
             .arena = arena,
         };
@@ -225,6 +255,20 @@ pub const Config = struct {
             .ttl_ms = env.getInt(u32, "E12_CACHE_TTL", 60000),
         };
 
+        // Limits config
+        const limits = LimitsConfig{
+            .max_routes = env.getInt(usize, "E12_MAX_ROUTES", 5000),
+            .max_background_workers = env.getInt(usize, "E12_MAX_BACKGROUND_WORKERS", 32),
+            .max_health_checks = env.getInt(usize, "E12_MAX_HEALTH_CHECKS", 8),
+            .max_static_routes = env.getInt(usize, "E12_MAX_STATIC_ROUTES", 500),
+            .max_ws_routes = env.getInt(usize, "E12_MAX_WS_ROUTES", 1000),
+            .max_queue_size = env.getInt(usize, "E12_MAX_QUEUE_SIZE", 4096),
+            .max_middleware = env.getInt(usize, "E12_MAX_MIDDLEWARE", 16),
+            .max_context_entries = env.getInt(usize, "E12_MAX_CONTEXT_ENTRIES", 16),
+            .max_route_params = env.getInt(usize, "E12_MAX_ROUTE_PARAMS", 8),
+            .max_valves = env.getInt(usize, "E12_MAX_VALVES", 32),
+        };
+
         // Secret key (required in production)
         const secret_key = env.get("E12_SECRET_KEY");
         if (is_prod and secret_key == null) {
@@ -237,6 +281,7 @@ pub const Config = struct {
             .database = database,
             .logging = logging,
             .cache = cache,
+            .limits = limits,
             .secret_key = secret_key,
             .arena = null,
         };

@@ -7,11 +7,9 @@ const Response = E12.Response;
 /// Returns Prometheus-formatted metrics
 pub fn handleMetrics(request: *Request) Response {
     _ = request;
-    // Access global metrics collector
-    const metrics_collector = E12.engine12.global_metrics;
-
-    if (metrics_collector) |mc| {
-        const prometheus_output = mc.getPrometheusMetrics() catch {
+    // Access global context
+    if (E12.engine12.global_context) |ctx| {
+        const prometheus_output = ctx.metrics.getPrometheusMetrics() catch {
             return Response.serverError("Failed to generate metrics");
         };
         defer std.heap.page_allocator.free(prometheus_output);
@@ -21,7 +19,6 @@ pub fn handleMetrics(request: *Request) Response {
         return resp;
     }
 
-    // Fallback if metrics collector not available
+    // Fallback if context not available
     return Response.json("{\"metrics\":{\"uptime_ms\":0,\"requests_total\":0}}");
 }
-
