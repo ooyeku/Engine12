@@ -283,7 +283,9 @@ fn isLeapYear(year: u32) bool {
 
 /// Handle listing todos (returns HTML fragment for HTMX)
 pub fn handleListTodos(req: *Request) Response {
-    _ = req;
+    const page_param = req.queryParam("page") catch null;
+    const page = if (page_param) |p| std.fmt.parseInt(usize, p.asString(), 10) catch 1 else 1;
+    const per_page: usize = 10;
 
     const orm = database.getORM() catch {
         return htmx.errors.errorFragment("Database not initialized");
@@ -300,8 +302,20 @@ pub fn handleListTodos(req: *Request) Response {
     if (todos.items.len == 0) {
         buf.appendSlice(allocator, "<li class=\"empty-state\"><div class=\"empty-state-icon\">📝</div><p>No todos yet. Add one above!</p></li>") catch {};
     } else {
-        for (todos.items) |todo| {
-            renderTodoItem(todo, &buf) catch continue;
+        const start_idx = (page - 1) * per_page;
+        const end_idx = @min(start_idx + per_page, todos.items.len);
+
+        if (start_idx < todos.items.len) {
+            for (todos.items[start_idx..end_idx]) |todo| {
+                renderTodoItem(todo, &buf) catch continue;
+            }
+
+            // Add infinite scroll trigger if more items exist
+            if (end_idx < todos.items.len) {
+                const trigger = htmx.nextPageTrigger(allocator, "/htmx/todos/all", page + 1) catch "";
+                buf.appendSlice(allocator, trigger) catch {};
+                allocator.free(trigger);
+            }
         }
     }
 
@@ -316,8 +330,15 @@ pub fn handleSearchTodos(req: *Request) Response {
     var search_buf: [256]u8 = undefined;
     var search_query: []const u8 = "";
 
-    if (getQueryParam(path, "search")) |q| {
+    if (getQueryParam(path, "q")) |q| {
         search_query = urlDecode(q, &search_buf);
+    }
+
+    // Return empty state if query is too short
+    if (search_query.len < 2) {
+        const empty = htmx.searchNoResults(allocator, "Type at least 2 characters to search...") catch "";
+        defer allocator.free(empty);
+        return Response.fragment(empty);
     }
 
     const orm = database.getORM() catch {
@@ -464,6 +485,9 @@ pub fn handleCreateTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Failed to create todo", 500);
     };
 
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
+
     todo.id = created_id;
 
     var buf = std.ArrayListUnmanaged(u8){};
@@ -545,6 +569,9 @@ pub fn handleToggleTodo(req: *Request) Response {
     orm.update(Todo, todo) catch {
         return htmx.errors.errorFragmentWithStatus("Failed to update todo", 500);
     };
+
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
 
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);
@@ -782,6 +809,9 @@ pub fn handleUpdateTodo(req: *Request) Response {
         return htmx.errors.errorFragmentWithStatus("Failed to update todo", 500);
     };
 
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
+
     var buf = std.ArrayListUnmanaged(u8){};
     defer buf.deinit(allocator);
 
@@ -844,12 +874,16 @@ pub fn handleDeleteTodo(req: *Request) Response {
         const error_toast = htmx.toast(allocator, "Failed to delete todo", .err) catch "";
         var oob_builder = htmx.OobSwapBuilder.init(allocator);
         defer oob_builder.deinit();
+
         return oob_builder
             .primary("")
             .swap("#toast", error_toast)
             .status(500)
             .build();
     };
+
+    // Invalidate stats cache
+    htmx.invalidateCache("todo:stats");
 
     // Use OOB swaps to show success toast
     const success_toast = htmx.toast(allocator, "Todo deleted successfully!", .success) catch "";
@@ -867,6 +901,12 @@ pub fn handleDeleteTodo(req: *Request) Response {
 /// Handle getting todo stats
 pub fn handleGetStats(req: *Request) Response {
     _ = req;
+
+    // Try cache first (5 second TTL)
+    const cache_key = "todo:stats";
+    if (htmx.getCachedResponse(cache_key)) |entry| {
+        return Response.fragment(entry.html);
+    }
 
     const orm = database.getORM() catch {
         return Response.fragment("<div class=\"stat-pill\"><span class=\"value\">!</span><span class=\"label\">error</span></div>");
@@ -930,7 +970,12 @@ pub fn handleGetStats(req: *Request) Response {
         buf.appendSlice(allocator, "</span><span class=\"label\" style=\"color:#f87171\">overdue</span></div>") catch return Response.fragment("");
     }
 
-    return Response.fragment(buf.toOwnedSlice(allocator) catch "");
+    const html = buf.toOwnedSlice(allocator) catch "";
+
+    // Cache the result for 5 seconds
+    htmx.cacheResponse(cache_key, html, 5000) catch {};
+
+    return Response.fragment(html);
 }
 
 /// Handle clearing all completed todos

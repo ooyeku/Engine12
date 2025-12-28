@@ -461,6 +461,10 @@ pub fn createApp() !*E12.Engine12 {
 }
 
 pub fn main() !void {
+    // Initialize HTMX fragment cache
+    E12.htmx.initGlobalCache(allocator);
+    defer E12.htmx.deinitGlobalCache();
+
     const app = try createApp();
     defer {
         app.deinit();

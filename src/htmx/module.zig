@@ -15,6 +15,11 @@ pub const components = @import("components.zig");
 pub const validators = @import("validators.zig");
 pub const sse = @import("sse.zig");
 pub const csrf = @import("csrf.zig");
+pub const pagination_mod = @import("pagination.zig");
+pub const search_mod = @import("search.zig");
+pub const form_builder = @import("form_builder.zig");
+pub const optimistic = @import("optimistic.zig");
+pub const fragment_cache = @import("cache.zig");
 
 pub const HtmxConfig = config.HtmxConfig;
 pub const HtmxRequestInfo = request.HtmxRequestInfo;
@@ -143,6 +148,50 @@ pub const csrfFormStart = csrf.formStart;
 pub const csrfHtmxFormStart = csrf.htmxFormStart;
 pub const csrfRequiresValidation = csrf.requiresValidation;
 pub const csrfErrorResponse = csrf.errorResponse;
+
+// Pagination helpers (Tier 2)
+pub const Pagination = pagination_mod.Pagination;
+pub const nextPageTrigger = pagination_mod.nextPageTrigger;
+pub const loadMoreButton = pagination_mod.loadMoreButton;
+pub const loadMoreButtonWithText = pagination_mod.loadMoreButtonWithText;
+pub const numberedPages = pagination_mod.numberedPages;
+
+// Search helpers (Tier 2)
+pub const Search = search_mod.Search;
+pub const SearchInputOptions = search_mod.Search.InputOptions;
+pub const searchInput = search_mod.input;
+pub const searchInputWithOptions = search_mod.inputWithOptions;
+pub const searchResultsContainer = search_mod.resultsContainer;
+pub const searchResultItem = search_mod.resultItem;
+pub const searchIndicator = search_mod.indicator;
+pub const searchNoResults = search_mod.noResults;
+
+// Form builder (Tier 2)
+pub const FormBuilder = form_builder.FormBuilder;
+pub const FormTextOptions = form_builder.FormBuilder.TextOptions;
+pub const FormSelectOption = form_builder.FormBuilder.SelectOption;
+pub const textField = form_builder.textField;
+
+// Optimistic UI (Tier 2)
+pub const OptimisticUI = optimistic.OptimisticUI;
+pub const withOptimisticHtml = optimistic.withOptimisticHtml;
+pub const withOptimisticClass = optimistic.withOptimisticClass;
+pub const withOptimisticRemove = optimistic.withOptimisticRemove;
+pub const optimisticButton = optimistic.optimisticButton;
+pub const withCounterIncrement = optimistic.withCounterIncrement;
+pub const withListItemAdd = optimistic.withListItemAdd;
+
+// Fragment caching (Tier 2)
+pub const FragmentCache = fragment_cache.FragmentCache;
+pub const CacheEntry = fragment_cache.CacheEntry;
+pub const CacheStats = fragment_cache.CacheStats;
+pub const initGlobalCache = fragment_cache.initGlobalCache;
+pub const getGlobalCache = fragment_cache.getGlobalCache;
+pub const deinitGlobalCache = fragment_cache.deinitGlobalCache;
+pub const cacheResponse = fragment_cache.cacheResponse;
+pub const getCachedResponse = fragment_cache.getCachedResponse;
+pub const invalidateCache = fragment_cache.invalidateCache;
+pub const invalidateCachePrefix = fragment_cache.invalidateCachePrefix;
 
 test "module exports" {
     _ = HtmxConfig{};

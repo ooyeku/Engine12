@@ -4,11 +4,22 @@ Engine12 provides comprehensive HTMX support for building modern, interactive we
 
 ## Table of Contents
 
+### Tier 1 Features
 - [Out-of-Band (OOB) Swaps](#out-of-band-oob-swaps)
 - [Component Helpers](#component-helpers)
 - [Form Validators](#form-validators)
 - [Server-Sent Events (SSE)](#server-sent-events-sse)
 - [CSRF Token Integration](#csrf-token-integration)
+
+### Tier 2 Features
+- [Pagination & Infinite Scroll](#pagination--infinite-scroll)
+- [Search & Autocomplete](#search--autocomplete)
+- [Form Builder](#form-builder)
+- [Optimistic UI](#optimistic-ui)
+- [Fragment Caching](#fragment-caching)
+
+### Additional
+- [Best Practices](#best-practices)
 
 ## Out-of-Band (OOB) Swaps
 
@@ -527,3 +538,442 @@ pub fn handleCreateItem(request: *Request) Response {
         .build();
 }
 ```
+
+---
+
+## Tier 2 Features
+
+### Pagination & Infinite Scroll
+
+Engine12 provides helpers for infinite scroll and pagination patterns.
+
+#### Infinite Scroll
+
+```zig
+const htmx = @import("engine12").htmx;
+
+pub fn handleListItems(request: *Request) Response {
+    const page = request.queryParam("page").asInt() orelse 1;
+    
+    // Render items for this page
+    var html = try renderItems(allocator, page);
+    
+    // Add infinite scroll trigger for next page
+    if (hasMorePages(page)) {
+        const trigger = try htmx.nextPageTrigger(allocator, "/api/items", page + 1);
+        defer allocator.free(trigger);
+        
+        try html.appendSlice(allocator, trigger);
+    }
+    
+    return Response.fragment(html);
+}
+```
+
+#### Load More Button
+
+```zig
+pub fn handleLoadMore(request: *Request) Response {
+    const page = request.queryParam("page").asInt() orelse 1;
+    
+    var html = try renderItems(allocator, page);
+    
+    // Add load more button
+    const button = try htmx.loadMoreButton(allocator, "/api/items", page + 1);
+    defer allocator.free(button);
+    
+    try html.appendSlice(allocator, button);
+    
+    return Response.fragment(html);
+}
+```
+
+#### Numbered Pagination
+
+```zig
+pub fn handlePaginatedList(request: *Request) Response {
+    const current_page = request.queryParam("page").asInt() orelse 1;
+    const total_pages = 10;
+    
+    const pagination = try htmx.numberedPages(
+        allocator,
+        "/api/items",
+        current_page,
+        total_pages
+    );
+    defer allocator.free(pagination);
+    
+    return Response.fragment(pagination);
+}
+```
+
+### Search & Autocomplete
+
+Debounced search with keyboard navigation support.
+
+#### Basic Search
+
+```zig
+pub fn renderSearchForm(allocator: std.mem.Allocator) ![]const u8 {
+    const input = try htmx.searchInput(allocator, "/api/search", 300);
+    defer allocator.free(input);
+    
+    const container = try htmx.searchResultsContainer(allocator, "search-results");
+    defer allocator.free(container);
+    
+    var html = std.ArrayListUnmanaged(u8){};
+    try html.appendSlice(allocator, "<div>");
+    try html.appendSlice(allocator, input);
+    try html.appendSlice(allocator, container);
+    try html.appendSlice(allocator, "</div>");
+    
+    return html.toOwnedSlice(allocator);
+}
+```
+
+#### Custom Search Options
+
+```zig
+const search_input = try htmx.searchInputWithOptions(allocator, "/api/users", 500, .{
+    .name = "search",
+    .placeholder = "Search users...",
+    .target = "#user-results",
+    .min_length = 3,
+    .trigger_on_load = false,
+});
+defer allocator.free(search_input);
+```
+
+#### Search Results
+
+```zig
+pub fn handleSearch(request: *Request) Response {
+    const query = request.queryParam("q").asString() orelse "";
+    
+    if (query.len == 0) {
+        const empty = try htmx.searchNoResults(allocator, "Start typing to search...");
+        defer allocator.free(empty);
+        return Response.fragment(empty);
+    }
+    
+    const results = try searchDatabase(allocator, query);
+    
+    var html = std.ArrayListUnmanaged(u8){};
+    for (results) |result| {
+        const item = try htmx.searchResultItem(
+            allocator,
+            result.name,
+            result.id,
+            try std.fmt.allocPrint(allocator, "/users/{s}", .{result.id})
+        );
+        defer allocator.free(item);
+        try html.appendSlice(allocator, item);
+    }
+    
+    return Response.fragment(try html.toOwnedSlice(allocator));
+}
+```
+
+### Form Builder
+
+Type-safe form generation with automatic validation attributes.
+
+#### Basic Form
+
+```zig
+pub fn renderForm(allocator: std.mem.Allocator) ![]const u8 {
+    var builder = htmx.FormBuilder.init(allocator);
+    defer builder.deinit();
+    
+    _ = try builder.start("/api/users");
+    _ = try builder.text("name", "Name", .{ .required = true, .min_length = 3 });
+    _ = try builder.email("email", "Email", true);
+    _ = try builder.password("password", "Password", true);
+    _ = try builder.submit("Create User");
+    
+    return builder.build();
+}
+```
+
+#### Form with Select
+
+```zig
+const options = [_]htmx.FormSelectOption{
+    .{ .value = "low", .label = "Low Priority" },
+    .{ .value = "medium", .label = "Medium Priority", .selected = true },
+    .{ .value = "high", .label = "High Priority" },
+};
+
+var builder = htmx.FormBuilder.init(allocator);
+defer builder.deinit();
+
+_ = try builder.start("/api/todos");
+_ = try builder.text("title", "Title", .{ .required = true });
+_ = try builder.select("priority", "Priority", &options);
+_ = try builder.textarea("description", "Description", 5);
+_ = try builder.checkbox("urgent", "Mark as urgent", false);
+_ = try builder.submit("Create Todo");
+
+const html = try builder.build();
+defer allocator.free(html);
+```
+
+#### Advanced Text Field Options
+
+```zig
+_ = try builder.text("username", "Username", .{
+    .required = true,
+    .min_length = 3,
+    .max_length = 20,
+    .pattern = "[a-zA-Z0-9_]+",
+    .placeholder = "Enter username",
+    .value = "default_value",
+    .class = "custom-input",
+});
+```
+
+### Optimistic UI
+
+Show immediate feedback while requests are processing.
+
+#### Optimistic Class Toggle
+
+```zig
+pub fn renderLikeButton(allocator: std.mem.Allocator) ![]const u8 {
+    const attrs = try htmx.withOptimisticClass(allocator, "liked");
+    defer allocator.free(attrs);
+    
+    var html = std.ArrayListUnmanaged(u8){};
+    try html.appendSlice(allocator, "<button hx-post=\"/api/like\" ");
+    try html.appendSlice(allocator, attrs);
+    try html.appendSlice(allocator, ">Like</button>");
+    
+    return html.toOwnedSlice(allocator);
+}
+```
+
+#### Optimistic Button State
+
+```zig
+const button = try htmx.optimisticButton(
+    allocator,
+    "Save Changes",
+    "/api/save",
+    "Saving..."
+);
+defer allocator.free(button);
+
+return Response.fragment(button);
+```
+
+#### Optimistic Counter Increment
+
+```zig
+const attrs = try htmx.withCounterIncrement(allocator, "#like-count", 1);
+defer allocator.free(attrs);
+
+var html = std.ArrayListUnmanaged(u8){};
+try html.appendSlice(allocator, "<button hx-post=\"/api/like\" ");
+try html.appendSlice(allocator, attrs);
+try html.appendSlice(allocator, ">Like</button>");
+```
+
+#### Optimistic Item Removal
+
+```zig
+const attrs = try htmx.withOptimisticRemove(allocator);
+defer allocator.free(attrs);
+
+var html = std.ArrayListUnmanaged(u8){};
+try html.appendSlice(allocator, "<button hx-delete=\"/api/item/123\" ");
+try html.appendSlice(allocator, attrs);
+try html.appendSlice(allocator, ">Delete</button>");
+```
+
+#### Optimistic List Addition
+
+```zig
+const new_item_html = "<li class=\"temp-item\">New Item</li>";
+const attrs = try htmx.withListItemAdd(allocator, "#item-list", new_item_html);
+defer allocator.free(attrs);
+
+var html = std.ArrayListUnmanaged(u8){};
+try html.appendSlice(allocator, "<button hx-post=\"/api/items\" ");
+try html.appendSlice(allocator, attrs);
+try html.appendSlice(allocator, ">Add Item</button>");
+```
+
+### Fragment Caching
+
+Automatic caching for rendered HTML fragments with ETag support.
+
+#### Initialize Global Cache
+
+```zig
+// In your application startup
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+    
+    // Initialize the global fragment cache
+    htmx.initGlobalCache(allocator);
+    defer htmx.deinitGlobalCache();
+    
+    // Start your application...
+}
+```
+
+#### Cache a Fragment
+
+```zig
+pub fn handleExpensiveRender(request: *Request) Response {
+    const cache_key = "dashboard:stats";
+    
+    // Try to get from cache
+    if (htmx.getCachedResponse(cache_key)) |entry| {
+        return Response.fragment(entry.html)
+            .withHeader("ETag", entry.etag);
+    }
+    
+    // Generate expensive HTML
+    const html = try generateDashboardStats(allocator);
+    
+    // Cache for 5 minutes (300000 ms)
+    try htmx.cacheResponse(cache_key, html, 300000);
+    
+    return Response.fragment(html);
+}
+```
+
+#### Cache Invalidation
+
+```zig
+// Invalidate specific cache entry
+pub fn handleUpdateStats(request: *Request) Response {
+    // Update the stats...
+    
+    // Invalidate cache
+    htmx.invalidateCache("dashboard:stats");
+    
+    return Response.ok();
+}
+
+// Invalidate by prefix (e.g., all user-related caches)
+pub fn handleUserUpdate(request: *Request) Response {
+    const user_id = request.param("id").asString();
+    
+    // Update user...
+    
+    // Invalidate all caches starting with "user:123:"
+    const prefix = try std.fmt.allocPrint(allocator, "user:{s}:", .{user_id});
+    defer allocator.free(prefix);
+    
+    htmx.invalidateCachePrefix(prefix);
+    
+    return Response.ok();
+}
+```
+
+#### Using Cache with Custom Instance
+
+```zig
+// Create a custom cache instance
+var cache = htmx.FragmentCache.init(allocator);
+defer cache.deinit();
+
+// Store fragment
+try cache.put("my-key", "<div>Content</div>", 60000);
+
+// Retrieve fragment
+if (cache.get("my-key")) |entry| {
+    std.debug.print("HTML: {s}\n", .{entry.html});
+    std.debug.print("ETag: {s}\n", .{entry.etag});
+}
+
+// Check if exists and not expired
+if (cache.has("my-key")) {
+    std.debug.print("Cache hit!\n", .{});
+}
+
+// Clear expired entries
+cache.clearExpired();
+
+// Get statistics
+const stats = cache.stats();
+std.debug.print("Total: {}, Active: {}, Expired: {}\n", .{
+    stats.total_entries,
+    stats.active_entries,
+    stats.expired_entries,
+});
+```
+
+## Best Practices
+
+### 1. Combine Features
+
+```zig
+pub fn handleCreateItem(request: *Request) Response {
+    // Validate with built-in validators
+    var validator = htmx.FormValidator.init(parser, allocator);
+    defer validator.deinit();
+    
+    validator.validate("title", htmx.validators.isRequiredTrimmed, "Title required");
+    validator.validate("title", htmx.validators.minLength(3), "Too short");
+    
+    if (validator.hasErrors()) {
+        return htmx.multipleValidationErrors(validator.getErrors());
+    }
+    
+    // Create item...
+    
+    // Use OOB swaps + toast notification
+    var builder = htmx.OobSwapBuilder.init(allocator);
+    defer builder.deinit();
+    
+    const toast = try htmx.toast(allocator, "Item created!", .success);
+    defer allocator.free(toast);
+    
+    return builder
+        .primary("<li>New Item</li>")
+        .swap("#toast", toast)
+        .swap("#item-count", "<span>5 items</span>")
+        .trigger("itemCreated")
+        .build();
+}
+```
+
+### 2. Cache Expensive Renders
+
+```zig
+pub fn handleUserProfile(request: *Request) Response {
+    const user_id = request.param("id").asString();
+    const cache_key = try std.fmt.allocPrint(allocator, "profile:{s}", .{user_id});
+    defer allocator.free(cache_key);
+    
+    // Check cache first
+    if (htmx.getCachedResponse(cache_key)) |entry| {
+        return Response.fragment(entry.html);
+    }
+    
+    // Generate profile HTML
+    const html = try renderUserProfile(allocator, user_id);
+    
+    // Cache for 10 minutes
+    try htmx.cacheResponse(cache_key, html, 600000);
+    
+    return Response.fragment(html);
+}
+```
+
+### 3. Progressive Enhancement
+
+```zig
+// Start with basic pagination
+const pagination = try htmx.numberedPages(allocator, "/items", 1, 10);
+
+// Upgrade to infinite scroll for supported browsers
+const trigger = try htmx.nextPageTrigger(allocator, "/items", 2);
+
+// Provide both options
+return Response.fragment(combined_html);
+```
+
