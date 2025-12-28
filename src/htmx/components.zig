@@ -1,14 +1,6 @@
 const std = @import("std");
 const Response = @import("../http/response.zig").Response;
 
-/// Pre-built HTMX-ready component fragments for common UI patterns.
-///
-/// These components generate semantic HTML with HTMX attributes for
-/// seamless integration with Engine12's HTMX module.
-
-// ============================================================================
-// Toast Notifications
-// ============================================================================
 
 pub const ToastType = enum {
     success,

@@ -14,6 +14,7 @@ pub const WebSocketServerEntry = struct {
     handler: handler.WebSocketHandler,
     server_instance: ?*server.Server = null,
     thread: ?std.Thread = null,
+    app_data: ?*handler.AppData = null,
 };
 
 /// Manages multiple WebSocket servers for Engine12
@@ -126,6 +127,7 @@ pub const WebSocketManager = struct {
             };
 
             entry.thread = thread;
+            entry.app_data = app_data;
         }
     }
 
@@ -140,19 +142,22 @@ pub const WebSocketManager = struct {
             }
         }
 
-        // Wait for threads to finish (they will clean up app_data and thread_ctx via defer)
+        // Wait for threads to finish (they will clean up thread_ctx via defer)
         for (self.servers.items) |*entry| {
             if (entry.thread) |thread| {
                 thread.join();
             }
         }
 
-        // Clean up server resources (app_data is already cleaned by thread defer)
+        // Clean up server resources and app_data
         for (self.servers.items) |entry| {
             self.allocator.free(entry.path);
             if (entry.server_instance) |ws_server| {
                 ws_server.deinit();
                 self.allocator.destroy(ws_server);
+            }
+            if (entry.app_data) |app_data| {
+                self.allocator.destroy(app_data);
             }
         }
         self.servers.deinit(self.allocator);
@@ -227,7 +232,8 @@ const ServerThreadContext = struct {
 };
 
 fn serverThreadFn(ctx: *ServerThreadContext) void {
-    defer ctx.manager.allocator.destroy(ctx.app_data);
+    // Note: ctx.app_data is NOT destroyed here because it's shared across
+    // all client threads. It will be destroyed in stop() after all threads join.
     defer ctx.manager.allocator.destroy(ctx);
 
     // Run the server's accept loop
