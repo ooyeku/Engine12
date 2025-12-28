@@ -737,6 +737,31 @@ pub const Response = struct {
         return resp.withContentType(content_type);
     }
 
+    /// Create a Server-Sent Events (SSE) response
+    pub fn sse(data: []const u8) Response {
+        const persistent_data = dupePersistent(data) catch {
+            const error_msg = "Internal server error: Failed to allocate response memory";
+            return Response{
+                .inner = ziggurat.response.Response.text(error_msg),
+                ._persistent_body = null,
+                ._custom_headers = null,
+                ._status_code = 500,
+            };
+        };
+
+        var resp = Response{
+            .inner = ziggurat.response.Response.text(persistent_data),
+            ._persistent_body = persistent_data,
+            ._custom_headers = null,
+            ._status_code = null,
+        };
+
+        return resp
+            .withContentType("text/event-stream")
+            .withHeader("Cache-Control", "no-cache")
+            .withHeader("Connection", "keep-alive");
+    }
+
     pub fn getBody(self: Response) []const u8 {
         if (self._persistent_body) |body| {
             return body;

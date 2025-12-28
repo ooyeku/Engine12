@@ -716,10 +716,154 @@
             .htmx-request .htmx-indicator {
                 opacity: 1;
             }
+
+            /* Toast Notifications */
+            #toast {
+                position: fixed;
+                top: 2rem;
+                right: 2rem;
+                z-index: 1000;
+                max-width: 400px;
+            }
+
+            .toast {
+                background: var(--bg-card);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 1rem 1.25rem;
+                box-shadow: var(--shadow-lg);
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                animation: slideInRight 0.3s ease-out;
+                margin-bottom: 0.75rem;
+            }
+
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+            }
+
+            @keyframes slideOutRight {
+                from {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+                to {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+            }
+
+            .toast.dismissing {
+                animation: slideOutRight 0.3s ease-out forwards;
+            }
+
+            .toast.success {
+                border-left: 4px solid var(--success);
+                background: linear-gradient(
+                    to right,
+                    var(--success-dim),
+                    var(--bg-card)
+                );
+            }
+
+            .toast.error {
+                border-left: 4px solid var(--danger);
+                background: linear-gradient(
+                    to right,
+                    var(--danger-dim),
+                    var(--bg-card)
+                );
+            }
+
+            .toast.info {
+                border-left: 4px solid var(--accent);
+                background: linear-gradient(
+                    to right,
+                    var(--accent-dim),
+                    var(--bg-card)
+                );
+            }
+
+            .toast.warning {
+                border-left: 4px solid var(--warning);
+                background: linear-gradient(
+                    to right,
+                    var(--warning-dim),
+                    var(--bg-card)
+                );
+            }
+
+            .toast-icon {
+                width: 20px;
+                height: 20px;
+                flex-shrink: 0;
+            }
+
+            .toast.success .toast-icon {
+                color: var(--success);
+            }
+
+            .toast.error .toast-icon {
+                color: var(--danger);
+            }
+
+            .toast.info .toast-icon {
+                color: var(--accent);
+            }
+
+            .toast.warning .toast-icon {
+                color: var(--warning);
+            }
+
+            .toast-message {
+                flex: 1;
+                color: var(--text);
+                font-size: 0.9rem;
+            }
+
+            .toast-close {
+                background: transparent;
+                border: none;
+                color: var(--text-muted);
+                cursor: pointer;
+                width: 20px;
+                height: 20px;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 4px;
+                transition: all 0.15s;
+            }
+
+            .toast-close:hover {
+                background: var(--bg-elevated);
+                color: var(--text);
+            }
+
+            @media (max-width: 600px) {
+                #toast {
+                    top: 1rem;
+                    right: 1rem;
+                    left: 1rem;
+                    max-width: none;
+                }
+            }
         </style>
     </head>
 
     <body>
+        <!-- Toast notification container -->
+        <div id="toast"></div>
+
         <div class="container">
             {# Header section with HTMX badge #}
             <header>

@@ -4,6 +4,7 @@ const Request = E12.Request;
 const Response = E12.Response;
 const htmx = E12.htmx;
 const FormValidator = htmx.FormValidator;
+const validators = htmx.validators;
 const ParamList = E12.orm.ParamList;
 const database = @import("../database.zig");
 const models = @import("../models.zig");
@@ -221,14 +222,14 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
     try buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"></path><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\"></path></svg>");
     try buf.appendSlice(allocator, "</button>\n");
 
-    // Delete button (icon)
+    // Delete button (icon) with confirmation
     try buf.appendSlice(allocator, "    <button class=\"btn-icon btn-delete\" title=\"Delete\" ");
     try buf.appendSlice(allocator, "hx-delete=\"/htmx/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "\" hx-swap=\"outerHTML\" ");
-    try buf.appendSlice(allocator, "hx-confirm=\"Delete this task?\">");
+    try buf.appendSlice(allocator, "hx-confirm=\"Are you sure you want to delete this todo?\">");
     // Trash icon SVG
     try buf.appendSlice(allocator, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"></polyline><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"></path><line x1=\"10\" y1=\"11\" x2=\"10\" y2=\"17\"></line><line x1=\"14\" y1=\"11\" x2=\"14\" y2=\"17\"></line></svg>");
     try buf.appendSlice(allocator, "</button>\n");
@@ -377,17 +378,24 @@ pub fn handleCreateTodo(req: *Request) Response {
     var validator = htmx.FormValidator.init(form_parser, req.allocator());
     defer validator.deinit();
 
+    // Use built-in validators for better validation
+    validator.validate("title", validators.isRequiredTrimmed, "Title cannot be empty");
+    validator.validate("title", validators.minLength(3), "Title must be at least 3 characters");
+    validator.validate("title", validators.maxLength(100), "Title too long (max 100 characters)");
+
     const form = validator.parseInto(TodoForm) catch {
         if (validator.hasErrors()) {
-            return htmx.errors.multipleValidationErrors(validator.getErrors());
+            const error_toast = htmx.toast(allocator, "Please fix validation errors", .err) catch "";
+            var oob_builder = htmx.OobSwapBuilder.init(allocator);
+            defer oob_builder.deinit();
+            return oob_builder
+                .primary("")
+                .swap("#toast", error_toast)
+                .status(400)
+                .build();
         }
         return htmx.errors.errorFragment("Failed to parse form");
     };
-
-    // Validate title length
-    if (form.title.len == 0) {
-        return htmx.errors.fieldErrorFragment("title", "Title cannot be empty");
-    }
 
     // Handle optional fields with defaults
     defer req.allocator().free(form.title);
@@ -465,8 +473,15 @@ pub fn handleCreateTodo(req: *Request) Response {
         return htmx.errors.errorFragment("Failed to render todo");
     };
 
-    // Use fluent builder for cleaner code
-    return htmx.builder.HtmxResponseBuilder.init(buf.toOwnedSlice(allocator) catch "")
+    // Use OOB swaps to update multiple elements + show success toast
+    const success_toast = htmx.toast(allocator, "Todo created successfully!", .success) catch "";
+
+    var oob_builder = htmx.OobSwapBuilder.init(allocator);
+    defer oob_builder.deinit();
+
+    return oob_builder
+        .primary(buf.toOwnedSlice(allocator) catch "")
+        .swap("#toast", success_toast)
         .trigger("todoCreated")
         .status(201)
         .build();
@@ -538,8 +553,17 @@ pub fn handleToggleTodo(req: *Request) Response {
         return htmx.errors.errorFragment("Failed to render todo");
     };
 
-    return Response.fragment(buf.toOwnedSlice(allocator) catch "")
-        .htmxTrigger("todoUpdated");
+    // Use OOB swaps to show success toast
+    const success_toast = htmx.toast(allocator, "Todo updated successfully!", .success) catch "";
+
+    var oob_builder = htmx.OobSwapBuilder.init(allocator);
+    defer oob_builder.deinit();
+
+    return oob_builder
+        .primary(buf.toOwnedSlice(allocator) catch "")
+        .swap("#toast", success_toast)
+        .trigger("todoUpdated")
+        .build();
 }
 
 /// Handle getting edit form for a todo
@@ -694,6 +718,25 @@ pub fn handleUpdateTodo(req: *Request) Response {
 
     var form_parser = req.getFormParser();
 
+    // Validate using built-in validators
+    var validator = htmx.FormValidator.init(form_parser, req.allocator());
+    defer validator.deinit();
+
+    validator.validate("title", validators.isRequiredTrimmed, "Title cannot be empty");
+    validator.validate("title", validators.minLength(3), "Title must be at least 3 characters");
+    validator.validate("title", validators.maxLength(100), "Title too long");
+
+    if (validator.hasErrors()) {
+        const error_toast = htmx.toast(allocator, "Validation failed", .err) catch "";
+        var oob_builder = htmx.OobSwapBuilder.init(allocator);
+        defer oob_builder.deinit();
+        return oob_builder
+            .primary("")
+            .swap("#toast", error_toast)
+            .status(400)
+            .build();
+    }
+
     // Update fields from form
     if (form_parser.get("title") catch null) |title| {
         defer req.allocator().free(title);
@@ -798,11 +841,25 @@ pub fn handleDeleteTodo(req: *Request) Response {
     };
 
     orm.delete(Todo, id) catch {
-        return htmx.errors.toastError("Failed to delete todo");
+        const error_toast = htmx.toast(allocator, "Failed to delete todo", .err) catch "";
+        var oob_builder = htmx.OobSwapBuilder.init(allocator);
+        defer oob_builder.deinit();
+        return oob_builder
+            .primary("")
+            .swap("#toast", error_toast)
+            .status(500)
+            .build();
     };
 
-    // Use fluent builder for cleaner code
-    return htmx.builder.HtmxResponseBuilder.init("")
+    // Use OOB swaps to show success toast
+    const success_toast = htmx.toast(allocator, "Todo deleted successfully!", .success) catch "";
+
+    var oob_builder = htmx.OobSwapBuilder.init(allocator);
+    defer oob_builder.deinit();
+
+    return oob_builder
+        .primary("")
+        .swap("#toast", success_toast)
         .trigger("todoDeleted")
         .build();
 }

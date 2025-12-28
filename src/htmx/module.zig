@@ -1,4 +1,3 @@
-
 const std = @import("std");
 
 pub const config = @import("config.zig");
@@ -11,6 +10,11 @@ pub const form_validator = @import("form_validator.zig");
 pub const security = @import("security.zig");
 pub const builder = @import("builder.zig");
 pub const testing = @import("testing.zig");
+pub const oob = @import("oob.zig");
+pub const components = @import("components.zig");
+pub const validators = @import("validators.zig");
+pub const sse = @import("sse.zig");
+pub const csrf = @import("csrf.zig");
 
 pub const HtmxConfig = config.HtmxConfig;
 pub const HtmxRequestInfo = request.HtmxRequestInfo;
@@ -81,6 +85,64 @@ pub const Security = security.Security;
 pub const HtmxResponseBuilder = builder.HtmxResponseBuilder;
 
 pub const Testing = testing.Testing;
+
+pub const OobSwapBuilder = oob.OobSwapBuilder;
+pub const oobSwap = oob.oobSwap;
+pub const oobMultiple = oob.oobMultiple;
+
+// Component helpers
+pub const ToastType = components.ToastType;
+pub const ModalSize = components.ModalSize;
+pub const SpinnerSize = components.SpinnerSize;
+pub const AlertType = components.AlertType;
+pub const toast = components.toast;
+pub const toastWithDuration = components.toastWithDuration;
+pub const toastDismiss = components.toastDismiss;
+pub const toastResponse = components.toastResponse;
+pub const modal = components.modal;
+pub const modalWithOptions = components.modalWithOptions;
+pub const modalWithActions = components.modalWithActions;
+pub const modalClose = components.modalClose;
+pub const modalResponse = components.modalResponse;
+pub const confirmDialog = components.confirmDialog;
+pub const confirmDialogWithLabels = components.confirmDialogWithLabels;
+pub const deleteConfirm = components.deleteConfirm;
+pub const loadingSpinner = components.loadingSpinner;
+pub const loadingSpinnerWithSize = components.loadingSpinnerWithSize;
+pub const loadingSpinnerWithText = components.loadingSpinnerWithText;
+pub const skeleton = components.skeleton;
+pub const emptyState = components.emptyState;
+pub const emptyStateWithAction = components.emptyStateWithAction;
+pub const alert = components.alert;
+pub const alertWithDismiss = components.alertWithDismiss;
+pub const progressBar = components.progressBar;
+pub const progressBarWithLabel = components.progressBarWithLabel;
+pub const pagination = components.pagination;
+
+// SSE helpers
+pub const SSEStream = sse.SSEStream;
+pub const SSEEvent = sse.Event;
+pub const sseEvent = sse.sseEvent;
+pub const sseMessage = sse.sseMessage;
+pub const sseFragment = sse.sseFragment;
+pub const sseContainer = sse.sseContainer;
+pub const sseSwapTarget = sse.sseSwapTarget;
+pub const sseContainerWithTargets = sse.sseContainerWithTargets;
+
+// CSRF helpers
+pub const CsrfConfig = csrf.Config;
+pub const CsrfTokenStore = csrf.TokenStore;
+pub const csrfGenerateToken = csrf.generateToken;
+pub const csrfValidateToken = csrf.validateToken;
+pub const csrfHiddenInput = csrf.hiddenInput;
+pub const csrfMetaTag = csrf.metaTag;
+pub const csrfHxHeaders = csrf.hxHeaders;
+pub const csrfHxHeadersAttribute = csrf.hxHeadersAttribute;
+pub const csrfHtmxConfigScript = csrf.htmxConfigScript;
+pub const csrfFormStart = csrf.formStart;
+pub const csrfHtmxFormStart = csrf.htmxFormStart;
+pub const csrfRequiresValidation = csrf.requiresValidation;
+pub const csrfErrorResponse = csrf.errorResponse;
 
 test "module exports" {
     _ = HtmxConfig{};
