@@ -96,7 +96,7 @@ pub const TemplateAST = struct {
         args: []const []const u8,
     };
 
-    pub fn init(comptime nodes: []const Node) TemplateAST {
+    pub fn init(nodes: []const Node) TemplateAST {
         return TemplateAST{ .nodes = nodes };
     }
 
@@ -122,7 +122,6 @@ pub const ParseError = error{
     InvalidBlockSyntax,
     InvalidExtendsSyntax,
 };
-
 
 test "TemplateAST.init creates AST with nodes" {
     const nodes = [_]TemplateAST.Node{

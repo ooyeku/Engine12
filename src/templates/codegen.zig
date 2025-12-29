@@ -5,7 +5,7 @@ const filters = @import("filters.zig");
 
 pub const Codegen = struct {
     pub fn generateRenderFunction(
-        ast_tree: ast.TemplateAST,
+        comptime ast_tree: ast.TemplateAST,
         comptime context_type: type,
     ) type {
         return struct {
@@ -19,22 +19,22 @@ pub const Codegen = struct {
             }
 
             fn renderNodes(
-                nodes: []const ast.TemplateAST.Node,
+                comptime nodes: []const ast.TemplateAST.Node,
                 ctx: context_type,
                 buffer: *std.ArrayListUnmanaged(u8),
                 allocator: std.mem.Allocator,
-            ) (std.mem.Allocator.Error || error{InvalidVariablePath})!void {
-                for (nodes) |node| {
+            ) (std.mem.Allocator.Error || error{ InvalidVariablePath, TemplateParseError })!void {
+                inline for (nodes) |node| {
                     try renderNode(node, ctx, buffer, allocator);
                 }
             }
 
             fn renderNode(
-                node: ast.TemplateAST.Node,
+                comptime node: ast.TemplateAST.Node,
                 ctx: context_type,
                 buffer: *std.ArrayListUnmanaged(u8),
                 allocator: std.mem.Allocator,
-            ) (std.mem.Allocator.Error || error{InvalidVariablePath})!void {
+            ) (std.mem.Allocator.Error || error{ InvalidVariablePath, TemplateParseError })!void {
                 switch (node) {
                     .text => |text| {
                         try buffer.appendSlice(allocator, text);
@@ -96,10 +96,11 @@ pub const Codegen = struct {
                         }
                     },
                     .include => |include_node| {
-                        // TODO: Implement proper include with @embedFile
-                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} -->\n", .{include_node.file_path});
-                        defer allocator.free(include_placeholder);
-                        try buffer.appendSlice(allocator, include_placeholder);
+                        const content = @embedFile(include_node.file_path);
+                        const parsed = @import("parser.zig").Parser.parse(content) catch |err| {
+                            @compileError("Failed to parse included file '" ++ include_node.file_path ++ "': " ++ @errorName(err));
+                        };
+                        try renderNodes(parsed.nodes, ctx, buffer, allocator);
                     },
                     .comment => |_| {
                         // Comments are not rendered
@@ -348,7 +349,7 @@ pub const Codegen = struct {
             }
 
             fn renderNodesWithLoopVars(
-                nodes: []const ast.TemplateAST.Node,
+                comptime nodes: []const ast.TemplateAST.Node,
                 ctx: context_type,
                 item_name: []const u8,
                 item_value: []const u8,
@@ -369,22 +370,22 @@ pub const Codegen = struct {
             }
 
             fn renderNodesWithContext(
-                nodes: []const ast.TemplateAST.Node,
+                comptime nodes: []const ast.TemplateAST.Node,
                 ctx: anytype,
                 buffer: *std.ArrayListUnmanaged(u8),
                 allocator: std.mem.Allocator,
-            ) (std.mem.Allocator.Error || error{InvalidVariablePath})!void {
-                for (nodes) |node| {
+            ) (std.mem.Allocator.Error || error{ InvalidVariablePath, TemplateParseError })!void {
+                inline for (nodes) |node| {
                     try renderNodeWithContext(node, ctx, buffer, allocator);
                 }
             }
 
             fn renderNodeWithContext(
-                node: ast.TemplateAST.Node,
+                comptime node: ast.TemplateAST.Node,
                 ctx: anytype,
                 buffer: *std.ArrayListUnmanaged(u8),
                 allocator: std.mem.Allocator,
-            ) (std.mem.Allocator.Error || error{InvalidVariablePath})!void {
+            ) (std.mem.Allocator.Error || error{ InvalidVariablePath, TemplateParseError })!void {
                 switch (node) {
                     .text => |text| {
                         try buffer.appendSlice(allocator, text);
@@ -460,9 +461,12 @@ pub const Codegen = struct {
                         }
                     },
                     .include => |include_node| {
-                        const include_placeholder = try std.fmt.allocPrint(allocator, "<!-- Include: {s} -->\n", .{include_node.file_path});
-                        defer allocator.free(include_placeholder);
-                        try buffer.appendSlice(allocator, include_placeholder);
+                        // Render the embedded template content if available
+                        const content = @embedFile(include_node.file_path);
+                        const parsed = @import("parser.zig").Parser.parse(content) catch |err| {
+                            @compileError("Failed to parse included file '" ++ include_node.file_path ++ "': " ++ @errorName(err));
+                        };
+                        try renderNodesWithContext(parsed.nodes, ctx, buffer, allocator);
                     },
                     .comment => |_| {
                         // Comments are not rendered

@@ -27,16 +27,26 @@ pub fn handleHtmxIndex(request: *Request) Response {
         return Response.text("HTMX template not loaded. Make sure htmx-index.zt.html exists in templates/").withStatus(500);
     };
 
-    // Define context type
+    // Define context type with enhanced fields
     const IndexContext = struct {
         title: []const u8,
         subtitle: []const u8,
+        app_name: []const u8,
+        version: []const u8,
+        debug_mode: bool,
+        user_name: []const u8,
+        notification: []const u8,
     };
 
-    // Create context
+    // Create context with values to demonstrate filters and else blocks
     const context = IndexContext{
-        .title = "Todo List",
+        .title = "todo list",
         .subtitle = "A simple todo app powered by HTMX and Engine12",
+        .app_name = "engine12 todo",
+        .version = "1.0.0",
+        .debug_mode = true,
+        .user_name = "  developer  ",
+        .notification = "",
     };
 
     // Render template

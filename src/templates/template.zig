@@ -88,35 +88,35 @@ test "template with raw variable" {
     try std.testing.expectEqualStrings(html, "<div>Hello</div>");
 }
 
-
-test "BUG #1: Filters are parsed but never applied" {
+test "Filters: uppercase applied" {
     const TemplateType = Template.compile("{{ .name | uppercase }}");
     const context = struct {
         name: []const u8,
     }{ .name = "hello" };
     const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
     defer std.testing.allocator.free(html);
-    
+
     try std.testing.expectEqualStrings(html, "HELLO");
 }
 
-test "BUG #1: Trim filter is parsed but not applied" {
+test "Filters: trim applied" {
     const TemplateType = Template.compile("{{ .name | trim }}");
     const context = struct {
         name: []const u8,
     }{ .name = "  hello  " };
     const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
     defer std.testing.allocator.free(html);
-    
+
     try std.testing.expectEqualStrings(html, "hello");
 }
 
-test "BUG #2: Include nodes are parsed but not rendered" {
+test "Include nodes are parsed and rendered" {
     const TemplateType = Template.compile("Before {% include \"test.zt.html\" %} After");
     const context = struct {};
     const html = try TemplateType.render(@TypeOf(context), context, std.testing.allocator);
     defer std.testing.allocator.free(html);
-    
+
     try std.testing.expect(std.mem.indexOf(u8, html, "Before") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "Included Content") != null);
     try std.testing.expect(std.mem.indexOf(u8, html, "After") != null);
 }

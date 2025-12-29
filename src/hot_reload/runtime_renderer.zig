@@ -65,7 +65,12 @@ pub const RuntimeRenderer = struct {
                                         i = template_content.len;
                                         continue;
                                     };
-                                    i = endif_pos;
+                                    // Check for else block when condition path is invalid
+                                    if (findElse(template_content, token.start + 2 + block_end + 2, endif_pos)) |else_pos| {
+                                        const else_content_start = else_pos + 10; // len("{% else %}")
+                                        try result.appendSlice(allocator, template_content[else_content_start..endif_pos]);
+                                    }
+                                    i = endif_pos + 11;
                                     continue;
                                 }
                                 return err;
@@ -79,13 +84,52 @@ pub const RuntimeRenderer = struct {
                                 continue;
                             };
 
+                            // Check for else block
+                            const else_pos = findElse(template_content, token.start + 2 + block_end + 2, endif_pos);
+
                             if (is_true) {
                                 const content_start = token.start + 2 + block_end + 2;
-                                const content_end = endif_pos;
+                                const content_end = else_pos orelse endif_pos;
                                 try result.appendSlice(allocator, template_content[content_start..content_end]);
+                            } else if (else_pos) |ep| {
+                                const else_content_start = ep + 10; // len("{% else %}")
+                                try result.appendSlice(allocator, template_content[else_content_start..endif_pos]);
                             }
                             i = endif_pos + 11;
-                        } else if (std.mem.eql(u8, block_content, "endif")) {
+                        } else if (std.mem.startsWith(u8, block_content, "for ")) {
+                            // For loop: {% for .items |item| %}...{% endfor %}
+                            const for_content = std.mem.trim(u8, block_content[4..], " \t\n");
+                            const endfor_pos = findEndfor(template_content, token.start + 2 + block_end + 2) orelse {
+                                i = token.start + 2 + block_end + 2;
+                                continue;
+                            };
+
+                            const loop_body = template_content[token.start + 2 + block_end + 2 .. endfor_pos];
+
+                            // Parse collection path and item name
+                            // Format: .items |item| or .items|item|
+                            if (std.mem.indexOfScalar(u8, for_content, '|')) |pipe1| {
+                                const collection_path = std.mem.trim(u8, for_content[0..pipe1], " \t\n");
+                                const after_pipe = for_content[pipe1 + 1 ..];
+                                const item_name = if (std.mem.indexOfScalar(u8, after_pipe, '|')) |pipe2|
+                                    std.mem.trim(u8, after_pipe[0..pipe2], " \t\n")
+                                else
+                                    std.mem.trim(u8, after_pipe, " \t\n");
+
+                                // Get the collection - this requires array iteration support
+                                // For now, we'll render a placeholder showing the loop syntax works
+                                _ = collection_path;
+                                _ = item_name;
+                                // TODO: Implement actual array iteration when we have runtime type info
+                                // For now, output the loop body once as a demonstration
+                                try result.appendSlice(allocator, loop_body);
+                            }
+
+                            i = endfor_pos + 12; // len("{% endfor %}")
+                        } else if (std.mem.eql(u8, block_content, "endif") or
+                            std.mem.eql(u8, block_content, "else") or
+                            std.mem.eql(u8, block_content, "endfor"))
+                        {
                             i = token.start + 2 + block_end + 2;
                         } else {
                             try result.appendSlice(allocator, template_content[token.start .. token.start + 2 + block_end + 2]);
@@ -102,7 +146,12 @@ pub const RuntimeRenderer = struct {
                         const is_raw = var_content.len > 0 and var_content[0] == '!';
                         const var_str = if (is_raw) std.mem.trim(u8, var_content[1..], " \t\n") else std.mem.trim(u8, var_content, " \t\n");
 
-                        const value = getVariableValue(var_str, Context, ctx, allocator) catch |err| {
+                        // Check for filters (pipe character)
+                        const pipe_pos = std.mem.indexOfScalar(u8, var_str, '|');
+                        const var_path = if (pipe_pos) |p| std.mem.trim(u8, var_str[0..p], " \t\n") else var_str;
+                        const filter_str = if (pipe_pos) |p| var_str[p + 1 ..] else "";
+
+                        const value = getVariableValue(var_path, Context, ctx, allocator) catch |err| {
                             if (err == error.InvalidVariablePath) {
                                 i = token.start + 2 + var_end + 2;
                                 continue;
@@ -111,10 +160,17 @@ pub const RuntimeRenderer = struct {
                         };
                         defer allocator.free(value);
 
+                        // Apply filters if present
+                        const filtered_value = if (filter_str.len > 0)
+                            try applyFilters(value, filter_str, allocator)
+                        else
+                            try allocator.dupe(u8, value);
+                        defer allocator.free(filtered_value);
+
                         if (is_raw) {
-                            try result.appendSlice(allocator, value);
+                            try result.appendSlice(allocator, filtered_value);
                         } else {
-                            const escaped = try escape.Escape.escapeHtml(allocator, value);
+                            const escaped = try escape.Escape.escapeHtml(allocator, filtered_value);
                             defer allocator.free(escaped);
                             try result.appendSlice(allocator, escaped);
                         }
@@ -255,6 +311,119 @@ pub const RuntimeRenderer = struct {
         if (start_pos >= content.len) return null;
         const endif_start = std.mem.indexOf(u8, content[start_pos..], "{% endif %}") orelse return null;
         return start_pos + endif_start;
+    }
+
+    fn findElse(content: []const u8, start_pos: usize, endif_pos: usize) ?usize {
+        if (start_pos >= content.len) return null;
+        const pos = start_pos;
+        if (pos < endif_pos) {
+            const else_start = std.mem.indexOf(u8, content[pos..endif_pos], "{% else %}") orelse return null;
+            return pos + else_start;
+        }
+        return null;
+    }
+
+    fn findEndfor(content: []const u8, start_pos: usize) ?usize {
+        if (start_pos >= content.len) return null;
+        const endfor_start = std.mem.indexOf(u8, content[start_pos..], "{% endfor %}") orelse return null;
+        return start_pos + endfor_start;
+    }
+
+    /// Apply filters to a value
+    fn applyFilters(value: []const u8, filter_str: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+        var current_value: []const u8 = try allocator.dupe(u8, value);
+
+        // Split by | and process each filter
+        var filter_iter = std.mem.splitScalar(u8, filter_str, '|');
+        while (filter_iter.next()) |filter_part| {
+            const trimmed = std.mem.trim(u8, filter_part, " \t\n");
+            if (trimmed.len == 0) continue;
+
+            // Parse filter name and optional argument
+            var filter_name: []const u8 = trimmed;
+            var filter_arg: ?[]const u8 = null;
+
+            if (std.mem.indexOfScalar(u8, trimmed, ':')) |colon_pos| {
+                filter_name = std.mem.trim(u8, trimmed[0..colon_pos], " \t\n");
+                const arg_raw = std.mem.trim(u8, trimmed[colon_pos + 1 ..], " \t\n");
+                // Strip quotes from argument
+                if (arg_raw.len >= 2 and (arg_raw[0] == '"' or arg_raw[0] == '\'')) {
+                    filter_arg = arg_raw[1 .. arg_raw.len - 1];
+                } else {
+                    filter_arg = arg_raw;
+                }
+            }
+
+            const new_value = try applySingleFilter(current_value, filter_name, filter_arg, allocator);
+            allocator.free(@constCast(current_value));
+            current_value = new_value;
+        }
+
+        return current_value;
+    }
+
+    fn applySingleFilter(value: []const u8, filter_name: []const u8, filter_arg: ?[]const u8, allocator: std.mem.Allocator) ![]const u8 {
+        if (std.mem.eql(u8, filter_name, "uppercase") or std.mem.eql(u8, filter_name, "upper")) {
+            var result = try allocator.alloc(u8, value.len);
+            for (value, 0..) |c, i| {
+                result[i] = std.ascii.toUpper(c);
+            }
+            return result;
+        } else if (std.mem.eql(u8, filter_name, "lowercase") or std.mem.eql(u8, filter_name, "lower")) {
+            var result = try allocator.alloc(u8, value.len);
+            for (value, 0..) |c, i| {
+                result[i] = std.ascii.toLower(c);
+            }
+            return result;
+        } else if (std.mem.eql(u8, filter_name, "trim")) {
+            const trimmed = std.mem.trim(u8, value, " \t\n\r");
+            return try allocator.dupe(u8, trimmed);
+        } else if (std.mem.eql(u8, filter_name, "length") or std.mem.eql(u8, filter_name, "len")) {
+            return try std.fmt.allocPrint(allocator, "{d}", .{value.len});
+        } else if (std.mem.eql(u8, filter_name, "default")) {
+            if (value.len == 0) {
+                return try allocator.dupe(u8, filter_arg orelse "");
+            }
+            return try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, filter_name, "capitalize")) {
+            if (value.len == 0) return try allocator.dupe(u8, "");
+            var result = try allocator.alloc(u8, value.len);
+            result[0] = std.ascii.toUpper(value[0]);
+            for (value[1..], 1..) |c, i| {
+                result[i] = c;
+            }
+            return result;
+        } else if (std.mem.eql(u8, filter_name, "truncate")) {
+            const max_len = if (filter_arg) |arg|
+                std.fmt.parseInt(usize, arg, 10) catch 50
+            else
+                50;
+            if (value.len <= max_len) {
+                return try allocator.dupe(u8, value);
+            }
+            const truncated = value[0..max_len];
+            return try std.fmt.allocPrint(allocator, "{s}...", .{truncated});
+        } else if (std.mem.eql(u8, filter_name, "replace")) {
+            // replace:"old":"new" - for simplicity, just return original if no args
+            return try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, filter_name, "json")) {
+            // Escape for JSON
+            var result = std.ArrayListUnmanaged(u8){};
+            for (value) |c| {
+                switch (c) {
+                    '"' => try result.appendSlice(allocator, "\\\""),
+                    '\\' => try result.appendSlice(allocator, "\\\\"),
+                    '\n' => try result.appendSlice(allocator, "\\n"),
+                    '\r' => try result.appendSlice(allocator, "\\r"),
+                    '\t' => try result.appendSlice(allocator, "\\t"),
+                    else => try result.append(allocator, c),
+                }
+            }
+            return try result.toOwnedSlice(allocator);
+        } else {
+            // Unknown filter - return value unchanged
+            return try allocator.dupe(u8, value);
+        }
     }
 };
 
@@ -1092,4 +1261,182 @@ test "runtime renderer - raw url in variable" {
     );
     defer allocator.free(result);
     try std.testing.expectEqualStrings("https://example.com/path?query=value&other=123", result);
+}
+
+// ============================================================================
+// NEW FEATURE TESTS: Filters
+// ============================================================================
+
+test "runtime renderer - uppercase filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | uppercase }}",
+        Context,
+        .{ .name = "hello" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("HELLO", result);
+}
+
+test "runtime renderer - lowercase filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | lowercase }}",
+        Context,
+        .{ .name = "WORLD" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("world", result);
+}
+
+test "runtime renderer - capitalize filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | capitalize }}",
+        Context,
+        .{ .name = "hello" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("Hello", result);
+}
+
+test "runtime renderer - trim filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { text: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .text | trim }}",
+        Context,
+        .{ .text = "  spaced  " },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("spaced", result);
+}
+
+test "runtime renderer - length filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { items: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .items | length }}",
+        Context,
+        .{ .items = "abcde" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("5", result);
+}
+
+test "runtime renderer - default filter with value" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | default:\"Anonymous\" }}",
+        Context,
+        .{ .name = "Alice" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("Alice", result);
+}
+
+test "runtime renderer - default filter without value" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | default:\"Anonymous\" }}",
+        Context,
+        .{ .name = "" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("Anonymous", result);
+}
+
+test "runtime renderer - truncate filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { text: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .text | truncate:10 }}",
+        Context,
+        .{ .text = "This is a very long text" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("This is a ...", result);
+}
+
+test "runtime renderer - chained filters" {
+    const allocator = std.testing.allocator;
+    const Context = struct { name: []const u8 };
+    const result = try RuntimeRenderer.render(
+        "{{ .name | trim | uppercase }}",
+        Context,
+        .{ .name = "  hello  " },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("HELLO", result);
+}
+
+test "runtime renderer - json filter" {
+    const allocator = std.testing.allocator;
+    const Context = struct { text: []const u8 };
+    // Use raw output {{! }} for json since we don't want HTML escaping
+    const result = try RuntimeRenderer.render(
+        "{{! .text | json }}",
+        Context,
+        .{ .text = "say \"hello\"\nnew line" },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("say \\\"hello\\\"\\nnew line", result);
+}
+
+// ============================================================================
+// NEW FEATURE TESTS: Else blocks
+// ============================================================================
+
+test "runtime renderer - if else with true condition" {
+    const allocator = std.testing.allocator;
+    const Context = struct { show: bool };
+    const result = try RuntimeRenderer.render(
+        "{% if .show %}yes{% else %}no{% endif %}",
+        Context,
+        .{ .show = true },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("yes", result);
+}
+
+test "runtime renderer - if else with false condition" {
+    const allocator = std.testing.allocator;
+    const Context = struct { show: bool };
+    const result = try RuntimeRenderer.render(
+        "{% if .show %}yes{% else %}no{% endif %}",
+        Context,
+        .{ .show = false },
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("no", result);
+}
+
+test "runtime renderer - if else with missing variable" {
+    const allocator = std.testing.allocator;
+    const Context = struct {};
+    const result = try RuntimeRenderer.render(
+        "{% if .missing %}yes{% else %}no{% endif %}",
+        Context,
+        .{},
+        allocator,
+    );
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("no", result);
 }

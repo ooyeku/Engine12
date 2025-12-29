@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ .title | capitalize }} — Engine12</title>
+    <title>{{ .title | uppercase }} — Engine12</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -927,8 +927,8 @@
             <div class="brand">
                 <span class="logo">E12</span>
                 <div class="title-group">
-                    <h1>{{ .title | capitalize }}</h1>
-                    <p>{{ .subtitle }}</p>
+                    <h1>{{ .title | uppercase }}</h1>
+                    <p>{{ .subtitle | truncate:60 }}</p>
                 </div>
             </div>
             <div class="header-stats" id="header-stats" hx-get="/htmx/todos/stats"
@@ -944,6 +944,24 @@
                 </div>
             </div>
         </header>
+
+        {# NEW: Demonstration of else blocks and filters #}
+        <div class="info-bar"
+            style="display: flex; gap: 16px; margin-bottom: 24px; padding: 12px 16px; background: var(--black-surface); border-radius: var(--radius); font-size: 12px; color: var(--gray-300);">
+            <span>App: {{ .app_name | uppercase }}</span>
+            <span>v{{ .version }}</span>
+            <span>User: {{ .user_name | trim | capitalize }}</span>
+            {% if .debug_mode %}
+            <span style="color: var(--gold);">🔧 Debug Mode</span>
+            {% else %}
+            <span style="color: var(--green);">✓ Production</span>
+            {% endif %}
+            {% if .notification %}
+            <span style="color: var(--red);">{{ .notification }}</span>
+            {% else %}
+            <span style="color: var(--gray-500);">No notifications</span>
+            {% endif %}
+        </div>
 
         <!-- Main Grid -->
         <div class="main-grid">
