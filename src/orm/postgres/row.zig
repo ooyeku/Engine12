@@ -1,23 +1,18 @@
 const std = @import("std");
 const types = @import("types.zig");
 
+/// Represents a single row of data returned from a PostgreSQL query.
+/// Handles decoding of the DataRow protocol message.
 pub const Row = struct {
-    data: []u8, // Owns the DataRow payload (excluding msg type/len)
+    data: []u8,
     num_columns: u16,
     allocator: std.mem.Allocator,
 
-    // We can index the column offsets lazily or eagerly.
-    // For performance, let's index eagerly since ORM usually reads all columns anyway.
     col_offsets: []usize,
     col_lens: []i32,
 
+    /// Initializes a Row from a DataRow message payload.
     pub fn init(allocator: std.mem.Allocator, data: []u8) !Row {
-        // Data format:
-        // Int16: num columns
-        // For each col:
-        //   Int32: length of val
-        //   [length] bytes: val
-
         if (data.len < 2) return error.ProtocolViolation;
 
         const num_cols = std.mem.readInt(u16, data[0..2], .big);
@@ -45,7 +40,7 @@ pub const Row = struct {
                 offsets[i] = pos;
                 pos += u_len;
             } else {
-                offsets[i] = 0; // Invalid offset for NULL
+                offsets[i] = 0;
             }
         }
 
@@ -64,11 +59,13 @@ pub const Row = struct {
         self.allocator.free(self.data);
     }
 
+    /// Checks if a column is NULL.
     pub fn isNull(self: Row, col_idx: usize) bool {
         if (col_idx >= self.num_columns) return true;
         return self.col_lens[col_idx] == -1;
     }
 
+    /// Retrieves the raw bytes for a column. Returns null if the column is NULL.
     pub fn getBytes(self: Row, col_idx: usize) ?[]const u8 {
         if (self.isNull(col_idx)) return null;
 
@@ -78,13 +75,12 @@ pub const Row = struct {
         return self.data[offset .. offset + len];
     }
 
-    // --- Type conversions ---
-    // Assuming Text format protocol for now (simple query 'Q' returns text)
-
+    /// Retrieves a string value from the specified column.
     pub fn getText(self: Row, col_idx: usize) ?[]const u8 {
         return self.getBytes(col_idx);
     }
 
+    /// Retrieves an integer (i64) from the specified column.
     pub fn getInt64(self: Row, col_idx: usize) i64 {
         const bytes = self.getBytes(col_idx) orelse return 0;
         return std.fmt.parseInt(i64, bytes, 10) catch 0;
@@ -95,18 +91,19 @@ pub const Row = struct {
         return std.fmt.parseInt(i32, bytes, 10) catch 0;
     }
 
+    /// Retrieves a floating-point value (f64) from the specified column.
     pub fn getFloat(self: Row, col_idx: usize) f64 {
         const bytes = self.getBytes(col_idx) orelse return 0.0;
         return std.fmt.parseFloat(f64, bytes) catch 0.0;
     }
 
+    /// Retrieves a boolean value from the specified column.
     pub fn getBool(self: Row, col_idx: usize) bool {
         const bytes = self.getBytes(col_idx) orelse return false;
         if (bytes.len == 0) return false;
         return bytes[0] == 't';
     }
 
-    // Helpers for allocation
     pub fn getTextAlloc(self: Row, allocator: std.mem.Allocator, col_idx: usize) !?[]u8 {
         const text = self.getText(col_idx) orelse return null;
         return try allocator.dupe(u8, text);

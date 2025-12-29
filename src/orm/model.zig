@@ -17,6 +17,7 @@ pub const Field = struct {
     auto_increment: bool = false,
 };
 
+/// Definition of a database table and its fields.
 pub const ModelDef = struct {
     table_name: []const u8,
     fields: []const Field,
@@ -57,6 +58,7 @@ pub fn getTableName(comptime T: type) []const u8 {
     return "unknown_table";
 }
 
+/// Infers a table name from a type T by taking the last part of its qualified name.
 pub fn inferTableName(comptime T: type) []const u8 {
     const type_name = @typeName(T);
     if (std.mem.lastIndexOf(u8, type_name, ".")) |idx| {
@@ -84,7 +86,7 @@ pub fn toSnakeCase(allocator: std.mem.Allocator, input: []const u8) ![]const u8 
     for (input, 0..) |char, i| {
         if (i > 0 and char >= 'A' and char <= 'Z') {
             try result.append(allocator, '_');
-            try result.append(allocator, char + 32); // Convert to lowercase
+            try result.append(allocator, char + 32);
         } else if (char >= 'A' and char <= 'Z') {
             try result.append(allocator, char + 32);
         } else {
@@ -132,24 +134,22 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
     if (last_char == 's' or last_char == 'x' or last_char == 'z') {
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "es");
-    } else if (singular.len >= 2 and 
-               ((second_last == 'c' and last_char == 'h') or 
-                (second_last == 's' and last_char == 'h'))) {
+    } else if (singular.len >= 2 and
+        ((second_last == 'c' and last_char == 'h') or
+            (second_last == 's' and last_char == 'h')))
+    {
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "es");
-    }
-    else if (last_char == 'y' and singular.len >= 2 and !isVowel(second_last)) {
+    } else if (last_char == 'y' and singular.len >= 2 and !isVowel(second_last)) {
         try result.appendSlice(allocator, singular[0 .. singular.len - 1]);
         try result.appendSlice(allocator, "ies");
-    }
-    else if (last_char == 'f') {
+    } else if (last_char == 'f') {
         try result.appendSlice(allocator, singular[0 .. singular.len - 1]);
         try result.appendSlice(allocator, "ves");
     } else if (singular.len >= 2 and second_last == 'f' and last_char == 'e') {
         try result.appendSlice(allocator, singular[0 .. singular.len - 2]);
         try result.appendSlice(allocator, "ves");
-    }
-    else if (last_char == 'o' and singular.len >= 2 and !isVowel(second_last)) {
+    } else if (last_char == 'o' and singular.len >= 2 and !isVowel(second_last)) {
         const o_es_words = [_][]const u8{ "hero", "potato", "tomato", "echo", "veto", "torpedo", "embargo" };
         var needs_es = false;
         for (o_es_words) |word| {
@@ -165,8 +165,7 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
             try result.appendSlice(allocator, singular);
             try result.appendSlice(allocator, "s");
         }
-    }
-    else {
+    } else {
         try result.appendSlice(allocator, singular);
         try result.appendSlice(allocator, "s");
     }
@@ -176,7 +175,7 @@ pub fn pluralize(allocator: std.mem.Allocator, singular: []const u8) ![]const u8
 
 fn isVowel(c: u8) bool {
     return c == 'a' or c == 'e' or c == 'i' or c == 'o' or c == 'u' or
-           c == 'A' or c == 'E' or c == 'I' or c == 'O' or c == 'U';
+        c == 'A' or c == 'E' or c == 'I' or c == 'O' or c == 'U';
 }
 
 pub fn getFieldNames(comptime T: type) *const [std.meta.fields(T).len][]const u8 {
@@ -191,6 +190,8 @@ pub fn getFieldNames(comptime T: type) *const [std.meta.fields(T).len][]const u8
     return &names;
 }
 
+/// Resolves the table name for type T at compile-time.
+/// Uses `table_name` declaration if present, otherwise infers and pluralizes the type name.
 pub fn comptimeTableName(comptime T: type) []const u8 {
     return comptime blk: {
         if (@hasDecl(T, "table_name")) {

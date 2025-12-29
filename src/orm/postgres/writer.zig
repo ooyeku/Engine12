@@ -18,12 +18,12 @@ pub const MessageWriter = struct {
         self.buffer.deinit(self.allocator);
     }
 
-    /// Begin a new message. Clears buffer and reserves space for Type (optional) and Length.
-    /// If type_byte is null, it's a StartupMessage (no type byte).
-    /// If type_byte is set, it writes the type byte immediately to the stream or buffer?
-    /// Actually specific message methods are better.
 
-    // --- Primitives ---
+
+
+
+
+
 
     fn writeInt32(self: *MessageWriter, val: i32) !void {
         var buf: [4]u8 = undefined;
@@ -42,15 +42,15 @@ pub const MessageWriter = struct {
         try self.buffer.append(self.allocator, 0);
     }
 
-    // --- Commands ---
+
 
     pub fn writeStartupMessage(self: *MessageWriter, params: std.StringHashMap([]const u8)) !void {
         self.buffer.clearRetainingCapacity();
 
-        // Reserve 4 bytes for length
+
         try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 });
 
-        // Protocol Version 3.0 (196608)
+
         try self.writeInt32(196608);
 
         var it = params.iterator();
@@ -58,9 +58,9 @@ pub const MessageWriter = struct {
             try self.writeString(entry.key_ptr.*);
             try self.writeString(entry.value_ptr.*);
         }
-        try self.buffer.append(self.allocator, 0); // Null terminator for params list
+        try self.buffer.append(self.allocator, 0);
 
-        // Update length
+
         const len = @as(i32, @intCast(self.buffer.items.len));
         std.mem.writeInt(i32, self.buffer.items[0..4], len, .big);
 
@@ -71,13 +71,13 @@ pub const MessageWriter = struct {
         self.buffer.clearRetainingCapacity();
         try self.buffer.append(self.allocator, @intFromEnum(types.Frontend.PasswordMessage));
 
-        // Reserve length
+
         try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 });
 
         try self.writeString(password);
 
-        // Update length
-        const len = @as(i32, @intCast(self.buffer.items.len - 1)); // -1 for type byte
+
+        const len = @as(i32, @intCast(self.buffer.items.len - 1));
         std.mem.writeInt(i32, self.buffer.items[1..5], len, .big);
 
         try self.stream.writeAll(self.buffer.items);
@@ -87,12 +87,12 @@ pub const MessageWriter = struct {
         self.buffer.clearRetainingCapacity();
         try self.buffer.append(self.allocator, @intFromEnum(types.Frontend.Query));
 
-        // Reserve length
+
         try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 });
 
         try self.writeString(sql);
 
-        // Update length
+
         const len = @as(i32, @intCast(self.buffer.items.len - 1));
         std.mem.writeInt(i32, self.buffer.items[1..5], len, .big);
 
@@ -105,17 +105,17 @@ pub const MessageWriter = struct {
             0,
             0,
             0,
-            4, // Length 4 (only length field itself)
+            4,
         };
         try self.stream.writeAll(&msg);
     }
 
-    // --- Extended Query Protocol ---
+
 
     pub fn writeParse(self: *MessageWriter, name: []const u8, sql: []const u8, param_oids: []const i32) !void {
         self.buffer.clearRetainingCapacity();
         try self.buffer.append(self.allocator, @intFromEnum(types.Frontend.Parse));
-        try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 }); // Len placeholder
+        try self.buffer.appendSlice(self.allocator, &[_]u8{ 0, 0, 0, 0 });
 
         try self.writeString(name);
         try self.writeString(sql);
@@ -135,7 +135,7 @@ pub const MessageWriter = struct {
         portal: []const u8,
         statement: []const u8,
         param_formats: []const i16,
-        params: anytype, // Expecting a slice of param values (bytes)
+        params: anytype,
         result_formats: []const i16,
     ) !void {
         self.buffer.clearRetainingCapacity();
@@ -145,25 +145,25 @@ pub const MessageWriter = struct {
         try self.writeString(portal);
         try self.writeString(statement);
 
-        // Param formats
+
         try self.writeInt16(@intCast(param_formats.len));
         for (param_formats) |fmt| {
             try self.writeInt16(fmt);
         }
 
-        // Params
+
         try self.writeInt16(@intCast(params.len));
         for (params) |info| {
-            // info is expected to be ?[]const u8
+
             if (info) |p| {
                 try self.writeInt32(@intCast(p.len));
                 try self.buffer.appendSlice(self.allocator, p);
             } else {
-                try self.writeInt32(-1); // NULL
+                try self.writeInt32(-1);
             }
         }
 
-        // Result formats
+
         try self.writeInt16(@intCast(result_formats.len));
         for (result_formats) |fmt| {
             try self.writeInt16(fmt);

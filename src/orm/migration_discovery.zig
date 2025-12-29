@@ -10,7 +10,7 @@ pub fn discoverMigrations(
 
     var dir = std.fs.cwd().openDir(migrations_dir, .{ .iterate = true }) catch |err| {
         std.debug.print("[Engine12] Warning: Could not open migrations directory '{s}': {}\n", .{ migrations_dir, err });
-        return registry; // Return empty registry gracefully
+        return registry;
     };
     defer dir.close();
 
@@ -47,7 +47,7 @@ pub fn discoverMigrations(
 
         const name = entry.name;
         if (!std.mem.endsWith(u8, name, ".zig")) continue;
-        if (std.mem.eql(u8, name, "init.zig")) continue; // Skip init.zig
+        if (std.mem.eql(u8, name, "init.zig")) continue;
 
         const underscore_pos = std.mem.indexOfScalar(u8, name, '_') orelse {
             std.debug.print("[Engine12] Warning: Skipping migration file '{s}' (doesn't match pattern: number_name.zig)\n", .{name});
@@ -61,7 +61,7 @@ pub fn discoverMigrations(
         };
 
         const name_start = underscore_pos + 1;
-        const name_end = name.len - 4; // Remove .zig
+        const name_end = name.len - 4;
         const migration_name = try allocator.dupe(u8, name[name_start..name_end]);
         const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ migrations_dir, name });
 
@@ -81,7 +81,7 @@ pub fn discoverMigrations(
     for (migration_files.items) |file_info| {
         const migration = parseMigrationFile(allocator, file_info.path, file_info.version, file_info.name) catch |err| {
             std.debug.print("[Engine12] Warning: Failed to parse migration file '{s}': {}\n", .{ file_info.path, err });
-            continue; // Skip this migration but continue with others
+            continue;
         };
 
         try registry.add(migration);
@@ -96,7 +96,7 @@ fn parseMigrationFile(
     version: u32,
     name: []const u8,
 ) !Migration {
-    const content = try std.fs.cwd().readFileAlloc(allocator, file_path, 10 * 1024); // 10KB max
+    const content = try std.fs.cwd().readFileAlloc(allocator, file_path, 10 * 1024);
     defer allocator.free(content);
 
 
@@ -121,12 +121,12 @@ fn parseMigrationFile(
     if (pos >= content.len or content[pos] != '"') {
         return error.InvalidMigrationFormat;
     }
-    pos += 1; // Skip opening quote
+    pos += 1;
     while (pos < content.len and content[pos] != '"') {
-        if (content[pos] == '\\') pos += 1; // Skip escaped characters
+        if (content[pos] == '\\') pos += 1;
         pos += 1;
     }
-    pos += 1; // Skip closing quote
+    pos += 1;
 
     while (pos < content.len and (content[pos] == ',' or content[pos] == ' ' or content[pos] == '\t' or content[pos] == '\n')) {
         pos += 1;
@@ -146,7 +146,7 @@ fn parseMigrationFile(
         pos += 1;
     } else if (pos < content.len and std.mem.startsWith(u8, content[pos..], "\\\\")) {
         var list = std.ArrayListUnmanaged(u8){};
-        defer if (!up_allocated) list.deinit(allocator); // Only deinit if we haven't transferred ownership
+        defer if (!up_allocated) list.deinit(allocator);
 
         while (pos < content.len) {
             var line_start_check = pos;
@@ -155,7 +155,7 @@ fn parseMigrationFile(
             }
 
             if (line_start_check < content.len and std.mem.startsWith(u8, content[line_start_check..], "\\\\")) {
-                pos = line_start_check + 2; // Skip \\
+                pos = line_start_check + 2;
 
                 const line_end = std.mem.indexOfScalarPos(u8, content, pos, '\n') orelse content.len;
                 try list.appendSlice(allocator, content[pos..line_end]);
@@ -163,7 +163,7 @@ fn parseMigrationFile(
                 pos = line_end;
 
                 if (pos < content.len and content[pos] == '\n') {
-                    pos += 1; // Skip newline
+                    pos += 1;
 
                     var next_check = pos;
                     while (next_check < content.len and (content[next_check] == ' ' or content[next_check] == '\t')) {
@@ -215,7 +215,7 @@ fn parseMigrationFile(
             }
 
             if (line_start_check < content.len and std.mem.startsWith(u8, content[line_start_check..], "\\\\")) {
-                pos = line_start_check + 2; // Skip \\
+                pos = line_start_check + 2;
 
                 const line_end = std.mem.indexOfScalarPos(u8, content, pos, '\n') orelse content.len;
                 try list.appendSlice(allocator, content[pos..line_end]);

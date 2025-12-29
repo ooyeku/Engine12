@@ -66,7 +66,7 @@ pub const Codegen = struct {
                         if (is_true) {
                             try renderNodes(if_node.true_block.nodes, ctx, buffer, allocator);
                         } else {
-                            // Check elif blocks
+
                             var elif_matched = false;
                             for (if_node.elif_blocks) |elif_block| {
                                 const elif_true = try evaluateCondition(elif_block.condition, ctx, allocator);
@@ -103,13 +103,13 @@ pub const Codegen = struct {
                         try renderNodes(parsed.nodes, ctx, buffer, allocator);
                     },
                     .comment => |_| {
-                        // Comments are not rendered
+
                     },
                     .extends => |_| {
-                        // Extends is handled at template compilation level
+
                     },
                     .block => |block_node| {
-                        // For now, render block content directly
+
                         try renderNodes(block_node.content.nodes, ctx, buffer, allocator);
                     },
                 }
@@ -156,7 +156,7 @@ pub const Codegen = struct {
             }
 
             fn compareValues(left: []const u8, right: []const u8) i32 {
-                // Try numeric comparison first
+
                 const left_num = std.fmt.parseInt(i64, left, 10) catch null;
                 const right_num = std.fmt.parseInt(i64, right, 10) catch null;
 
@@ -168,7 +168,7 @@ pub const Codegen = struct {
                     return 0;
                 }
 
-                // Fall back to string comparison
+
                 return switch (std.mem.order(u8, left, right)) {
                     .lt => -1,
                     .eq => 0,
@@ -230,7 +230,7 @@ pub const Codegen = struct {
                             const result = filters.Filters.default(value_opt, default_val);
                             break :blk try allocator.dupe(u8, result);
                         } else {
-                            // Unknown filter - pass through unchanged
+
                             break :blk try allocator.dupe(u8, current_value);
                         }
                     };
@@ -417,7 +417,7 @@ pub const Codegen = struct {
                         if (is_true) {
                             try renderNodesWithContext(if_node.true_block.nodes, ctx, buffer, allocator);
                         } else {
-                            // Check elif blocks
+
                             var elif_matched = false;
                             for (if_node.elif_blocks) |elif_block| {
                                 const elif_true = try evaluateConditionWithContext(elif_block.condition, ctx, allocator);
@@ -448,7 +448,7 @@ pub const Codegen = struct {
 
                             if (is_loop_ctx) {
                                 const nested_loop_ctx = LoopContext{
-                                    .parent_ctx = ctx.parent_ctx, // Go back to original context, losing outer loop item
+                                    .parent_ctx = ctx.parent_ctx,
                                     .item_name = for_node.item_name,
                                     .item_value = item_value.value,
                                     .index = index,
@@ -461,7 +461,7 @@ pub const Codegen = struct {
                         }
                     },
                     .include => |include_node| {
-                        // Render the embedded template content if available
+
                         const content = @embedFile(include_node.file_path);
                         const parsed = @import("parser.zig").Parser.parse(content) catch |err| {
                             @compileError("Failed to parse included file '" ++ include_node.file_path ++ "': " ++ @errorName(err));
@@ -469,13 +469,13 @@ pub const Codegen = struct {
                         try renderNodesWithContext(parsed.nodes, ctx, buffer, allocator);
                     },
                     .comment => |_| {
-                        // Comments are not rendered
+
                     },
                     .extends => |_| {
-                        // Extends is handled at template compilation level
+
                     },
                     .block => |block_node| {
-                        // For now, render block content directly
+
                         try renderNodesWithContext(block_node.content.nodes, ctx, buffer, allocator);
                     },
                 }
@@ -593,7 +593,7 @@ pub const Codegen = struct {
                 get_item_fn: *const fn (*const anyopaque, usize, std.mem.Allocator) (std.mem.Allocator.Error || error{InvalidVariablePath})![]const u8,
 
                 fn initSlice(collection: anytype, comptime ItemType: type) CollectionWrapper {
-                    _ = ItemType; // Used for type checking at comptime
+                    _ = ItemType;
                     const CollectionType = @TypeOf(collection);
                     return CollectionWrapper{
                         .data = .{ .slice = @as(*const anyopaque, @ptrCast(&collection)) },
@@ -611,7 +611,7 @@ pub const Codegen = struct {
                 }
 
                 fn initArray(collection: anytype, comptime ItemType: type) CollectionWrapper {
-                    _ = ItemType; // Used for type checking at comptime
+                    _ = ItemType;
                     const CollectionType = @TypeOf(collection);
                     return CollectionWrapper{
                         .data = .{ .array = @as(*const anyopaque, @ptrCast(&collection)) },
@@ -629,7 +629,7 @@ pub const Codegen = struct {
                 }
 
                 fn initArrayList(collection: anytype, comptime ItemType: type) CollectionWrapper {
-                    _ = ItemType; // Used for type checking at comptime
+                    _ = ItemType;
                     const CollectionType = @TypeOf(collection);
                     return CollectionWrapper{
                         .data = .{ .array_list = @as(*const anyopaque, @ptrCast(&collection)) },
@@ -715,7 +715,7 @@ pub const Codegen = struct {
                         lower_buf[i] = std.ascii.toLower(char);
                     }
                     break :blk lower_buf[0..value.len];
-                } else value; // Fallback to original if too long (rare case)
+                } else value;
 
                 if (std.mem.eql(u8, lower, "false")) return false;
                 if (std.mem.eql(u8, lower, "0")) return false;

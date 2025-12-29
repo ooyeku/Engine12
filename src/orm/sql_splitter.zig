@@ -38,7 +38,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
                         if (i + 1 < sql.len and sql[i + 1] == '$') {
                             state = .dollar_quote;
                             dollar_tag = "$$";
-                            i += 1; // Skip second $
+                            i += 1;
                         } else {
                             const tag_start = i + 1;
                             var tag_end = tag_start;
@@ -48,14 +48,14 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
                             if (tag_end < sql.len) {
                                 dollar_tag = sql[tag_start..tag_end];
                                 state = .dollar_quote;
-                                i = tag_end; // Skip to the closing $ of tag
+                                i = tag_end;
                             }
                         }
                     },
                     '-' => {
                         if (next_char == '-') {
                             state = .line_comment;
-                            i += 1; // Skip second -
+                            i += 1;
                             if (statement_start == i - 1) {
                                 statement_start = i + 1;
                             }
@@ -64,7 +64,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
                     '/' => {
                         if (next_char == '*') {
                             state = .block_comment;
-                            i += 1; // Skip *
+                            i += 1;
                             if (statement_start == i - 1) {
                                 statement_start = i + 1;
                             }
@@ -83,7 +83,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
             .single_quote => {
                 if (c == '\'') {
                     if (i + 1 < sql.len and sql[i + 1] == '\'') {
-                        i += 1; // Skip escaped quote
+                        i += 1;
                     } else {
                         state = .normal;
                     }
@@ -92,7 +92,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
             .double_quote => {
                 if (c == '"') {
                     if (i + 1 < sql.len and sql[i + 1] == '"') {
-                        i += 1; // Skip escaped quote
+                        i += 1;
                     } else {
                         state = .normal;
                     }
@@ -105,7 +105,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
                     } else if (std.mem.eql(u8, dollar_tag, "$$")) {
                         if (i + 1 < sql.len and sql[i + 1] == '$') {
                             state = .normal;
-                            i += 1; // Skip second $
+                            i += 1;
                             dollar_tag = "";
                         }
                     } else {
@@ -116,7 +116,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
                                 sql[i + 1 + dollar_tag.len] == '$')
                             {
                                 state = .normal;
-                                i += dollar_tag.len + 1; // Skip tag and closing $
+                                i += dollar_tag.len + 1;
                                 dollar_tag = "";
                             }
                         }
@@ -134,7 +134,7 @@ pub fn splitStatements(sql: []const u8, allocator: std.mem.Allocator) ![][]const
             .block_comment => {
                 if (c == '*' and next_char == '/') {
                     state = .normal;
-                    i += 1; // Skip /
+                    i += 1;
                     if (statement_start < i - 1) {
                         statement_start = i + 1;
                     }

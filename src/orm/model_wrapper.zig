@@ -4,14 +4,17 @@ const Response = @import("../http/response.zig").Response;
 const model_utils = @import("model.zig");
 const ORM = @import("orm.zig").ORM;
 
+/// Adds utility methods to a model type, such as JSON serialization and response generation.
 pub fn Model(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// Serializes the model instance to a JSON string.
         pub fn toJson(instance: T, allocator: std.mem.Allocator) ![]const u8 {
             return json_module.Json.serialize(T, instance, allocator);
         }
 
+        /// Serializes a slice of model instances to a JSON array string.
         pub fn toJsonArray(items: []const T, allocator: std.mem.Allocator) ![]const u8 {
             return json_module.Json.serializeArray(T, items, allocator);
         }
@@ -20,10 +23,12 @@ pub fn Model(comptime T: type) type {
             return json_module.Json.serializeArray(T, list.items, allocator);
         }
 
+        /// Generates a JSON HTTP response from a model instance.
         pub fn toResponse(instance: T, allocator: std.mem.Allocator) Response {
             return Response.jsonFrom(T, instance, allocator);
         }
 
+        /// Generates a JSON HTTP response from a slice of model instances.
         pub fn toResponseArray(items: []const T, allocator: std.mem.Allocator) Response {
             const json_str = json_module.Json.serializeArray(T, items, allocator) catch {
                 return Response.serverError("Failed to serialize array");
@@ -40,6 +45,7 @@ pub fn Model(comptime T: type) type {
             return Self.toResponseArray(list.items, allocator);
         }
 
+        /// Deserializes a model instance from a JSON string.
         pub fn fromJson(json_str: []const u8, allocator: std.mem.Allocator) !T {
             return json_module.Json.deserialize(T, json_str, allocator);
         }
@@ -54,6 +60,7 @@ pub fn Model(comptime T: type) type {
     };
 }
 
+/// Provides a CRUD interface for a model type, bound to an ORM instance.
 pub fn ModelWithORM(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -64,6 +71,7 @@ pub fn ModelWithORM(comptime T: type) type {
             return Self{ .orm = orm };
         }
 
+        /// Creates a new record and returns the fully populated model instance.
         pub fn create(self: Self, instance: T) !T {
             const id = try self.orm.create(T, instance);
 
@@ -78,6 +86,7 @@ pub fn ModelWithORM(comptime T: type) type {
             return error.FailedToCreate;
         }
 
+        /// Finds a record by ID. Returns null if not found.
         pub fn find(self: Self, id: i64) !?T {
             const result_opt = try self.orm.findManaged(T, id);
             if (result_opt) |result| {
@@ -90,6 +99,7 @@ pub fn ModelWithORM(comptime T: type) type {
             return null;
         }
 
+        /// Retrieves all records of this model type.
         pub fn findAll(self: Self) !std.ArrayListUnmanaged(T) {
             var result = try self.orm.findAllManaged(T);
             defer result.deinit();
@@ -101,11 +111,13 @@ pub fn ModelWithORM(comptime T: type) type {
             return items;
         }
 
+        /// Updates an existing record.
         pub fn update(self: Self, id: i64, instance: T) !?T {
             try self.orm.update(T, instance);
             return try self.find(id);
         }
 
+        /// Deletes a record by ID.
         pub fn delete(self: Self, id: i64) !bool {
             const existing = try self.find(id);
             if (existing == null) return false;

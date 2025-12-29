@@ -47,6 +47,8 @@ pub const PostgresQueryResult = postgres.PostgresQueryResult;
 pub const PostgresRow = postgres.PostgresRow;
 pub const convertPlaceholders = postgres.convertPlaceholders;
 
+/// A wrapper for query results that automates memory management for slices (like strings).
+/// Call `deinit()` to free all allocated strings within the result items.
 pub fn Result(comptime T: type) type {
     return struct {
         items: std.ArrayListUnmanaged(T),
@@ -61,27 +63,33 @@ pub fn Result(comptime T: type) type {
             };
         }
 
+        /// Returns a read-only slice of the result items.
         pub fn getItems(self: *const Self) []const T {
             return self.items.items;
         }
 
+        /// Returns a mutable slice of the result items.
         pub fn getItemsMut(self: *Self) []T {
             return self.items.items;
         }
 
+        /// The number of items in the result set.
         pub fn len(self: *const Self) usize {
             return self.items.items.len;
         }
 
+        /// Returns true if the result set is empty.
         pub fn isEmpty(self: *const Self) bool {
             return self.items.items.len == 0;
         }
 
+        /// Returns the first item in the result set, or null if empty.
         pub fn first(self: *const Self) ?T {
             if (self.items.items.len == 0) return null;
             return self.items.items[0];
         }
 
+        /// Frees all items and any dynamically allocated strings within them.
         pub fn deinit(self: *Self) void {
             for (self.items.items) |item| {
                 inline for (std.meta.fields(T)) |field| {
@@ -109,6 +117,8 @@ pub fn Result(comptime T: type) type {
     };
 }
 
+/// Rich error structure for ORM query failures.
+/// Provides context like the table name, SQL executed, and underlying database error.
 pub const QueryError = struct {
     operation: []const u8,
     table_name: []const u8,
@@ -128,6 +138,8 @@ pub const QueryError = struct {
     }
 };
 
+/// A fluent query builder for a specific model type T.
+/// Supports filtering, ordering, limiting, and automatic mapping to structs.
 pub fn TypedQuery(comptime T: type) type {
     return struct {
         orm: *ORM,
@@ -379,10 +391,13 @@ pub fn TypedQuery(comptime T: type) type {
     };
 }
 
+/// The primary interface for database operations within Engine12.
+/// Wraps a database connection and an allocator for memory management.
 pub const ORM = struct {
     db: Database,
     allocator: std.mem.Allocator,
 
+    /// Initializes a new ORM instance.
     pub fn init(db: Database, allocator: std.mem.Allocator) ORM {
         return ORM{
             .db = db,
@@ -390,6 +405,7 @@ pub const ORM = struct {
         };
     }
 
+    /// Allocates and initializes an ORM instance on the heap.
     pub fn initPtr(db: Database, allocator: std.mem.Allocator) !*ORM {
         const orm = try allocator.create(ORM);
         orm.* = ORM.init(db, allocator);
@@ -411,6 +427,12 @@ pub const ORM = struct {
         return error.NotImplemented;
     }
 
+    /// Creates and returns a fluent query builder for the specified model type T.
+    ///
+    /// Usage:
+    /// ```zig
+    /// var query = orm.select(User).whereEq("id", "1").first();
+    /// ```
     pub fn select(self: *ORM, comptime T: type) TypedQuery(T) {
         return TypedQuery(T).init(self);
     }
@@ -419,10 +441,13 @@ pub const ORM = struct {
         return comptime model.comptimeTableName(T);
     }
 
+    /// Returns the deduced table name for the given model type T.
     pub fn tableNameFor(comptime T: type) []const u8 {
         return comptime model.comptimeTableName(T);
     }
 
+    /// Inserts a new record into the database for the model instance.
+    /// Returns the ID of the newly created record.
     pub fn create(self: *ORM, comptime T: type, instance: T) !i64 {
         const table_name = comptime getTableName(T);
 
@@ -476,7 +501,6 @@ pub const ORM = struct {
 
         switch (self.db.driver) {
             .postgresql => {
-                // Postgres: Use RETURNING id
                 const sql = try std.fmt.allocPrint(
                     self.allocator,
                     sql_template ++ " RETURNING id",
@@ -493,7 +517,6 @@ pub const ORM = struct {
                 return error.NoInsertId;
             },
             .sqlite => {
-                // SQLite: Execute then last_insert_rowid
                 const sql = try std.fmt.allocPrint(
                     self.allocator,
                     sql_template,
@@ -874,7 +897,7 @@ pub const ORM = struct {
         }
 
         if (results.items.len > 0) {
-            return results.items[0]; // Caller owns this
+            return results.items[0];
         }
         return null;
     }

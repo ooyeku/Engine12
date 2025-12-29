@@ -22,17 +22,17 @@ test "Postgres Protocol Handshake" {
             var writer = MessageWriter.init(alloc, conn.stream);
             defer writer.deinit();
 
-            // 1. Read Startup Message
+
             const len = try reader.readInt32();
             const proto = try reader.readInt32();
             try std.testing.expectEqual(@as(i32, 196608), proto);
 
-            // Skip params
+
             const param_len = len - 8;
             try reader.skip(@intCast(param_len));
 
-            // 2. Send Auth Request (MD5)
-            // 'R' (Auth) + Len + 5 (MD5) + Salt(4)
+
+
             var buf = std.ArrayListUnmanaged(u8){};
             defer buf.deinit(alloc);
 
@@ -49,7 +49,7 @@ test "Postgres Protocol Handshake" {
 
             try conn.stream.writeAll(buf.items);
 
-            // 3. Receive Password Message ('p')
+
             const msg_type = try reader.readByte();
             try std.testing.expectEqual(@as(u8, 'p'), msg_type);
             const p_len = try reader.readInt32();
@@ -57,7 +57,7 @@ test "Postgres Protocol Handshake" {
             try std.testing.expect(std.mem.startsWith(u8, pass, "md5"));
             _ = p_len;
 
-            // 4. Send Auth OK
+
             buf.clearRetainingCapacity();
             try buf.append(alloc, 'R');
             std.mem.writeInt(i32, &len_buf, 8, .big);
@@ -66,7 +66,7 @@ test "Postgres Protocol Handshake" {
             try buf.appendSlice(alloc, &len_buf);
             try conn.stream.writeAll(buf.items);
 
-            // 5. Send ReadyForQuery ('Z')
+
             buf.clearRetainingCapacity();
             try buf.append(alloc, 'Z');
             std.mem.writeInt(i32, &len_buf, 5, .big);

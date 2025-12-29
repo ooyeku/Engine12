@@ -4,6 +4,8 @@ const Migration = @import("migration.zig").Migration;
 const Schema = @import("schema.zig").Schema;
 const Driver = @import("driver.zig").Driver;
 
+/// Executes and manages database migrations.
+/// Tracks applied migrations in a `schema_migrations` table.
 pub const MigrationRunner = struct {
     db: *Database,
     allocator: std.mem.Allocator,
@@ -15,6 +17,7 @@ pub const MigrationRunner = struct {
         };
     }
 
+    /// Creates the `schema_migrations` table if it doesn't already exist.
     pub fn createMigrationsTable(self: *MigrationRunner) !void {
         const driver = self.db.getDriver();
 
@@ -34,6 +37,7 @@ pub const MigrationRunner = struct {
         try self.db.execute(sql);
     }
 
+    /// Returns the highest migration version currently applied to the database.
     pub fn getCurrentVersion(self: *MigrationRunner) !?u32 {
         try self.createMigrationsTable();
 
@@ -51,6 +55,7 @@ pub const MigrationRunner = struct {
         return null;
     }
 
+    /// Checks if a specific migration version has already been applied.
     pub fn isApplied(self: *MigrationRunner, version: u32) !bool {
         try self.createMigrationsTable();
 
@@ -71,6 +76,8 @@ pub const MigrationRunner = struct {
         return false;
     }
 
+    /// Executes all unapplied migrations in the provided list.
+    /// Each migration is run within its own transaction.
     pub fn runMigrations(self: *MigrationRunner, migrations: []const Migration) !void {
         try self.createMigrationsTable();
 
@@ -83,15 +90,16 @@ pub const MigrationRunner = struct {
             defer trans.deinit();
 
             trans.execute(migration.up) catch |err| {
-                if (std.mem.indexOf(u8, migration.up, "ALTER TABLE") != null and 
-                    std.mem.indexOf(u8, migration.up, "ADD COLUMN") != null) {
+                if (std.mem.indexOf(u8, migration.up, "ALTER TABLE") != null and
+                    std.mem.indexOf(u8, migration.up, "ADD COLUMN") != null)
+                {
                     var table_name_start: ?usize = null;
                     var table_name_end: ?usize = null;
                     var column_name_start: ?usize = null;
                     var column_name_end: ?usize = null;
-                    
+
                     if (std.mem.indexOf(u8, migration.up, "ALTER TABLE")) |alt_pos| {
-                        var pos = alt_pos + 11; // Skip "ALTER TABLE"
+                        var pos = alt_pos + 11;
                         while (pos < migration.up.len and (migration.up[pos] == ' ' or migration.up[pos] == '\t' or migration.up[pos] == '\n')) {
                             pos += 1;
                         }
@@ -100,9 +108,9 @@ pub const MigrationRunner = struct {
                             pos += 1;
                         }
                         table_name_end = pos;
-                        
+
                         if (std.mem.indexOfPos(u8, migration.up, pos, "ADD COLUMN")) |add_pos| {
-                            pos = add_pos + 10; // Skip "ADD COLUMN"
+                            pos = add_pos + 10;
                             while (pos < migration.up.len and (migration.up[pos] == ' ' or migration.up[pos] == '\t' or migration.up[pos] == '\n')) {
                                 pos += 1;
                             }
@@ -113,12 +121,13 @@ pub const MigrationRunner = struct {
                             column_name_end = pos;
                         }
                     }
-                    
-                    if (table_name_start != null and table_name_end != null and 
-                        column_name_start != null and column_name_end != null) {
+
+                    if (table_name_start != null and table_name_end != null and
+                        column_name_start != null and column_name_end != null)
+                    {
                         const table_name = migration.up[table_name_start.?..table_name_end.?];
                         const column_name = migration.up[column_name_start.?..column_name_end.?];
-                        
+
                         const column_exists = Schema.columnExists(self.db, table_name, column_name) catch false;
                         if (column_exists) {
                             trans.rollback() catch {};
@@ -148,8 +157,7 @@ pub const MigrationRunner = struct {
                                     .{ migration.version, escaped_name.items, timestamp },
                                 );
                             defer self.allocator.free(insert_sql);
-                            self.db.execute(insert_sql) catch {
-                            };
+                            self.db.execute(insert_sql) catch {};
                             continue;
                         }
                     }
@@ -190,6 +198,7 @@ pub const MigrationRunner = struct {
         }
     }
 
+    /// Reverts a specific migration version.
     pub fn rollbackMigration(self: *MigrationRunner, version: u32, migrations: []const Migration) !void {
         try self.createMigrationsTable();
 
@@ -339,4 +348,3 @@ test "MigrationRunner rollbackMigration" {
     const version = try runner.getCurrentVersion();
     try std.testing.expect(version == null);
 }
-

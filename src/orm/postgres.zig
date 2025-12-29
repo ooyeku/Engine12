@@ -7,7 +7,7 @@ const QueryResult = row_mod.QueryResult;
 const PostgresStoredRow = row_mod.PostgresStoredRow;
 const PostgresConfig = @import("driver.zig").PostgresConfig;
 const ParamList = @import("params.zig").ParamList;
-// Removed: const pg = @import("pg");
+
 
 pub const PostgresDatabase = struct {
     conn: *Connection,
@@ -47,13 +47,13 @@ pub const PostgresDatabase = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         var rs = try self.conn.query(sql);
-        defer rs.rows.deinit(self.allocator); // We will consume/copy rows, or move ownership?
-        // QueryResult wants `pg_rows` as ArrayListUnmanaged(PostgresStoredRow).
-        // It also wants `pg_column_names` as [][]const u8.
+        defer rs.rows.deinit(self.allocator);
 
-        // We need to convert.
-        // For column names, ResultSet owns them. We can move ownership to QueryResult.
-        // For Rows, new Row uses single buffer. PostgresStoredRow uses []StoredValue.
+
+
+
+
+
 
         return try convertToQueryResult(self.allocator, &rs);
     }
@@ -67,8 +67,8 @@ pub const PostgresDatabase = struct {
     }
 
     pub fn convertPlaceholders(allocator: std.mem.Allocator, sql: []const u8) ![]u8 {
-        // Pre-calculate size? Hard because numbers vary in length.
-        // Just use ArrayList.
+
+
         var buf = std.ArrayListUnmanaged(u8){};
         errdefer buf.deinit(allocator);
 
@@ -99,7 +99,7 @@ fn convertToQueryResult(allocator: std.mem.Allocator, rs: *ResultSet) !QueryResu
     }
 
     for (rs.rows.items) |row| {
-        // Create StoredRow
+
         const values = try allocator.alloc(PostgresStoredRow.StoredValue, row.num_columns);
         errdefer allocator.free(values);
 
@@ -107,8 +107,8 @@ fn convertToQueryResult(allocator: std.mem.Allocator, rs: *ResultSet) !QueryResu
             if (row.isNull(i)) {
                 values[i] = .null_val;
             } else {
-                // Get text value and dupe it
-                // We assume connection returns text format for now
+
+
                 if (row.getText(i)) |txt| {
                     const params_str = try allocator.dupe(u8, txt);
                     values[i] = .{ .text = params_str };
@@ -124,12 +124,12 @@ fn convertToQueryResult(allocator: std.mem.Allocator, rs: *ResultSet) !QueryResu
         });
     }
 
-    // Move column names ownership
-    // rs.column_names needs to be duped or moved?
-    // rs.deinit() frees column names. If we take ownership we should prevent rs.deinit from freeing them.
-    // But rs is passed by pointer, usually we treat it as input.
-    // QueryResult needs its own copy or move.
-    // Let's dupe column names to be safe and let caller cleanup Rs.
+
+
+
+
+
+
 
     var col_names = try allocator.alloc([]const u8, rs.column_names.len);
     errdefer allocator.free(col_names);

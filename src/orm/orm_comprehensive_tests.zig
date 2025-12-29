@@ -407,7 +407,7 @@ test "ORM update - with optional fields (null skipped)" {
     const updated_user = User{
         .id = 1,
         .name = "Bob",
-        .description = null, // This should be skipped in UPDATE
+        .description = null,
     };
 
     try orm.update(User, updated_user);

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+/// A wrapper that owns a single value and its associated memory.
+/// Automatically frees the value's memory (if it's a slice) on `deinit`.
 pub fn Owned(comptime T: type) type {
     return struct {
         value: T,
@@ -14,6 +16,7 @@ pub fn Owned(comptime T: type) type {
             };
         }
 
+        /// Transfers ownership of the value to the caller and disables automatic freeing.
         pub fn take(self: *Self) T {
             const val = self.value;
             self.value = undefined;
@@ -34,6 +37,7 @@ pub fn Owned(comptime T: type) type {
     };
 }
 
+/// A collection of items that manages the memory of both the slice and any heap-allocated fields within the items (e.g., strings).
 pub fn OwnedSlice(comptime T: type) type {
     return struct {
         data: std.ArrayListUnmanaged(T),
@@ -48,6 +52,7 @@ pub fn OwnedSlice(comptime T: type) type {
             };
         }
 
+        /// Creates an empty managed slice.
         pub fn empty(allocator: std.mem.Allocator) Self {
             return Self{
                 .data = std.ArrayListUnmanaged(T){},
@@ -55,6 +60,7 @@ pub fn OwnedSlice(comptime T: type) type {
             };
         }
 
+        /// Returns the slice of items.
         pub fn items(self: *const Self) []const T {
             return self.data.items;
         }
@@ -71,17 +77,20 @@ pub fn OwnedSlice(comptime T: type) type {
             return self.data.items.len == 0;
         }
 
+        /// Returns the first item in the slice, or null if empty.
         pub fn first(self: *const Self) ?T {
             if (self.data.items.len == 0) return null;
             return self.data.items[0];
         }
 
+        /// Transfers ownership of the underlying data list to the caller.
         pub fn take(self: *Self) std.ArrayListUnmanaged(T) {
             const data = self.data;
             self.data = std.ArrayListUnmanaged(T){};
             return data;
         }
 
+        /// Recursively frees memory for all items and the slice itself.
         pub fn deinit(self: *Self) void {
             for (self.data.items) |item| {
                 inline for (std.meta.fields(T)) |field| {
@@ -93,8 +102,7 @@ pub fn OwnedSlice(comptime T: type) type {
                         if (ptr_info.size == .Slice and ptr_info.child == u8) {
                             self.allocator.free(@field(item, field.name));
                         }
-                    }
-                    else if (field_info == .optional) {
+                    } else if (field_info == .optional) {
                         const opt_child = @typeInfo(field_info.optional.child);
                         if (opt_child == .pointer) {
                             const ptr_info = opt_child.pointer;

@@ -19,6 +19,7 @@ pub const ResultSet = struct {
     }
 };
 
+/// A PostgreSQL database connection handling the frontend/backend protocol.
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     stream: net.Stream,
@@ -26,6 +27,7 @@ pub const Connection = struct {
     writer: Writer,
     in_transaction: bool = false,
 
+    /// Establishes a new connection to a PostgreSQL server.
     pub fn connect(allocator: std.mem.Allocator, host: []const u8, port: u16, username: []const u8, database: []const u8, password: ?[]const u8) !Connection {
         const stream = try net.tcpConnectToHost(allocator, host, port);
         errdefer stream.close();
@@ -42,26 +44,26 @@ pub const Connection = struct {
         return conn;
     }
 
+    /// Closes the connection gracefully.
     pub fn close(self: *Connection) void {
         self.writer.writeTerminate() catch {};
         self.stream.close();
         self.writer.deinit();
     }
 
-    /// Execute a simple query (Q) and ignore rows. Returns rows affected if parsed.
+    /// Executes a SQL command that does not return rows.
     pub fn execute(self: *Connection, sql: []const u8) !void {
         try self.writer.writeQuery(sql);
 
         while (true) {
             const msg_type_byte = try self.reader.readByte();
-            const msg_len = try self.reader.readInt32(); // Includes self
+            const msg_len = try self.reader.readInt32();
             const payload_len = @as(usize, @intCast(msg_len - 4));
 
             const msg_type = @as(types.Backend, @enumFromInt(msg_type_byte));
 
             switch (msg_type) {
                 .CommandComplete => {
-                    // Payload: Tag string (e.g., "INSERT 0 1")
                     try self.reader.skip(payload_len);
                 },
                 .ReadyForQuery => {
@@ -71,25 +73,19 @@ pub const Connection = struct {
                 },
                 .ErrorResponse => {
                     try self.reader.skip(payload_len);
-                    return types.ProtocolError.QueryError; // TODO: Parse detailed error
+                    return types.ProtocolError.QueryError;
                 },
                 .DataRow => {
-                    // We are ignoring rows in simple execute
                     try self.reader.skip(payload_len);
                 },
                 .RowDescription => {
-                    // Ignore description
                     try self.reader.skip(payload_len);
                 },
-                .EmptyQueryResponse => {
-                    // No rows and no error
-                },
+                .EmptyQueryResponse => {},
                 .NoticeResponse, .NotificationResponse, .ParameterStatus => {
-                    // Ignore async messages
                     try self.reader.skip(payload_len);
                 },
                 else => {
-                    // Skip unknown/unhandled messages
                     try self.reader.skip(payload_len);
                 },
             }
@@ -102,24 +98,21 @@ pub const Connection = struct {
         errdefer self.allocator.free(names);
 
         for (0..@intCast(num_fields)) |i| {
-            // Name
             const name = try self.reader.readString();
             names[i] = try self.allocator.dupe(u8, name);
 
-            // Skip other fields: table_oid(4), col_attr(2), type_oid(4), type_len(2), type_mod(4), format(2)
-            // Total skip: 18 bytes
-            _ = try self.reader.readInt32(); // table oid
-            _ = try self.reader.readInt16(); // attr
-            _ = try self.reader.readInt32(); // type
-            _ = try self.reader.readInt16(); // len
-            _ = try self.reader.readInt32(); // mod
-            _ = try self.reader.readInt16(); // format
+            _ = try self.reader.readInt32();
+            _ = try self.reader.readInt16();
+            _ = try self.reader.readInt32();
+            _ = try self.reader.readInt16();
+            _ = try self.reader.readInt32();
+            _ = try self.reader.readInt16();
         }
 
         return names;
     }
 
-    /// Execute a simple query (Q) and return rows.
+    /// Executes a SQL query and returns the full result set.
     pub fn query(self: *Connection, sql: []const u8) !ResultSet {
         try self.writer.writeQuery(sql);
 
@@ -142,14 +135,9 @@ pub const Connection = struct {
 
             switch (msg_type) {
                 .RowDescription => {
-                    // We can't skip because we need names.
-                    // But readRowDescription reads from stream, assumes current pos is at payload start.
-                    // readByte/readInt32 advanced pos.
-                    // So readRowDescription aligns perfectly.
                     col_names = try self.readRowDescription();
                 },
                 .DataRow => {
-                    // Allocate buffer for this row's data
                     const idx = try self.allocator.alloc(u8, payload_len);
                     errdefer self.allocator.free(idx);
 
@@ -174,9 +162,7 @@ pub const Connection = struct {
                     try self.reader.skip(payload_len);
                     return types.ProtocolError.QueryError;
                 },
-                .EmptyQueryResponse => {
-                    // yield empty list
-                },
+                .EmptyQueryResponse => {},
                 .NoticeResponse, .NotificationResponse, .ParameterStatus => {
                     try self.reader.skip(payload_len);
                 },
@@ -187,15 +173,10 @@ pub const Connection = struct {
         }
     }
 
-    // --- Extended Protocol ---
-
     pub fn prepare(self: *Connection, name: []const u8, sql: []const u8) !void {
-        // Send Parse
-        // Param OIDs empty for now, let server infer
         try self.writer.writeParse(name, sql, &.{});
         try self.writer.writeSync();
 
-        // Wait for ParseComplete
         while (true) {
             const msg_type_byte = try self.reader.readByte();
             const msg_len = try self.reader.readInt32();
@@ -219,15 +200,11 @@ pub const Connection = struct {
     }
 
     pub fn executeParams(self: *Connection, sql: []const u8, params: *const @import("../params.zig").ParamList) !void {
-        // 1. Parse (Unnamed statement)
         try self.writer.writeParse("", sql, &.{});
 
-        // 2. Bind
-        // We need to convert params to string representation (Text format code 0)
         var encoded_params = std.ArrayListUnmanaged(?[]const u8){};
         defer encoded_params.deinit(self.allocator);
 
-        // Arena for string allocations during encoding
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const aa = arena.allocator();
@@ -250,22 +227,17 @@ pub const Connection = struct {
             }
         }
 
-        // All param formats 0 (Text) - assuming simple text encoding for now
         try self.writer.writeBind("", "", &[_]i16{}, encoded_params.items, &[_]i16{});
 
-        // Describe Portal (unnamed)
         try self.writer.writeDescribe(true, "");
 
-        // 3. Execute
-        try self.writer.writeExecute("", 0); // 0 = all rows
+        try self.writer.writeExecute("", 0);
 
-        // 4. Sync
         try self.writer.writeSync();
 
-        // 5. Consume results
         while (true) {
             const msg_type_byte = try self.reader.readByte();
-            const msg_len = try self.reader.readInt32(); // Includes self
+            const msg_len = try self.reader.readInt32();
             const payload_len = @as(usize, @intCast(msg_len - 4));
 
             const msg_type = @as(types.Backend, @enumFromInt(msg_type_byte));
@@ -282,7 +254,7 @@ pub const Connection = struct {
                     return types.ProtocolError.QueryError;
                 },
                 .ParseComplete, .BindComplete => {},
-                .DataRow => try self.reader.skip(payload_len), // Ignore rows
+                .DataRow => try self.reader.skip(payload_len),
                 .RowDescription => try self.reader.skip(payload_len),
                 .PortalSuspended => try self.reader.skip(payload_len),
                 .NoticeResponse, .NotificationResponse, .ParameterStatus => try self.reader.skip(payload_len),
@@ -292,10 +264,8 @@ pub const Connection = struct {
     }
 
     pub fn queryParams(self: *Connection, sql: []const u8, params: *const @import("../params.zig").ParamList) !ResultSet {
-        // 1. Parse
         try self.writer.writeParse("", sql, &.{});
 
-        // 2. Bind
         var encoded_params = std.ArrayListUnmanaged(?[]const u8){};
         defer encoded_params.deinit(self.allocator);
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -308,20 +278,16 @@ pub const Connection = struct {
                 .int64 => |v| try encoded_params.append(self.allocator, try std.fmt.allocPrint(aa, "{d}", .{v})),
                 .float64 => |v| try encoded_params.append(self.allocator, try std.fmt.allocPrint(aa, "{d}", .{v})),
                 .text => |s| try encoded_params.append(self.allocator, s),
-                .blob => |b| try encoded_params.append(self.allocator, b), // Helper needed for bytea
+                .blob => |b| try encoded_params.append(self.allocator, b),
             }
         }
 
-        // 2. Bind
         try self.writer.writeBind("", "", &[_]i16{}, encoded_params.items, &[_]i16{});
 
-        // Describe Portal (unnamed)
         try self.writer.writeDescribe(true, "");
 
-        // 3. Execute
         try self.writer.writeExecute("", 0);
 
-        // 4. Sync
         try self.writer.writeSync();
 
         var rows = std.ArrayListUnmanaged(Row){};
@@ -333,7 +299,6 @@ pub const Connection = struct {
             self.allocator.free(col_names);
         }
 
-        // 5. Consume
         while (true) {
             const msg_type_byte = try self.reader.readByte();
             const msg_len = try self.reader.readInt32();

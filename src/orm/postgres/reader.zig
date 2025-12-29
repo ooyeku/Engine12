@@ -13,9 +13,9 @@ pub const MessageReader = struct {
         };
     }
 
-    /// Fill buffer if empty or insufficient data
+
     fn fillBuffer(self: *MessageReader) !void {
-        // Move remaining data to start
+
         if (self.pos < self.end) {
             const remaining = self.end - self.pos;
             std.mem.copyForwards(u8, &self.buffer, self.buffer[self.pos..self.end]);
@@ -31,7 +31,7 @@ pub const MessageReader = struct {
         self.end += read;
     }
 
-    /// Ensure we have at least n bytes available
+
     fn ensure(self: *MessageReader, n: usize) !void {
         while (self.end - self.pos < n) {
             try self.fillBuffer();
@@ -59,35 +59,35 @@ pub const MessageReader = struct {
         return val;
     }
 
-    /// Reads a null-terminated string. Returns a slice into the buffer.
-    /// Note: The slice is valid only until the next read operation that might shift the buffer.
+
+
     pub fn readString(self: *MessageReader) ![]const u8 {
         var start = self.pos;
         while (true) {
-            // Scan for null terminator in current buffer
+
             if (std.mem.indexOfScalar(u8, self.buffer[start..self.end], 0)) |idx| {
                 const end_pos = start + idx;
                 const result = self.buffer[self.pos..end_pos];
-                self.pos = end_pos + 1; // Skip null
+                self.pos = end_pos + 1;
                 return result;
             }
 
-            // Not found, need more data.
-            // If buffer is full and we haven't found null, message is too long or buffer too small.
-            // For now, handle by shifting/filling.
+
+
+
             if (self.pos == 0 and self.end == self.buffer.len) {
                 return error.MessageTooLong;
             }
 
-            // Move partially read string to beginning
+
             const pending_len = self.end - self.pos;
             if (self.pos > 0) {
                 std.mem.copyForwards(u8, &self.buffer, self.buffer[self.pos..self.end]);
                 self.end = pending_len;
                 self.pos = 0;
-                start = pending_len; // Resume scan from where we left off
+                start = pending_len;
             } else {
-                // Buffer full start at 0
+
                 start = self.end;
             }
 
@@ -97,7 +97,7 @@ pub const MessageReader = struct {
         }
     }
 
-    /// Read raw bytes into a destination buffer
+
     pub fn readBytes(self: *MessageReader, dest: []u8) !void {
         var dest_pos: usize = 0;
         while (dest_pos < dest.len) {
@@ -116,7 +116,7 @@ pub const MessageReader = struct {
         }
     }
 
-    /// Skip n bytes
+
     pub fn skip(self: *MessageReader, n: usize) !void {
         var remaining = n;
         while (remaining > 0) {

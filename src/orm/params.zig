@@ -9,6 +9,8 @@ pub const ParamType = enum(u8) {
     blob = 4,
 };
 
+/// A union representing a single database query parameter.
+/// Supports integers, floats, text, blobs, and NULL values.
 pub const Param = union(ParamType) {
     null: void,
     int64: i64,
@@ -40,6 +42,7 @@ pub const Param = union(ParamType) {
         return Param{ .int64 = if (value) 1 else 0 };
     }
 
+    /// Automatically deduces the correct `Param` type for a given Zig value at compile-time.
     pub fn from(value: anytype) Param {
         const T = @TypeOf(value);
 
@@ -76,6 +79,7 @@ pub const Param = union(ParamType) {
         };
     }
 
+    /// Binds this parameter to a prepared SQL statement at the given index.
     pub fn bind(self: Param, stmt: ?*sqlite.sqlite3_stmt, index: c_int) c_int {
         return switch (self) {
             .null => sqlite.bind_null(stmt, index),
@@ -87,6 +91,7 @@ pub const Param = union(ParamType) {
     }
 };
 
+/// A dynamic list of parameters to be bound to a SQL query.
 pub const ParamList = struct {
     items: std.ArrayListUnmanaged(Param),
     allocator: std.mem.Allocator,
@@ -111,6 +116,7 @@ pub const ParamList = struct {
         return self.items.items[index];
     }
 
+    /// Appends a parameter to the list, deducing its type automatically.
     pub fn add(self: *ParamList, value: anytype) !void {
         const T = @TypeOf(value);
         if (T == Param) {
@@ -150,7 +156,7 @@ pub const ParamList = struct {
 
     pub fn bindAll(self: *const ParamList, stmt: ?*sqlite.sqlite3_stmt) c_int {
         for (self.items.items, 0..) |param, i| {
-            const index: c_int = @intCast(i + 1); // SQLite uses 1-based indexing
+            const index: c_int = @intCast(i + 1);
             const rc = param.bind(stmt, index);
             if (rc != sqlite.SQLITE_OK) {
                 return rc;
@@ -179,7 +185,6 @@ pub fn fromTuple(allocator: std.mem.Allocator, tuple: anytype) !ParamList {
 
     return list;
 }
-
 
 test "Param.from integer" {
     const p = Param.from(@as(i32, 42));

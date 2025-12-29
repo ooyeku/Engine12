@@ -1,10 +1,16 @@
 const std = @import("std");
 const Database = @import("database.zig").Database;
 
+/// Represents a single database migration step.
+/// Contains the SQL to apply (up) and revert (down) the changes.
 pub const Migration = struct {
+    /// Unique version number for the migration. Used to track applied status.
     version: u32,
+    /// Human-readable name for the migration.
     name: []const u8,
+    /// SQL to execute during migration upgrade.
     up: []const u8,
+    /// SQL to execute during migration downgrade.
     down: []const u8,
 
     pub fn init(version: u32, name: []const u8, up: []const u8, down: []const u8) Migration {
@@ -17,6 +23,7 @@ pub const Migration = struct {
     }
 };
 
+/// A collection of migrations, automatically sorted by version.
 pub const MigrationRegistry = struct {
     migrations: std.ArrayListUnmanaged(Migration),
     allocator: std.mem.Allocator,
@@ -28,6 +35,8 @@ pub const MigrationRegistry = struct {
         };
     }
 
+    /// Adds a migration to the registry and sorts the collection.
+    /// Errors if a migration with the same version already exists.
     pub fn add(self: *MigrationRegistry, migration: Migration) !void {
         for (self.migrations.items) |m| {
             if (m.version == migration.version) {
@@ -53,6 +62,7 @@ pub const MigrationRegistry = struct {
     }
 };
 
+/// A helper to programmatically build migration SQL.
 pub const MigrationBuilder = struct {
     version: u32,
     name: []const u8,
@@ -181,4 +191,3 @@ test "MigrationBuilder createTable" {
     try std.testing.expect(std.mem.indexOf(u8, migration.up, "CREATE TABLE users") != null);
     try std.testing.expect(std.mem.indexOf(u8, migration.down, "DROP TABLE") != null);
 }
-

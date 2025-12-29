@@ -1,6 +1,5 @@
 const std = @import("std");
 
-/// Postgres Protocol Message Types (Frontend)
 pub const Frontend = enum(u8) {
     Bind = 'B',
     Close = 'C',
@@ -14,7 +13,6 @@ pub const Frontend = enum(u8) {
     PasswordMessage = 'p',
 };
 
-/// Postgres Protocol Message Types (Backend)
 pub const Backend = enum(u8) {
     Authentication = 'R',
     BackendKeyData = 'K',
@@ -36,7 +34,7 @@ pub const Backend = enum(u8) {
     _,
 };
 
-/// Common OIDs (Object Identifiers) for Types
+/// PostgreSQL Object Identifier (OID) type constants.
 pub const OID = enum(i32) {
     Bool = 16,
     Bytea = 17,
@@ -78,14 +76,12 @@ pub const OID = enum(i32) {
     }
 };
 
-/// Transaction Status from ReadyForQuery
 pub const TransactionStatus = enum(u8) {
     Idle = 'I',
     InTransaction = 'T',
     Error = 'E',
 };
 
-/// Error Severity from ErrorResponse
 pub const Severity = enum {
     Log,
     Info,
@@ -110,7 +106,7 @@ pub const Severity = enum {
     }
 };
 
-/// Protocol Errors
+/// Errors related to the PostgreSQL protocol and server communication.
 pub const ProtocolError = error{
     ConnectionRefused,
     HostNotFound,
@@ -121,7 +117,7 @@ pub const ProtocolError = error{
     UnsupportedAuthentication,
     MessageTooLong,
     UnexpectedMessage,
-    // Database specific errors
+
     QueryError,
     DuplicateKey,
     ForeignKeyViolation,
@@ -132,7 +128,6 @@ pub const ProtocolError = error{
     UnknownDatabaseError,
 };
 
-/// Authentication Request Types
 pub const AuthType = enum(i32) {
     Ok = 0,
     KerberosV5 = 2,

@@ -5,11 +5,11 @@ pub const Escape = struct {
         var escaped_count: usize = 0;
         for (input) |char| {
             escaped_count += switch (char) {
-                '&' => 5, // "&amp;"
-                '<' => 4, // "&lt;"
-                '>' => 4, // "&gt;"
-                '"' => 6, // "&quot;"
-                '\'' => 5, // "&#39;"
+                '&' => 5,
+                '<' => 4,
+                '>' => 4,
+                '"' => 6,
+                '\'' => 5,
                 else => 1,
             };
         }
@@ -247,10 +247,10 @@ test "escapeHtml javascript code" {
 
 test "escapeHtml url with query params" {
     const allocator = std.testing.allocator;
-    const input = "http://example.com?foo=bar&baz=qux";
+    const input = "http://example.com?a=1&b=2";
     const escaped = try Escape.escapeHtml(allocator, input);
     defer allocator.free(escaped);
-    try std.testing.expectEqualStrings("http://example.com?foo=bar&amp;baz=qux", escaped);
+    try std.testing.expectEqualStrings("http://example.com?a=1&amp;b=2", escaped);
 }
 
 test "escapeHtml json string" {
@@ -504,10 +504,6 @@ test "escapeHtml very long mixed content" {
     try std.testing.expect(escaped.len > input_buf.len);
 }
 
-// ============================================================================
-// escapeHtmlComptime Tests
-// ============================================================================
-
 test "escapeHtmlComptime basic" {
     const result = comptime Escape.escapeHtmlComptime("<script>alert('xss')</script>");
     try std.testing.expectEqualStrings("&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;", result);
@@ -554,8 +550,8 @@ test "escapeHtmlComptime mixed content" {
 }
 
 test "escapeHtmlComptime url" {
-    const result = comptime Escape.escapeHtmlComptime("http://example.com?foo=bar&baz=qux");
-    try std.testing.expectEqualStrings("http://example.com?foo=bar&amp;baz=qux", result);
+    const result = comptime Escape.escapeHtmlComptime("http://example.com?a=1&b=2");
+    try std.testing.expectEqualStrings("http://example.com?a=1&amp;b=2", result);
 }
 
 test "escapeHtmlComptime html tag" {

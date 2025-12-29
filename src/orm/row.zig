@@ -63,14 +63,13 @@ pub const PostgresStoredRow = struct {
             .int => |i| i,
             .bool_val => |b| if (b) @as(i64, 1) else @as(i64, 0),
             .text => |t| {
-                // Handle PostgreSQL boolean text values
                 if (t.len == 1) {
                     if (t[0] == 't' or t[0] == '1') return 1;
                     if (t[0] == 'f' or t[0] == '0') return 0;
                 }
                 if (std.mem.eql(u8, t, "true")) return 1;
                 if (std.mem.eql(u8, t, "false")) return 0;
-                // Try parsing as integer
+
                 return std.fmt.parseInt(i64, t, 10) catch 0;
             },
             else => 0,
@@ -122,6 +121,8 @@ pub const PostgresStoredRow = struct {
     }
 };
 
+/// Represents a single row from a database query result.
+/// Provides methods to retrieve column values by index.
 pub const Row = struct {
     driver: Driver,
     data: RowData,
@@ -145,6 +146,7 @@ pub const Row = struct {
         };
     }
 
+    /// Retrieves a string value from the specified column.
     pub fn getText(self: Row, col_index: usize) ?[]const u8 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getText(@intCast(col_index)),
@@ -152,6 +154,7 @@ pub const Row = struct {
         };
     }
 
+    /// Retrieves an integer value from the specified column.
     pub fn getInt64(self: Row, col_index: usize) i64 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getInt64(@intCast(col_index)),
@@ -159,6 +162,7 @@ pub const Row = struct {
         };
     }
 
+    /// Retrieves a floating-point value from the specified column.
     pub fn getDouble(self: Row, col_index: usize) f64 {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.getDouble(@intCast(col_index)),
@@ -166,6 +170,7 @@ pub const Row = struct {
         };
     }
 
+    /// Checks if the specified column contains a NULL value.
     pub fn isNull(self: Row, col_index: usize) bool {
         return switch (self.driver) {
             .sqlite => self.data.sqlite.isNull(@intCast(col_index)),
@@ -173,6 +178,7 @@ pub const Row = struct {
         };
     }
 
+    /// Retrieves a string value from the specified column and allocates a copy of it.
     pub fn getTextAlloc(self: Row, allocator: std.mem.Allocator, col_index: usize) !?[]u8 {
         const text = self.getText(col_index) orelse return null;
         return try allocator.dupe(u8, text);
@@ -195,6 +201,8 @@ pub const Row = struct {
     }
 };
 
+/// Represents the full result set of a database query.
+/// Allows iterating over rows and mapping them to Zig structs.
 pub const QueryResult = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
@@ -270,6 +278,7 @@ pub const QueryResult = struct {
         return self.column_count_val;
     }
 
+    /// Returns the name of the column at the given index.
     pub fn columnName(self: QueryResult, col_index: c_int) ?[]const u8 {
         return switch (self.driver) {
             .sqlite => if (self.sqlite_stmt) |stmt| sqlite.getColumnName(stmt, col_index) else null,
@@ -285,11 +294,10 @@ pub const QueryResult = struct {
         };
     }
 
+    /// Advances the result set to the next row and returns it. Returns null when exhausted.
     pub fn nextRow(self: *QueryResult) ?Row {
         return switch (self.driver) {
             .sqlite => {
-                // Once exhausted, always return null to avoid undefined behavior
-                // from calling sqlite3_step after SQLITE_DONE
                 if (self.sqlite_exhausted) {
                     return null;
                 }
@@ -298,7 +306,7 @@ pub const QueryResult = struct {
                     if (rc == sqlite.SQLITE_ROW) {
                         return Row.fromSqlite(SqliteRow{ .stmt = stmt });
                     }
-                    // Mark as exhausted when we get SQLITE_DONE or any other result
+
                     self.sqlite_exhausted = true;
                 }
                 return null;
@@ -353,6 +361,8 @@ pub const QueryResult = struct {
         }
     }
 
+    /// Maps all rows in the result set to a list of Zig structs of type T.
+    /// Performs type-safe mapping based on field names.
     pub fn toArrayList(self: *QueryResult, comptime T: type) !std.ArrayListUnmanaged(T) {
         var list = std.ArrayListUnmanaged(T){};
         errdefer list.deinit(self.allocator);
@@ -1439,7 +1449,7 @@ test "QueryResult toArrayList with mismatched types" {
     const Database = @import("database.zig").Database;
 
     const User = struct {
-        id: []u8, // Wrong type - should be i64
+        id: []u8,
         name: []u8,
     };
 

@@ -18,9 +18,13 @@ pub const ParamList = params_mod.ParamList;
 pub const DriverType = Driver;
 pub const Config = DatabaseConfig;
 
+/// Configuration for the database connection pool.
 pub const ConnectionPoolConfig = struct {
+    /// Maximum number of concurrent connections to the database.
     max_connections: usize = 100,
+    /// Time in milliseconds after which an idle connection is closed.
     idle_timeout_ms: u64 = 600000,
+    /// Maximum time in milliseconds to wait to acquire a connection before erroring.
     acquire_timeout_ms: u64 = 10000,
 
     pub fn validate(self: *const ConnectionPoolConfig) !void {
@@ -33,6 +37,8 @@ pub const ConnectionPoolConfig = struct {
     }
 };
 
+/// A thread-safe pool of database connections.
+/// Helps manage resource usage by reusing connections across multiple threads.
 pub const ConnectionPool = struct {
     db_path: []const u8,
     config: ConnectionPoolConfig,
@@ -43,6 +49,7 @@ pub const ConnectionPool = struct {
     condition: std.Thread.Condition,
     created: usize = 0,
 
+    /// Initializes a new connection pool.
     pub fn init(db_path: []const u8, config: ConnectionPoolConfig, allocator: std.mem.Allocator) ConnectionPool {
         return ConnectionPool{
             .db_path = db_path,
@@ -56,6 +63,7 @@ pub const ConnectionPool = struct {
         };
     }
 
+    /// Acquires a connection from the pool. Blocks if all connections are in use and max_connections is reached.
     pub fn acquire(self: *ConnectionPool) !Database {
         self.mutex.lock();
         errdefer self.mutex.unlock();
@@ -96,6 +104,7 @@ pub const ConnectionPool = struct {
         }
     }
 
+    /// Returns a connection back to the pool for reuse.
     pub fn release(self: *ConnectionPool, db: Database) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -118,6 +127,7 @@ pub const ConnectionPool = struct {
         mutable_db.close();
     }
 
+    /// Closes all connections in the pool.
     pub fn deinit(self: *ConnectionPool) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -134,6 +144,8 @@ pub const ConnectionPool = struct {
     }
 };
 
+/// An abstract wrapper for different database backends (SQLite, PostgreSQL).
+/// Provides a unified interface for executing SQL and queries.
 pub const Database = struct {
     driver: Driver,
     allocator: std.mem.Allocator,
@@ -304,7 +316,7 @@ pub const Database = struct {
         try self.execute(sql);
         return switch (self.driver) {
             .sqlite => @intCast(sqlite.changes(self.sqlite_db)),
-            .postgresql => 0, // PostgreSQL would need RETURNING or affected rows from result
+            .postgresql => 0,
         };
     }
 
@@ -346,7 +358,7 @@ pub const Database = struct {
     pub fn lastInsertRowId(self: *Database) !i64 {
         return switch (self.driver) {
             .sqlite => sqlite.last_insert_rowid(self.sqlite_db),
-            .postgresql => error.NotSupported, // Use RETURNING clause instead
+            .postgresql => error.NotSupported,
         };
     }
 
@@ -1331,7 +1343,7 @@ test "Database queryParams parameter count mismatch" {
     defer result.deinit();
     if (result.nextRow()) |row| {
         try std.testing.expectEqualStrings("Alice", row.getText(0).?);
-        try std.testing.expect(row.isNull(1)); // age should be NULL
+        try std.testing.expect(row.isNull(1));
     }
 }
 
@@ -1413,7 +1425,7 @@ test "ConnectionPool max connections limit" {
     const allocator = std.testing.allocator;
     const config = ConnectionPoolConfig{
         .max_connections = 2,
-        .acquire_timeout_ms = 1, // Very short timeout
+        .acquire_timeout_ms = 1,
     };
 
     var pool = ConnectionPool.init(":memory:", config, allocator);
@@ -1583,12 +1595,12 @@ test "Database query with aggregate functions" {
     defer result.deinit();
 
     if (result.nextRow()) |row| {
-        try std.testing.expectEqual(@as(i64, 3), row.getInt64(0)); // COUNT
-        try std.testing.expectEqual(@as(i64, 60), row.getInt64(1)); // SUM
+        try std.testing.expectEqual(@as(i64, 3), row.getInt64(0));
+        try std.testing.expectEqual(@as(i64, 60), row.getInt64(1));
         const avg = row.getDouble(2);
-        try std.testing.expect(avg > 19.9 and avg < 20.1); // AVG
-        try std.testing.expectEqual(@as(i64, 10), row.getInt64(3)); // MIN
-        try std.testing.expectEqual(@as(i64, 30), row.getInt64(4)); // MAX
+        try std.testing.expect(avg > 19.9 and avg < 20.1);
+        try std.testing.expectEqual(@as(i64, 10), row.getInt64(3));
+        try std.testing.expectEqual(@as(i64, 30), row.getInt64(4));
     }
 }
 

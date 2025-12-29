@@ -14,7 +14,6 @@ pub const DatabasePoolConfig = struct {
 };
 
 pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) !DatabaseConfig {
-    // Check E12_DB_DRIVER first, then fall back to legacy DB_DRIVER
     const driver_env = std.posix.getenv("E12_DB_DRIVER") orelse std.posix.getenv("DB_DRIVER");
     const driver: Driver = if (driver_env) |d| blk: {
         if (std.mem.eql(u8, d, "postgresql") or std.mem.eql(u8, d, "postgres")) {
@@ -24,7 +23,6 @@ pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) 
     } else .sqlite;
 
     if (driver == .postgresql) {
-        // E12_* vars take precedence, fall back to legacy PG* vars
         const host = std.posix.getenv("E12_DB_HOST") orelse std.posix.getenv("PGHOST") orelse "127.0.0.1";
         const port_str = std.posix.getenv("E12_DB_PORT") orelse std.posix.getenv("PGPORT");
         const port: u16 = if (port_str) |p| std.fmt.parseInt(u16, p, 10) catch 5432 else 5432;
@@ -46,12 +44,12 @@ pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) 
             .password = password,
         });
     } else {
-        // E12_DB_PATH takes precedence, fall back to legacy SQLITE_PATH
         const sqlite_path = std.posix.getenv("E12_DB_PATH") orelse std.posix.getenv("SQLITE_PATH") orelse default_sqlite_path;
         return DatabaseConfig.sqlite(sqlite_path);
     }
 }
 
+/// A global singleton for managing a application-wide database connection or pool.
 pub const DatabaseSingleton = struct {
     var global_db: ?Database = null;
     var global_orm: ?ORM = null;
@@ -61,6 +59,7 @@ pub const DatabaseSingleton = struct {
     var initialized: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
     var use_pool: bool = false;
 
+    /// Initializes the singleton with a direct SQLite connection.
     pub fn init(db_path: []const u8, allocator: std.mem.Allocator) !void {
         if (initialized.load(.acquire)) {
             return;
@@ -81,6 +80,7 @@ pub const DatabaseSingleton = struct {
         initialized.store(true, .release);
     }
 
+    /// Initializes the singleton with a specific database configuration (SQLite or PostgreSQL).
     pub fn initWithConfig(config: DatabaseConfig, allocator: std.mem.Allocator) !void {
         if (initialized.load(.acquire)) {
             return;
@@ -101,6 +101,7 @@ pub const DatabaseSingleton = struct {
         initialized.store(true, .release);
     }
 
+    /// Initializes the singleton with a connection pool.
     pub fn initWithPool(db_path: []const u8, config: DatabasePoolConfig, allocator: std.mem.Allocator) !void {
         if (initialized.load(.acquire)) {
             return;
@@ -127,6 +128,7 @@ pub const DatabaseSingleton = struct {
         initialized.store(true, .release);
     }
 
+    /// Returns the application-wide ORM instance.
     pub fn get() !*ORM {
         if (!initialized.load(.acquire)) {
             return error.DatabaseNotInitialized;
@@ -139,6 +141,7 @@ pub const DatabaseSingleton = struct {
         return error.DatabaseNotInitialized;
     }
 
+    /// Returns the application-wide Database instance.
     pub fn getDatabase() !*Database {
         if (!initialized.load(.acquire)) {
             return error.DatabaseNotInitialized;
@@ -151,6 +154,7 @@ pub const DatabaseSingleton = struct {
         return error.DatabaseNotInitialized;
     }
 
+    /// Acquires a new database connection (from the pool if enabled).
     pub fn acquireConnection() !Database {
         if (!initialized.load(.acquire)) {
             return error.DatabaseNotInitialized;
@@ -169,6 +173,7 @@ pub const DatabaseSingleton = struct {
         return error.DatabaseNotInitialized;
     }
 
+    /// Releases a connection back to the pool.
     pub fn releaseConnection(db: Database) void {
         if (use_pool) {
             if (global_pool) |*pool| {
@@ -185,6 +190,7 @@ pub const DatabaseSingleton = struct {
         return use_pool and initialized.load(.acquire);
     }
 
+    /// Closes all connections and cleans up the singleton state.
     pub fn deinit() void {
         init_mutex.lock();
         defer init_mutex.unlock();
@@ -225,7 +231,7 @@ test "DatabaseSingleton init and get" {
     try std.testing.expect(DatabaseSingleton.isInitialized());
 
     const orm = try DatabaseSingleton.get();
-    _ = orm; // Use ORM
+    _ = orm;
 
     const db = try DatabaseSingleton.getDatabase();
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
@@ -261,7 +267,7 @@ test "DatabaseSingleton initWithConfig - SQLite" {
     try std.testing.expect(DatabaseSingleton.isInitialized());
 
     const orm = try DatabaseSingleton.get();
-    _ = orm; // Use ORM
+    _ = orm;
 
     const db = try DatabaseSingleton.getDatabase();
     try db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");

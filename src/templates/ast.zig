@@ -6,25 +6,25 @@ pub const TemplateAST = struct {
     pub const Node = union(enum) {
         text: []const u8,
         variable: VariableNode,
-        raw_variable: VariableNode, // {{! ... }}
+        raw_variable: VariableNode,
         if_block: IfBlock,
         for_block: ForBlock,
         include: IncludeNode,
-        comment: CommentNode, // {# ... #}
-        extends: ExtendsNode, // {% extends "base.zt.html" %}
-        block: BlockNode, // {% block name %}...{% endblock %}
+        comment: CommentNode,
+        extends: ExtendsNode,
+        block: BlockNode,
     };
 
     pub const VariableNode = struct {
-        path: []const []const u8, // ["user", "name"] for .user.name
+        path: []const []const u8,
         filters: []const Filter,
     };
 
-    /// Enhanced condition supporting comparisons and logical operators
+
     pub const Condition = union(enum) {
-        simple: VariableNode, // {% if .visible %}
-        negated: struct { inner: VariableNode }, // {% if not .hidden %}
-        comparison: ComparisonExpr, // {% if .count > 0 %}
+        simple: VariableNode,
+        negated: struct { inner: VariableNode },
+        comparison: ComparisonExpr,
     };
 
     pub const ComparisonExpr = struct {
@@ -34,12 +34,12 @@ pub const TemplateAST = struct {
     };
 
     pub const ComparisonOp = enum {
-        eq, // ==
-        ne, // !=
-        lt, // <
-        le, // <=
-        gt, // >
-        ge, // >=
+        eq,
+        ne,
+        lt,
+        le,
+        gt,
+        ge,
     };
 
     pub const ComparisonValue = union(enum) {
@@ -52,7 +52,7 @@ pub const TemplateAST = struct {
     pub const IfBlock = struct {
         condition: Condition,
         true_block: TemplateAST,
-        elif_blocks: []const ElifBlock, // {% elif .other %}
+        elif_blocks: []const ElifBlock,
         false_block: ?TemplateAST,
     };
 
@@ -62,15 +62,15 @@ pub const TemplateAST = struct {
     };
 
     pub const ForBlock = struct {
-        collection_path: []const []const u8, // ["todos"]
-        item_name: []const u8, // "item"
+        collection_path: []const []const u8,
+        item_name: []const u8,
         block: TemplateAST,
-        else_block: ?TemplateAST, // {% else %} for empty collections
+        else_block: ?TemplateAST,
     };
 
     pub const IncludeNode = struct {
         file_path: []const u8,
-        params: []const IncludeParam, // {% include "x.html" with foo="bar" %}
+        params: []const IncludeParam,
     };
 
     pub const IncludeParam = struct {
@@ -104,7 +104,7 @@ pub const TemplateAST = struct {
         return TemplateAST{ .nodes = &[_]Node{} };
     }
 
-    /// Create a simple condition from a variable node
+
     pub fn simpleCondition(var_node: VariableNode) Condition {
         return Condition{ .simple = var_node };
     }

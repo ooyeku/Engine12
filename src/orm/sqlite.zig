@@ -1,4 +1,3 @@
-
 const std = @import("std");
 
 pub const c = @cImport({
@@ -82,24 +81,28 @@ pub const bind_double = c.sqlite3_bind_double;
 pub const bind_text = c.sqlite3_bind_text;
 pub const bind_blob = c.sqlite3_bind_blob;
 
+/// Returns the last error message from the SQLite database connection.
 pub fn getErrorMessage(db: ?*sqlite3) []const u8 {
     const msg = errmsg(db);
     if (msg == null) return "Unknown error";
     return std.mem.sliceTo(msg, 0);
 }
 
+/// Returns the name of the specified column in a prepared statement.
 pub fn getColumnName(stmt: ?*sqlite3_stmt, col: c_int) ?[]const u8 {
     const name = column_name(stmt, col);
     if (name == null) return null;
     return std.mem.sliceTo(name, 0);
 }
 
+/// Returns the text value of the specified column in the current row of a prepared statement.
 pub fn getColumnText(stmt: ?*sqlite3_stmt, col: c_int) ?[]const u8 {
     const text = column_text(stmt, col);
     if (text == null) return null;
     return std.mem.sliceTo(text, 0);
 }
 
+/// Checks if the value of the specified column in the current row is NULL.
 pub fn isColumnNull(stmt: ?*sqlite3_stmt, col: c_int) bool {
     return column_type(stmt, col) == SQLITE_NULL;
 }

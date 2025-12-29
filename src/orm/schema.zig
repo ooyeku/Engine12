@@ -11,7 +11,9 @@ pub const ColumnInfo = struct {
     primary_key: bool,
 };
 
+/// Utility for introspecting and modifying the database schema.
 pub const Schema = struct {
+    /// Checks if a column exists in a given table.
     pub fn columnExists(db: *Database, table: []const u8, column: []const u8) !bool {
         const driver = db.getDriver();
 
@@ -50,6 +52,7 @@ pub const Schema = struct {
         }
     }
 
+    /// Retrieves metadata for all columns in a table.
     pub fn getColumns(db: *Database, table: []const u8, allocator: std.mem.Allocator) ![]ColumnInfo {
         const driver = db.getDriver();
 
@@ -142,6 +145,7 @@ pub const Schema = struct {
         return columns.toOwnedSlice(allocator);
     }
 
+    /// Checks if a table exists in the current database.
     pub fn tableExists(db: *Database, table: []const u8) !bool {
         const driver = db.getDriver();
 
@@ -165,7 +169,7 @@ pub const Schema = struct {
         return (result.nextRow() != null);
     }
 
-
+    /// Creates a table if it doesn't already exist.
     pub fn createTableIfNotExists(db: *Database, table: []const u8, columns_def: []const u8) !void {
         const sql = try std.fmt.allocPrint(
             std.heap.page_allocator,
@@ -176,6 +180,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Adds a column to an existing table if it doesn't already exist.
     pub fn addColumnIfNotExists(
         db: *Database,
         table: []const u8,
@@ -183,7 +188,7 @@ pub const Schema = struct {
         column_def: []const u8,
     ) !void {
         if (try columnExists(db, table, column)) {
-            return; // Already exists, nothing to do
+            return;
         }
 
         const sql = try std.fmt.allocPrint(
@@ -195,6 +200,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Creates an index on the specified table and columns if it doesn't already exist.
     pub fn createIndexIfNotExists(
         db: *Database,
         index_name: []const u8,
@@ -210,6 +216,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Creates a unique index on the specified table and columns if it doesn't already exist.
     pub fn createUniqueIndexIfNotExists(
         db: *Database,
         index_name: []const u8,
@@ -225,6 +232,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Drops a table if it exists.
     pub fn dropTableIfExists(db: *Database, table: []const u8) !void {
         const sql = try std.fmt.allocPrint(
             std.heap.page_allocator,
@@ -235,6 +243,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Drops an index if it exists.
     pub fn dropIndexIfExists(db: *Database, index_name: []const u8) !void {
         const sql = try std.fmt.allocPrint(
             std.heap.page_allocator,
@@ -245,6 +254,7 @@ pub const Schema = struct {
         try db.execute(sql);
     }
 
+    /// Returns a list of all table names in the current database.
     pub fn getTables(db: *Database, allocator: std.mem.Allocator) ![][]const u8 {
         const driver = db.getDriver();
 

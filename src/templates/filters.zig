@@ -52,7 +52,7 @@ pub const Filters = struct {
         return try std.fmt.allocPrint(allocator, fmt, .{value});
     }
 
-    /// Capitalizes the first letter of the string
+
     pub fn capitalize(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         if (value.len == 0) return try allocator.dupe(u8, "");
         const result = try allocator.alloc(u8, value.len);
@@ -63,7 +63,7 @@ pub const Filters = struct {
         return result;
     }
 
-    /// Truncates string to max_len characters, adding "..." if truncated
+
     pub fn truncate(value: []const u8, max_len: usize, allocator: std.mem.Allocator) ![]const u8 {
         if (value.len <= max_len) return try allocator.dupe(u8, value);
         if (max_len < 3) return try allocator.dupe(u8, "...");
@@ -73,11 +73,11 @@ pub const Filters = struct {
         return result;
     }
 
-    /// Replaces all occurrences of 'from' with 'to'
+
     pub fn replace(value: []const u8, from: []const u8, to: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         if (from.len == 0) return try allocator.dupe(u8, value);
 
-        // Count occurrences
+
         var count: usize = 0;
         var i: usize = 0;
         while (i < value.len) {
@@ -91,7 +91,7 @@ pub const Filters = struct {
 
         if (count == 0) return try allocator.dupe(u8, value);
 
-        // Calculate new length
+
         const new_len = value.len - (count * from.len) + (count * to.len);
         const result = try allocator.alloc(u8, new_len);
 
@@ -112,14 +112,14 @@ pub const Filters = struct {
         return result;
     }
 
-    /// Converts value to JSON string (escapes special characters)
+
     pub fn json(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
-        var escaped_len: usize = 2; // for quotes
+        var escaped_len: usize = 2;
         for (value) |c| {
             escaped_len += switch (c) {
                 '"', '\\', '/' => 2,
                 '\n', '\r', '\t' => 2,
-                else => if (c < 32) 6 else 1, // \uXXXX for control chars
+                else => if (c < 32) 6 else 1,
             };
         }
 
@@ -168,7 +168,7 @@ pub const Filters = struct {
         return result;
     }
 
-    /// Converts newlines to <br> tags
+
     pub fn nl2br(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         var count: usize = 0;
         for (value) |c| {
@@ -177,7 +177,7 @@ pub const Filters = struct {
 
         if (count == 0) return try allocator.dupe(u8, value);
 
-        const result = try allocator.alloc(u8, value.len + count * 3); // <br> is 4 chars, \n is 1, net +3
+        const result = try allocator.alloc(u8, value.len + count * 3);
         var src_idx: usize = 0;
         var dst_idx: usize = 0;
         while (src_idx < value.len) {
@@ -194,7 +194,7 @@ pub const Filters = struct {
         return result[0..dst_idx];
     }
 
-    /// Escapes JavaScript special characters
+
     pub fn escapeJs(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         var escaped_len: usize = 0;
         for (value) |c| {
@@ -244,7 +244,7 @@ pub const Filters = struct {
         return result;
     }
 
-    /// Percent-encodes unsafe URL characters
+
     pub fn escapeUrl(value: []const u8, allocator: std.mem.Allocator) ![]const u8 {
         var escaped_len: usize = 0;
         for (value) |c| {

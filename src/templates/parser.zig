@@ -11,7 +11,7 @@ pub const Parser = struct {
         OutOfMemory,
     };
 
-    /// Free all memory allocated by an AST
+
     pub fn freeAST(self: *Parser, template_ast: ast.TemplateAST) void {
         self.freeNodes(template_ast.nodes);
         self.allocator.free(template_ast.nodes);
@@ -28,7 +28,7 @@ pub const Parser = struct {
                     self.allocator.free(v.filters);
                 },
                 .if_block => |ib| {
-                    // Free condition
+
                     switch (ib.condition) {
                         .simple => |v| {
                             self.allocator.free(v.path);
@@ -52,10 +52,10 @@ pub const Parser = struct {
                             self.allocator.free(c.left.filters);
                         },
                     }
-                    // Free true block
+
                     self.freeNodes(ib.true_block.nodes);
                     self.allocator.free(ib.true_block.nodes);
-                    // Free false block if present
+
                     if (ib.false_block) |fb| {
                         self.freeNodes(fb.nodes);
                         self.allocator.free(fb.nodes);
@@ -79,21 +79,21 @@ pub const Parser = struct {
         }
     }
 
-    /// Parse a template at runtime. The template can be a comptime string
-    /// (embedded via @embedFile) or a runtime string.
+
+
     pub fn parse(self: *Parser, template: []const u8) ParseError!ast.TemplateAST {
         var nodes = std.ArrayListUnmanaged(ast.TemplateAST.Node){};
         errdefer nodes.deinit(self.allocator);
 
         var pos: usize = 0;
         while (pos < template.len) {
-            // Find next token
+
             const remaining = template[pos..];
             const var_pos = std.mem.indexOf(u8, remaining, "{{");
             const block_pos = std.mem.indexOf(u8, remaining, "{%");
             const comment_pos = std.mem.indexOf(u8, remaining, "{#");
 
-            // Find earliest token
+
             var next_pos: ?usize = null;
             var token_kind: enum { variable, block, comment } = .variable;
 
@@ -115,7 +115,7 @@ pub const Parser = struct {
             }
 
             if (next_pos) |np| {
-                // Add text before token
+
                 if (np > 0) {
                     try nodes.append(self.allocator, .{ .text = remaining[0..np] });
                 }
@@ -144,7 +144,7 @@ pub const Parser = struct {
                         const trimmed = std.mem.trim(u8, content, " \t\n");
                         const after_block = token_start + 2 + end + 2;
 
-                        // Check for control blocks
+
                         if (std.mem.startsWith(u8, trimmed, "if ") or std.mem.eql(u8, trimmed, "if")) {
                             const if_result = try self.parseIfBlock(template, after_block, trimmed);
                             try nodes.append(self.allocator, .{ .if_block = if_result.block });
@@ -171,10 +171,10 @@ pub const Parser = struct {
                             std.mem.startsWith(u8, trimmed, "else") or
                             std.mem.startsWith(u8, trimmed, "elif"))
                         {
-                            // End tag - stop parsing
+
                             break;
                         } else {
-                            // Unknown block, skip it
+
                             pos = after_block;
                         }
                     },
@@ -187,7 +187,7 @@ pub const Parser = struct {
                     },
                 }
             } else {
-                // No more tokens - add remaining text
+
                 if (remaining.len > 0) {
                     try nodes.append(self.allocator, .{ .text = remaining });
                 }
@@ -221,7 +221,7 @@ pub const Parser = struct {
         var result = std.ArrayListUnmanaged([]const u8){};
         if (path_str.len == 0) return result;
 
-        // Handle parent context
+
         if (std.mem.startsWith(u8, path_str, "../")) {
             try result.append(self.allocator, "..");
             var rest = try self.parsePath(path_str[3..]);
@@ -234,11 +234,11 @@ pub const Parser = struct {
             return result;
         }
 
-        // Skip leading dot
+
         var str = path_str;
         if (str.len > 0 and str[0] == '.') str = str[1..];
 
-        // Split by dots
+
         var iter = std.mem.splitScalar(u8, str, '.');
         while (iter.next()) |segment| {
             if (segment.len > 0) {
@@ -282,14 +282,14 @@ pub const Parser = struct {
         const condition_str = std.mem.trim(u8, block_content[2..], " \t\n");
         const condition = try self.parseCondition(condition_str);
 
-        // Parse until endif/else
+
         var true_parser = Parser{ .allocator = self.allocator };
         const true_result = try true_parser.parseUntilEnd(template, content_start);
 
         var false_block: ?ast.TemplateAST = null;
         var final_end_pos = true_result.end_pos;
 
-        // Check for else
+
         if (true_result.end_pos < template.len) {
             const after = template[true_result.end_pos..];
             if (std.mem.startsWith(u8, after, "{% else")) {
@@ -410,7 +410,7 @@ pub const Parser = struct {
                     const content = template[token_start + 2 .. token_start + 2 + end];
                     const trimmed = std.mem.trim(u8, content, " \t\n");
 
-                    // Check for end tags
+
                     if (std.mem.startsWith(u8, trimmed, "endif") or
                         std.mem.startsWith(u8, trimmed, "endfor") or
                         std.mem.startsWith(u8, trimmed, "endblock") or
@@ -465,7 +465,7 @@ pub const Parser = struct {
         _ = self;
         const after = template[start..];
 
-        // Find {% endX %}
+
         var needle: [32]u8 = undefined;
         const search_str = std.fmt.bufPrint(&needle, "{s} {s}", .{ "{%", tag }) catch return template.len;
 
@@ -481,13 +481,13 @@ pub const Parser = struct {
     fn parseCondition(self: *Parser, input: []const u8) ParseError!ast.TemplateAST.Condition {
         const trimmed = std.mem.trim(u8, input, " \t\n");
 
-        // Check for negation
+
         if (std.mem.startsWith(u8, trimmed, "not ")) {
             const inner = std.mem.trim(u8, trimmed[4..], " \t\n");
             return .{ .negated = .{ .inner = try self.parseVariable(inner) } };
         }
 
-        // Check for comparison operators
+
         const operators = [_]struct { op: []const u8, val: ast.TemplateAST.ComparisonOp }{
             .{ .op = "==", .val = .eq },
             .{ .op = "!=", .val = .ne },
@@ -511,7 +511,7 @@ pub const Parser = struct {
             }
         }
 
-        // Simple variable condition
+
         return .{ .simple = try self.parseVariable(trimmed) };
     }
 
@@ -519,16 +519,16 @@ pub const Parser = struct {
         _ = self;
         const trimmed = std.mem.trim(u8, input, " \t\n");
 
-        // String literal
+
         if (trimmed.len >= 2 and (trimmed[0] == '"' or trimmed[0] == '\'')) {
             return .{ .literal_string = trimmed[1 .. trimmed.len - 1] };
         }
 
-        // Boolean
+
         if (std.mem.eql(u8, trimmed, "true")) return .{ .literal_bool = true };
         if (std.mem.eql(u8, trimmed, "false")) return .{ .literal_bool = false };
 
-        // Integer
+
         if (std.fmt.parseInt(i64, trimmed, 10)) |val| {
             return .{ .literal_int = val };
         } else |_| {}
@@ -561,7 +561,7 @@ pub const Parser = struct {
     }
 };
 
-// Tests
+
 test "parse empty template" {
     var parser = Parser{ .allocator = std.testing.allocator };
     const result = try parser.parse("");

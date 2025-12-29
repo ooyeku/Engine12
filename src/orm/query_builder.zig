@@ -2,6 +2,8 @@ const std = @import("std");
 const driver_mod = @import("driver.zig");
 const Driver = driver_mod.Driver;
 
+/// A flexible SQL query builder that supports filtering, joining, ordering, and limiting.
+/// Works with both SQLite and PostgreSQL syntax.
 pub const QueryBuilder = struct {
     allocator: std.mem.Allocator,
     table_name: []const u8,
@@ -28,6 +30,7 @@ pub const QueryBuilder = struct {
         on: []const u8,
     };
 
+    /// Initializes a new QueryBuilder for the specified table.
     pub fn init(allocator: std.mem.Allocator, table_name: []const u8) QueryBuilder {
         return QueryBuilder{
             .allocator = allocator,
@@ -40,6 +43,7 @@ pub const QueryBuilder = struct {
         };
     }
 
+    /// Initializes a new QueryBuilder with a specific database driver.
     pub fn initWithDriver(allocator: std.mem.Allocator, table_name: []const u8, driver: Driver) QueryBuilder {
         return QueryBuilder{
             .allocator = allocator,
@@ -52,6 +56,7 @@ pub const QueryBuilder = struct {
         };
     }
 
+    /// Sets the target driver for SQL generation.
     pub fn forDriver(self: *QueryBuilder, driver: Driver) *QueryBuilder {
         self.driver = driver;
         return self;
@@ -70,6 +75,7 @@ pub const QueryBuilder = struct {
         return self;
     }
 
+    /// Adds a WHERE clause with literal comparison.
     pub fn where(self: *QueryBuilder, field: []const u8, operator: []const u8, value: []const u8) *QueryBuilder {
         self.where_clauses.append(self.allocator, .{
             .field = field,
@@ -103,6 +109,7 @@ pub const QueryBuilder = struct {
         return self.where(field, "<=", value);
     }
 
+    /// Adds a WHERE clause using a parameter placeholder.
     pub fn whereParam(self: *QueryBuilder, field: []const u8, operator: []const u8) *QueryBuilder {
         self.param_index += 1;
         self.where_clauses.append(self.allocator, .{
@@ -126,26 +133,31 @@ pub const QueryBuilder = struct {
         return self.whereParam(field, "<");
     }
 
+    /// Returns the number of parameters needed for the query.
     pub fn getParamCount(self: *const QueryBuilder) usize {
         return self.param_index;
     }
 
+    /// Sets the LIMIT clause.
     pub fn limit(self: *QueryBuilder, count: usize) *QueryBuilder {
         self.limit_val = count;
         return self;
     }
 
+    /// Sets the OFFSET clause.
     pub fn offset(self: *QueryBuilder, count: usize) *QueryBuilder {
         self.offset_val = count;
         return self;
     }
 
+    /// Sets the ORDER BY clause.
     pub fn orderBy(self: *QueryBuilder, field: []const u8, ascending: bool) *QueryBuilder {
         self.order_by_field = field;
         self.order_ascending = ascending;
         return self;
     }
 
+    /// Adds a JOIN clause.
     pub fn join(self: *QueryBuilder, join_type: []const u8, table: []const u8, on: []const u8) *QueryBuilder {
         self.join_clauses.append(self.allocator, .{
             .join_type = join_type,
@@ -155,6 +167,7 @@ pub const QueryBuilder = struct {
         return self;
     }
 
+    /// Constructs and returns the final SQL string.
     pub fn build(self: *QueryBuilder) ![]const u8 {
         var sql = std.ArrayListUnmanaged(u8){};
         errdefer sql.deinit(self.allocator);
@@ -460,7 +473,6 @@ test "QueryBuilder mixed literal and param" {
     try std.testing.expect(std.mem.indexOf(u8, sql, "id = ?") != null);
 }
 
-
 test "QueryBuilder init with empty table name" {
     const allocator = std.testing.allocator;
     var builder = QueryBuilder.init(allocator, "");
@@ -746,7 +758,7 @@ test "QueryBuilder PostgreSQL placeholder conversion" {
     try std.testing.expect(std.mem.indexOf(u8, sql, "$1") != null);
     try std.testing.expect(std.mem.indexOf(u8, sql, "$2") != null);
     try std.testing.expect(std.mem.indexOf(u8, sql, "$3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sql, "?") == null); // No SQLite placeholders
+    try std.testing.expect(std.mem.indexOf(u8, sql, "?") == null);
 }
 
 test "QueryBuilder PostgreSQL complex parameterized query" {
