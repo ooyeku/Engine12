@@ -1141,7 +1141,7 @@ pub const Engine12 = struct {
         return route_group.RouteGroup{
             .engine_ptr = @as(*anyopaque, @ptrCast(self)),
             .prefix = prefix,
-            .middleware = middleware_chain.MiddlewareChain{},
+            .middleware = middleware_chain.MiddlewareChain.init(),
             .register_get = get_wrapper,
             .register_post = post_wrapper,
             .register_put = put_wrapper,

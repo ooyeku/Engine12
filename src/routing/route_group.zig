@@ -94,7 +94,7 @@ test "RouteGroup usePreRequest adds middleware" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -116,7 +116,7 @@ test "RouteGroup useResponse adds middleware" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -137,7 +137,7 @@ test "RouteGroup group creates nested group" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -152,7 +152,7 @@ test "RouteGroup combinePrefix with empty prefix1" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -167,7 +167,7 @@ test "RouteGroup combinePrefix with empty prefix2" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -182,7 +182,7 @@ test "RouteGroup buildFullPath" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,
@@ -197,7 +197,7 @@ test "RouteGroup middleware inheritance" {
     var group = RouteGroup{
         .engine_ptr = undefined,
         .prefix = "/api",
-        .middleware = middleware_chain.MiddlewareChain{},
+        .middleware = middleware_chain.MiddlewareChain.init(),
         .register_get = undefined,
         .register_post = undefined,
         .register_put = undefined,

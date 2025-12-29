@@ -901,7 +901,7 @@ test "Request cache access methods" {
     var test_runtime_routes = @import("../valve/runtime_routes.zig").RuntimeRouteRegistry.init(std.testing.allocator);
     defer test_runtime_routes.deinit();
     var test_tracker = @import("../utils/shutdown.zig").ActiveRequestTracker.init();
-    const test_mw = @import("../middleware/middleware.zig").MiddlewareChain{};
+    const test_mw = @import("../middleware/middleware.zig").MiddlewareChain.init();
 
     var test_ctx = EngineContext{
         .middleware = &test_mw,
