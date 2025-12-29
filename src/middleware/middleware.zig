@@ -21,6 +21,15 @@ pub const MiddlewareChain = struct {
     response_middleware: [MAX_MIDDLEWARE]?ResponseMiddlewareFn = [_]?ResponseMiddlewareFn{null} ** MAX_MIDDLEWARE,
     response_count: usize = 0,
 
+    pub fn init() MiddlewareChain {
+        return .{
+            .pre_request_middleware = [_]?PreRequestMiddlewareFn{null} ** MAX_MIDDLEWARE,
+            .pre_request_count = 0,
+            .response_middleware = [_]?ResponseMiddlewareFn{null} ** MAX_MIDDLEWARE,
+            .response_count = 0,
+        };
+    }
+
     pub fn executePreRequest(self: *const MiddlewareChain, req: *Request) ?Response {
         for (self.pre_request_middleware[0..self.pre_request_count]) |maybe_middleware| {
             if (maybe_middleware) |middleware| {
@@ -156,7 +165,7 @@ fn createTestZigguratRequest(path: []const u8, method: @import("ziggurat").reque
 }
 
 test "MiddlewareChain add and execute pre-request" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const middleware1 = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -186,7 +195,7 @@ test "MiddlewareChain add and execute pre-request" {
 }
 
 test "MiddlewareChain short-circuit on abort" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const abortMw = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -216,7 +225,7 @@ test "MiddlewareChain short-circuit on abort" {
 }
 
 test "MiddlewareChain execute multiple middleware in order" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -255,7 +264,7 @@ test "MiddlewareChain execute multiple middleware in order" {
 }
 
 test "MiddlewareChain execute response middleware" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(resp: Response) Response {
@@ -274,7 +283,7 @@ test "MiddlewareChain execute response middleware" {
 }
 
 test "MiddlewareChain addPreRequest fails when max exceeded" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -292,7 +301,7 @@ test "MiddlewareChain addPreRequest fails when max exceeded" {
 }
 
 test "MiddlewareChain addResponse fails when max exceeded" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(resp: Response) Response {
@@ -309,7 +318,7 @@ test "MiddlewareChain addResponse fails when max exceeded" {
 }
 
 test "MiddlewareChain clear removes all middleware" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -334,7 +343,7 @@ test "MiddlewareChain clear removes all middleware" {
 }
 
 test "MiddlewareChain execute multiple pre-request middleware in order" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -384,7 +393,7 @@ test "MiddlewareChain execute multiple pre-request middleware in order" {
 }
 
 test "MiddlewareChain executePreRequest stops on first abort" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw1 = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -423,7 +432,7 @@ test "MiddlewareChain executePreRequest stops on first abort" {
 }
 
 test "MiddlewareChain executeResponse transforms through all middleware" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw1 = struct {
         fn mw(resp: Response) Response {
@@ -449,7 +458,7 @@ test "MiddlewareChain executeResponse transforms through all middleware" {
 }
 
 test "MiddlewareChain executePreRequest with rate limit context" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -479,7 +488,7 @@ test "MiddlewareChain executePreRequest with rate limit context" {
 }
 
 test "MiddlewareChain executePreRequest with body size exceeded context" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -510,7 +519,7 @@ test "MiddlewareChain executePreRequest with body size exceeded context" {
 }
 
 test "MiddlewareChain executePreRequest with CSRF error context" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const mw = struct {
         fn mw(req: *Request) MiddlewareResult {
@@ -540,7 +549,7 @@ test "MiddlewareChain executePreRequest with CSRF error context" {
 }
 
 test "MiddlewareChain executeResponse with cache hit" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
@@ -565,7 +574,7 @@ test "MiddlewareChain executeResponse with cache hit" {
 }
 
 test "MiddlewareChain empty chain executes successfully" {
-    var chain = MiddlewareChain{};
+    var chain = MiddlewareChain.init();
 
     const ziggurat = @import("ziggurat");
     const headers = std.StringHashMap([]const u8).init(std.testing.allocator);
