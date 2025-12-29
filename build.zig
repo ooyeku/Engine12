@@ -128,7 +128,7 @@ pub fn build(b: *std.Build) void {
     const todo_exe = b.addExecutable(.{
         .name = "todo",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("todo/src/main.zig"),
+            .root_source_file = b.path("examples/todo/src/main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,

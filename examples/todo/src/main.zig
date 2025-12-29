@@ -301,13 +301,13 @@ pub fn createApp() !*E12.Engine12 {
     };
 
     // Load HTMX template
-    const template_registry_result = app.discoverTemplates("todo/src/templates");
+    const template_registry_result = app.discoverTemplates("examples/todo/src/templates");
     if (template_registry_result) |template_registry| {
         database.setGlobalTemplateRegistry(template_registry);
         std.debug.print("[Todo] Template registry set with {} templates\n", .{template_registry.count()});
     } else |err| {
         std.debug.print("[Todo] Warning: Template discovery failed: {}\n", .{err});
-        const htmx_template_path = "todo/src/templates/htmx-index.zt.html";
+        const htmx_template_path = "examples/todo/src/templates/htmx-index.zt.html";
         _ = app.loadTemplate(htmx_template_path) catch |load_err| {
             std.debug.print("[Todo] Error: Failed to load HTMX template: {}\n", .{load_err});
         };
@@ -342,6 +342,9 @@ pub fn createApp() !*E12.Engine12 {
 
     // HTMX analytics page
     try app.get("/htmx/analytics", handlers.htmx.handleAnalyticsPage);
+
+    // HTMX utility handlers
+    try app.get("/htmx/dismiss-toast", handlers.htmx.handleDismissToast);
 
     // Enable OpenAPI documentation
     try app.enableOpenApiDocs("/docs", .{
@@ -415,9 +418,9 @@ pub fn createApp() !*E12.Engine12 {
     try app.get("/metrics", handlers.metrics.handleMetrics);
 
     // Serve static CSS files
-    app.discoverStaticFiles("todo/static") catch |err| {
+    app.discoverStaticFiles("examples/todo/static") catch |err| {
         std.debug.print("[Todo] Warning: Static file discovery failed: {}\n", .{err});
-        try app.serveStatic("/css", "todo/static/css");
+        try app.serveStatic("/css", "examples/todo/static/css");
     };
 
     // API routes

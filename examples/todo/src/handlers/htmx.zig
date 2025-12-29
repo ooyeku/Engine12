@@ -1633,3 +1633,17 @@ pub fn handleRestoreTodo(req: *Request) Response {
         .trigger("todoCreated")
         .build();
 }
+
+// ============================================================================
+// Toast Dismiss Handler
+// ============================================================================
+
+/// Handle dismissing toast notifications
+/// Returns an empty toast container to effectively hide the toast
+pub fn handleDismissToast(request: *Request) Response {
+    _ = request;
+    const empty_toast = htmx.toastDismiss(allocator) catch {
+        return Response.fragment("<div id=\"toast\"></div>");
+    };
+    return Response.fragment(empty_toast);
+}

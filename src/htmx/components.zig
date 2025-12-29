@@ -46,7 +46,9 @@ pub fn toastWithDuration(allocator: std.mem.Allocator, message: []const u8, toas
 
 /// Generate an empty toast placeholder (for dismissing)
 pub fn toastDismiss(allocator: std.mem.Allocator) ![]const u8 {
-    return std.fmt.allocPrint(allocator, "<div id=\"toast\" hx-swap-oob=\"true\"></div>", .{});
+    _ = allocator;
+    // Return just an empty div - the outerHTML swap will replace the toast entirely
+    return "<div id=\"toast\"></div>";
 }
 
 /// Return a toast response

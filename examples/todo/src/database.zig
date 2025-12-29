@@ -206,7 +206,7 @@ fn runMigrations() !void {
         },
         .sqlite => {
             // Use migration auto-discovery for SQLite
-            var registry = migration_discovery.discoverMigrations(allocator, "todo/src/migrations") catch |err| {
+            var registry = migration_discovery.discoverMigrations(allocator, "examples/todo/src/migrations") catch |err| {
                 std.debug.print("[Todo] Warning: Migration discovery failed: {}\n", .{err});
                 return;
             };
