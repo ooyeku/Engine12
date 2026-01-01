@@ -184,14 +184,6 @@ pub const Request = struct {
         return parsers.BodyParser.json(T, self.body(), self.arena.allocator());
     }
 
-    pub fn parseJson(self: *Request, comptime T: type) !T {
-        return self.jsonBody(T);
-    }
-
-    pub fn parseJsonOptional(self: *Request, comptime T: type) ?T {
-        return self.jsonBody(T) catch null;
-    }
-
     pub fn validateJson(self: *Request, comptime T: type, schema: *@import("../data/validation.zig").ValidationSchema) (error{ValidationFailed} || @TypeOf(self.jsonBody(T)).Error)!T {
         const parsed = try self.jsonBody(T);
 

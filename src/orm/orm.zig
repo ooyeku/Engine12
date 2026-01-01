@@ -720,7 +720,9 @@ pub const ORM = struct {
         );
         defer self.allocator.free(sql);
 
-        self.db.executeParams(sql, &params) catch {};
+        // INSERT OR IGNORE will silently skip duplicate key violations
+        // but we should still propagate other errors (syntax, connection, etc.)
+        try self.db.executeParams(sql, &params);
     }
 
     pub fn find(self: *ORM, comptime T: type, id: i64) !?T {
@@ -1288,10 +1290,6 @@ pub const ORM = struct {
     pub fn getMigrationVersion(self: *ORM) !?u32 {
         var runner = MigrationRunner.init(&self.db, self.allocator);
         return try runner.getCurrentVersion();
-    }
-
-    pub fn migrate(self: *ORM, migrations: []const Migration) !void {
-        try self.runMigrations(migrations);
     }
 
     pub fn escapeLike(_: *ORM, pattern: []const u8, allocator: std.mem.Allocator) ![]const u8 {

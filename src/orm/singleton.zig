@@ -14,7 +14,7 @@ pub const DatabasePoolConfig = struct {
 };
 
 pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) !DatabaseConfig {
-    const driver_env = std.posix.getenv("E12_DB_DRIVER") orelse std.posix.getenv("DB_DRIVER");
+    const driver_env = std.posix.getenv("E12_DB_DRIVER");
     const driver: Driver = if (driver_env) |d| blk: {
         if (std.mem.eql(u8, d, "postgresql") or std.mem.eql(u8, d, "postgres")) {
             break :blk .postgresql;
@@ -23,18 +23,18 @@ pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) 
     } else .sqlite;
 
     if (driver == .postgresql) {
-        const host = std.posix.getenv("E12_DB_HOST") orelse std.posix.getenv("PGHOST") orelse "127.0.0.1";
-        const port_str = std.posix.getenv("E12_DB_PORT") orelse std.posix.getenv("PGPORT");
+        const host = std.posix.getenv("E12_DB_HOST") orelse "127.0.0.1";
+        const port_str = std.posix.getenv("E12_DB_PORT");
         const port: u16 = if (port_str) |p| std.fmt.parseInt(u16, p, 10) catch 5432 else 5432;
-        const database = std.posix.getenv("E12_DB_NAME") orelse std.posix.getenv("PGDATABASE") orelse {
-            std.debug.print("[Database] Error: E12_DB_NAME (or PGDATABASE) environment variable is required for PostgreSQL\n", .{});
+        const database = std.posix.getenv("E12_DB_NAME") orelse {
+            std.debug.print("[Database] Error: E12_DB_NAME environment variable is required for PostgreSQL\n", .{});
             return error.MissingDatabaseConfig;
         };
-        const username = std.posix.getenv("E12_DB_USER") orelse std.posix.getenv("PGUSER") orelse {
-            std.debug.print("[Database] Error: E12_DB_USER (or PGUSER) environment variable is required for PostgreSQL\n", .{});
+        const username = std.posix.getenv("E12_DB_USER") orelse {
+            std.debug.print("[Database] Error: E12_DB_USER environment variable is required for PostgreSQL\n", .{});
             return error.MissingDatabaseConfig;
         };
-        const password = std.posix.getenv("E12_DB_PASSWORD") orelse std.posix.getenv("PGPASSWORD");
+        const password = std.posix.getenv("E12_DB_PASSWORD");
 
         return DatabaseConfig.postgresql(.{
             .host = host,
@@ -44,7 +44,7 @@ pub fn loadConfigFromEnv(_: std.mem.Allocator, default_sqlite_path: []const u8) 
             .password = password,
         });
     } else {
-        const sqlite_path = std.posix.getenv("E12_DB_PATH") orelse std.posix.getenv("SQLITE_PATH") orelse default_sqlite_path;
+        const sqlite_path = std.posix.getenv("E12_DB_PATH") orelse default_sqlite_path;
         return DatabaseConfig.sqlite(sqlite_path);
     }
 }
@@ -282,8 +282,8 @@ test "loadConfigFromEnv - SQLite default" {
 
 test "loadConfigFromEnv - SQLite from env" {
     const allocator = std.testing.allocator;
-    try std.posix.setenv("SQLITE_PATH", "custom.db", true);
-    defer std.posix.unsetenv("SQLITE_PATH");
+    try std.posix.setenv("E12_DB_PATH", "custom.db", true);
+    defer std.posix.unsetenv("E12_DB_PATH");
 
     const config = try loadConfigFromEnv(allocator, "default.db");
     try std.testing.expectEqual(Driver.sqlite, config.driver);

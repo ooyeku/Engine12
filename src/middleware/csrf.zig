@@ -42,8 +42,27 @@ pub const CSRFProtection = struct {
     }
 
     pub fn validateToken(self: *CSRFProtection, token: []const u8) bool {
+        // Token must be at least 16 characters
+        if (token.len < 16) return false;
+
+        // Parse the token to extract hex hash value
+        // A valid token should be a hex-encoded CityHash64 (16 hex chars)
+        const expected_len = 16;
+        if (token.len != expected_len) return false;
+
+        // Verify it's a valid hex string
+        for (token) |c| {
+            const is_hex = (c >= '0' and c <= '9') or
+                (c >= 'a' and c <= 'f') or
+                (c >= 'A' and c <= 'F');
+            if (!is_hex) return false;
+        }
+
+        // Token format validation passed
+        // Note: For full security, tokens should be stored server-side and compared
+        // This implementation validates format; production should use session storage
         _ = self;
-        return token.len >= 16;
+        return true;
     }
 
     pub fn isProtectedMethod(self: *const CSRFProtection, method: []const u8) bool {
@@ -60,7 +79,7 @@ pub const CSRFProtection = struct {
     }
 };
 
-var csrf_protection_instances: [8]*CSRFProtection = undefined;
+var csrf_protection_instances: [16]*CSRFProtection = undefined;
 var csrf_protection_count: usize = 0;
 var csrf_protection_mutex: std.Thread.Mutex = .{};
 
@@ -123,7 +142,7 @@ pub fn createCSRFProtectionMiddleware(csrf: *CSRFProtection) middleware_chain.Pr
     };
 }
 
-var csrf_token_setter_instances: [8]*CSRFProtection = undefined;
+var csrf_token_setter_instances: [16]*CSRFProtection = undefined;
 var csrf_token_setter_count: usize = 0;
 var csrf_token_setter_mutex: std.Thread.Mutex = .{};
 
@@ -143,9 +162,8 @@ pub fn createCSRFTokenSetterMiddleware(csrf: *CSRFProtection) middleware_chain.R
                 defer csrf_ptr.allocator.free(token);
                 var modified_resp = resp;
                 modified_resp = modified_resp.withCookie(csrf_ptr.config.cookie_name, token, .{
-                    .http_only = false,
+                    .httpOnly = false,
                     .secure = true,
-                    .same_site = .lax,
                 });
                 return modified_resp;
             }
@@ -157,9 +175,8 @@ pub fn createCSRFTokenSetterMiddleware(csrf: *CSRFProtection) middleware_chain.R
                 defer csrf_ptr.allocator.free(token);
                 var modified_resp = resp;
                 modified_resp = modified_resp.withCookie(csrf_ptr.config.cookie_name, token, .{
-                    .http_only = false,
+                    .httpOnly = false,
                     .secure = true,
-                    .same_site = .lax,
                 });
                 return modified_resp;
             }
@@ -199,8 +216,12 @@ test "CSRFProtection validateToken" {
     });
     defer csrf.deinit();
 
-    try std.testing.expect(csrf.validateToken("valid_token_12345678"));
+    // Valid: exactly 16 hex characters
+    try std.testing.expect(csrf.validateToken("1234567890abcdef"));
+    // Invalid: too short
     try std.testing.expect(!csrf.validateToken("short"));
+    // Invalid: not hex
+    try std.testing.expect(!csrf.validateToken("not_a_hex_token!"));
 }
 
 test "CSRFProtection generateToken produces different tokens" {
@@ -240,13 +261,21 @@ test "CSRFProtection validateToken edge cases" {
     });
     defer csrf.deinit();
 
+    // Empty string
     try std.testing.expect(!csrf.validateToken(""));
 
+    // Valid: exactly 16 hex chars
     try std.testing.expect(csrf.validateToken("1234567890123456"));
+    try std.testing.expect(csrf.validateToken("abcdefABCDEF1234"));
 
+    // Invalid: 15 chars (too short)
     try std.testing.expect(!csrf.validateToken("123456789012345"));
 
-    try std.testing.expect(csrf.validateToken("x" ** 100));
+    // Invalid: 17 chars (too long)
+    try std.testing.expect(!csrf.validateToken("12345678901234567"));
+
+    // Invalid: non-hex characters
+    try std.testing.expect(!csrf.validateToken("ghijklmnopqrstuv"));
 }
 
 test "CSRFConfig default values" {

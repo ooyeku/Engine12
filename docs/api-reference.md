@@ -299,8 +299,6 @@ pub const RestApiConfig = struct {
     enable_filtering: bool = true,
     /// Enable sorting via ?sort=field:asc|desc (default: true)
     enable_sorting: bool = true,
-    /// Note: Hooks (before_create, after_create, etc.) are reserved for future use
-    /// Due to Zig type system limitations, hooks are not currently supported
 };
 ```
 
@@ -391,9 +389,6 @@ try app.restApi("/api/todos", Todo, .{
 - Cache keys include user ID (if authenticated), filters, sort, and pagination
 - Cache is automatically invalidated on create/update/delete operations
 - Cache hit/miss is indicated by `X-Cache` header
-
-**Hooks**:
-- Note: Hooks (before_create, after_create, etc.) are reserved for future use and not currently supported
 
 **OpenAPI Integration**:
 - When OpenAPI documentation is enabled, `restApi` automatically registers all CRUD endpoints with the OpenAPI generator
@@ -2043,13 +2038,11 @@ return try Response.fromFile("static/report.pdf", allocator);
 **Use case**: Useful for serving dynamically generated files or files not in static directories.
 
 #### `stream(content_type: []const u8, data: []const u8) Response`
-Create a response suitable for streaming. Currently a placeholder for future streaming support.
+Create a response with a custom content type. Useful for serving large data or non-standard content types.
 
 ```zig
 return Response.stream("text/plain", large_data);
 ```
-
-**Note**: True streaming requires underlying HTTP server support. Currently serves the full data at once.
 
 #### `download(filename: []const u8, data: []const u8) Response`
 Create a file download response. Sets appropriate headers for file download.
@@ -2176,11 +2169,9 @@ return Response.ok().withJson(data);
 #### `withHeader(name: []const u8, value: []const u8) Response`
 Add a custom header. For Content-Type headers, use `withContentType()` instead.
 
-> [!WARNING]
-> This method is currently a no-op due to limitations in the underlying HTTP server library. Custom headers are stored but not sent to the client. This will be addressed in a future release.
-
 ```zig
 return Response.json(data).withHeader("X-Custom-Header", "value");
+return Response.json(data).withHeader("X-Request-ID", request_id);
 ```
 
 #### `withContentType(content_type: []const u8) Response`
@@ -2213,10 +2204,7 @@ return Response.serveFile("style.css", contents);
 - Unknown → `application/octet-stream`
 
 #### `withCookie(name: []const u8, value: []const u8, options: CookieOptions) Response`
-Set a cookie.
-
-> [!WARNING]
-> This method is currently a no-op due to limitations in the underlying HTTP server library. Cookies are not sent to the client. This will be addressed in a future release.
+Set a cookie with the specified options.
 
 ```zig
 const options = CookieOptions{
@@ -2227,6 +2215,13 @@ const options = CookieOptions{
 return Response.ok().withCookie("session_id", "abc123", options);
 ```
 
+**CookieOptions fields:**
+- `maxAge: ?u64` - Cookie expiration in seconds
+- `domain: ?[]const u8` - Cookie domain
+- `path: ?[]const u8` - Cookie path
+- `secure: bool` - Only send over HTTPS
+- `httpOnly: bool` - Not accessible via JavaScript
+
 #### `redirect(location: []const u8) Response`
 Create a redirect response (302 Found by default).
 
@@ -2236,10 +2231,7 @@ return Response.redirect("/dashboard").withStatus(301); // Permanent redirect
 ```
 
 #### `noCache() Response`
-Set cache-control headers to prevent caching. Sets no-cache, no-store, must-revalidate, Pragma: no-cache, and Expires: 0.
-
-> [!WARNING]
-> This method is currently a no-op due to limitations in the underlying HTTP server library. Cache headers are not sent to the client. This will be addressed in a future release.
+Set cache-control headers to prevent caching. Sets Cache-Control: no-cache, no-store, must-revalidate, Pragma: no-cache, and Expires: 0.
 
 ```zig
 return Response.json(data).noCache();
@@ -2958,10 +2950,9 @@ pub const PostgresConfig = struct {
 
 ### Environment Variable Configuration
 
-Engine12 uses `E12_*` prefixed environment variables for configuration. Legacy PostgreSQL variables are also supported for backward compatibility.
+Engine12 uses `E12_*` prefixed environment variables for configuration.
 
 ```bash
-# Primary E12_* variables (recommended)
 export E12_DB_DRIVER=postgresql  # or sqlite (default)
 export E12_DB_HOST=localhost
 export E12_DB_PORT=5432
@@ -2969,15 +2960,6 @@ export E12_DB_NAME=myapp
 export E12_DB_USER=myuser
 export E12_DB_PASSWORD=mypassword
 export E12_DB_PATH=app.db  # SQLite path
-
-# Legacy variables (still supported, E12_* takes precedence)
-export DB_DRIVER=postgresql
-export PGHOST=localhost
-export PGPORT=5432
-export PGDATABASE=myapp
-export PGUSER=myuser
-export PGPASSWORD=mypassword
-export SQLITE_PATH=app.db
 ```
 
 **Using .env files:**
@@ -3032,14 +3014,6 @@ const items = try orm.findAll(Item);
 **Note**: Requires database to be initialized first with `initDatabase()` or `initDatabaseWithMigrations()`.
 
 ### Connection
-
-#### `open(path: []const u8, allocator: Allocator) !Database`
-Open a SQLite database connection. (Legacy API - use `openWithConfig` for multi-driver support)
-
-```zig
-var db = try Database.open("app.db", allocator);
-defer db.close();
-```
 
 #### `openWithConfig(config: DatabaseConfig, allocator: Allocator) !Database`
 Open a database connection with driver-specific configuration. **Recommended for new projects.**

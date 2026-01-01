@@ -484,14 +484,11 @@ pub fn getORM() !*ORM {
 
 **Running with PostgreSQL:**
 ```bash
-# Using E12_* environment variables (recommended)
+# Using E12_* environment variables
 E12_DB_DRIVER=postgresql E12_DB_USER=myuser E12_DB_NAME=myapp zig build run
 
 # Or with password
 E12_DB_DRIVER=postgresql E12_DB_USER=myuser E12_DB_PASSWORD=secret E12_DB_NAME=myapp zig build run
-
-# Legacy variables also supported (for backward compatibility)
-DB_DRIVER=postgresql PGUSER=myuser PGDATABASE=myapp zig build run
 ```
 
 #### Driver-Specific Migrations
