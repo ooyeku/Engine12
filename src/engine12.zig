@@ -85,7 +85,7 @@ fn handleSignal(sig: c_int) callconv(.c) void {
     shutdown_triggered = true;
 
     if (global_engine12_instance) |engine| {
-        engine.is_running = false;
+        engine.is_running.store(false, .monotonic);
         // Signal the connection queue to shutdown
         if (global_connection_queue) |queue| {
             queue.signalShutdown();
@@ -182,6 +182,11 @@ const ConnectionQueue = struct {
 };
 
 var global_connection_queue: ?*ConnectionQueue = null;
+
+// Thread handles for graceful shutdown (must join, not detach)
+var global_worker_threads: [128]?std.Thread = [_]?std.Thread{null} ** 128;
+var global_worker_thread_count: usize = 0;
+var global_accept_thread: ?std.Thread = null;
 
 var global_server_for_workers: ?*ziggurat.Server = null;
 
@@ -523,7 +528,7 @@ pub const Engine12 = struct {
     allocator: std.mem.Allocator,
     profile: types.ServerProfile,
     server_config: ServerConfig = .{},
-    is_running: bool = false,
+    is_running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     request_count: u64 = 0,
     start_time: i64 = 0,
 
@@ -782,7 +787,7 @@ pub const Engine12 = struct {
     }
 
     pub fn deinit(self: *Engine12) void {
-        self.is_running = false;
+        self.is_running.store(false, .monotonic);
 
         self.logger.deinit();
 
@@ -813,6 +818,11 @@ pub const Engine12 = struct {
         self.background_workers.deinit(self.allocator);
         self.health_checks.deinit(self.allocator);
         self.ws_routes.deinit(self.allocator);
+
+        if (self.ws_manager) |*manager| {
+            manager.deinit();
+            self.ws_manager = null;
+        }
 
         // Free engine context if allocated
         if (self.engine_context) |ctx| {
@@ -1771,7 +1781,7 @@ pub const Engine12 = struct {
         }
 
         self.start_time = std.time.milliTimestamp();
-        self.is_running = true;
+        self.is_running.store(true, .monotonic);
 
         try self.startHttpServer();
         try self.startBackgroundTasks();
@@ -1807,8 +1817,8 @@ pub const Engine12 = struct {
         self.printStatus();
         std.debug.print("Press Ctrl+C to stop the server...\n\n", .{});
 
-        while (self.is_running) {
-            std.Thread.sleep(100 * std.time.ns_per_ms);
+        while (self.is_running.load(.monotonic)) {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
         }
 
         // Graceful shutdown triggered by signal
@@ -1823,7 +1833,7 @@ pub const Engine12 = struct {
     pub fn stop(self: *Engine12) !void {
         std.debug.print("\n[System] Initiating graceful shutdown...\n", .{});
 
-        self.is_running = false;
+        self.is_running.store(false, .monotonic);
 
         // Clear global context
         global_context = null;
@@ -1838,19 +1848,29 @@ pub const Engine12 = struct {
             closeSocket(server.inner.listener);
         }
 
+        // Join the accept thread first (it will exit once listener is closed)
+        if (global_accept_thread) |thread| {
+            thread.join();
+            global_accept_thread = null;
+        }
+
+        if (global_worker_thread_count > 0) {
+            for (global_worker_threads[0..global_worker_thread_count]) |maybe_thread| {
+                if (maybe_thread) |thread| {
+                    thread.join();
+                }
+            }
+            global_worker_thread_count = 0;
+        }
+
         const timeout_ms = self.profile.graceful_shutdown_timeout_ms;
         const active_count = self.active_request_tracker.get();
         if (active_count > 0) {
-            std.debug.print("[System] Waiting for {d} active request(s) to complete (timeout: {d}ms)...\n", .{ active_count, timeout_ms });
-            const completed = self.active_request_tracker.waitForCompletion(timeout_ms);
-            if (!completed) {
-                std.debug.print("[System] Warning: Timeout waiting for requests. Proceeding with shutdown.\n", .{});
-            } else {
-                std.debug.print("[System] All requests completed.\n", .{});
+            if (active_count > 0) {
+                _ = self.active_request_tracker.waitForCompletion(timeout_ms);
             }
         }
 
-        std.debug.print("[System] Executing shutdown hooks...\n", .{});
         self.shutdown_hooks.execute();
 
         if (self.valve_registry) |*registry| {
@@ -1899,8 +1919,8 @@ pub const Engine12 = struct {
                     }
                 };
 
-                var thread = try std.Thread.spawn(.{}, ServerThread.run, .{ServerThread{ .server_ptr = server }});
-                thread.detach();
+                const thread = try std.Thread.spawn(.{}, ServerThread.run, .{ServerThread{ .server_ptr = server }});
+                global_accept_thread = thread;
                 return;
             }
 
@@ -1913,8 +1933,14 @@ pub const Engine12 = struct {
 
             var i: u16 = 0;
             while (i < num_workers) : (i += 1) {
-                var worker_thread = try std.Thread.spawn(.{}, workerThreadFn, .{});
-                worker_thread.detach();
+                const worker_thread = try std.Thread.spawn(.{}, workerThreadFn, .{});
+                if (i < 128) {
+                    global_worker_threads[i] = worker_thread;
+                    global_worker_thread_count = i + 1;
+                } else {
+                    // Fallback: detach if we exceed our storage capacity
+                    worker_thread.detach();
+                }
             }
 
             const AcceptThread = struct {
@@ -1942,8 +1968,8 @@ pub const Engine12 = struct {
                 }
             };
 
-            var accept_thread = try std.Thread.spawn(.{}, AcceptThread.run, .{});
-            accept_thread.detach();
+            const accept_thread = try std.Thread.spawn(.{}, AcceptThread.run, .{});
+            global_accept_thread = accept_thread;
             return;
         }
 
@@ -1951,9 +1977,7 @@ pub const Engine12 = struct {
     }
 
     fn stopHttpServer(self: *Engine12) !void {
-        if (self.http_server != null) {
-            std.debug.print("[HTTP] Server shutdown\n", .{});
-        }
+        if (self.http_server != null) {}
     }
 
     fn startBackgroundTasks(self: *Engine12) !void {
@@ -1975,7 +1999,6 @@ pub const Engine12 = struct {
 
     fn stopBackgroundTasks(self: *Engine12) void {
         if (self.supervisor) |*sup| {
-            std.debug.print("[Tasks] Stopping background tasks.\n", .{});
             // Just deinit without waiting for tasks to finish - they'll terminate when process exits
             sup.deinit();
             self.supervisor = null;
@@ -1992,7 +2015,6 @@ pub const Engine12 = struct {
     fn stopWebSocketManager(self: *Engine12) void {
         if (self.ws_manager) |*manager| {
             manager.stop();
-            std.debug.print("[WebSocket] Stopped all WebSocket servers\n", .{});
         }
     }
 
@@ -2027,7 +2049,6 @@ pub const Engine12 = struct {
     fn stopHotReloadManager(self: *Engine12) void {
         if (self.hot_reload_manager) |manager| {
             manager.stop();
-            std.debug.print("[HotReload] Stopped hot reload manager\n", .{});
         }
     }
 
@@ -2058,7 +2079,7 @@ pub const Engine12 = struct {
     pub fn printStatus(self: *Engine12) void {
         std.debug.print("\nServer ready\n", .{});
         std.debug.print("  Status: {s} | Health: {s} | Routes: {d} | Tasks: {d}\n", .{
-            if (self.is_running) "RUNNING" else "STOPPED",
+            if (self.is_running.load(.monotonic)) "RUNNING" else "STOPPED",
             @tagName(self.getSystemHealth()),
             self.routes_count,
             self.workers_count,
@@ -2110,7 +2131,7 @@ test "Engine12 initWithProfile" {
     var app = try Engine12.initWithProfile(profile);
     defer app.deinit();
     try std.testing.expectEqual(app.profile.environment, types.Environment.development);
-    try std.testing.expect(app.is_running == false);
+    try std.testing.expect(app.is_running.load(.monotonic) == false);
     try std.testing.expectEqual(app.routes_count, 0);
 }
 
@@ -2228,9 +2249,9 @@ test "Engine12 getRequestCount returns 0 initially" {
 
 test "Engine12 deinit sets is_running to false" {
     var app = try Engine12.initTesting();
-    app.is_running = true;
+    app.is_running.store(true, .monotonic);
     app.deinit();
-    try std.testing.expect(app.is_running == false);
+    try std.testing.expect(app.is_running.load(.monotonic) == false);
 }
 
 test "Engine12 usePreRequestMiddleware sets middleware" {

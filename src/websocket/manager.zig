@@ -26,6 +26,10 @@ pub const WebSocketManager = struct {
     connections: std.StringHashMap(*connection.WebSocketConnection),
     connections_mutex: std.Thread.Mutex = .{},
 
+    /// Active client threads
+    client_threads: std.ArrayListUnmanaged(std.Thread),
+    client_threads_mutex: std.Thread.Mutex = .{},
+
     /// Allocator
     allocator: std.mem.Allocator,
 
@@ -44,6 +48,7 @@ pub const WebSocketManager = struct {
         return WebSocketManager{
             .servers = .{},
             .connections = std.StringHashMap(*connection.WebSocketConnection).init(allocator),
+            .client_threads = .{},
             .allocator = allocator,
             .base_port = 9000,
             .next_port = 9000,
@@ -131,8 +136,14 @@ pub const WebSocketManager = struct {
         }
     }
 
-    /// Stop all WebSocket servers
+    /// Stop all WebSocket servers and join threads
     pub fn stop(self: *WebSocketManager) void {
+        if (!self.is_running.load(.monotonic)) {
+            // Even if flagged not running, threads might need joining if stop was interrupted or called concurrently?
+            // But usually we can assume is_running=false means stop initiated.
+            // Check if we need to do anything?
+            // Ideally stop is idempotent.
+        }
         self.is_running.store(false, .monotonic);
 
         // Stop all servers first
@@ -142,12 +153,31 @@ pub const WebSocketManager = struct {
             }
         }
 
-        // Wait for threads to finish (they will clean up thread_ctx via defer)
+        // Wait for server threads to finish
         for (self.servers.items) |*entry| {
             if (entry.thread) |thread| {
                 thread.join();
+                entry.thread = null; // Mark as joined
             }
         }
+
+        // Join client threads
+        var client_threads_list: []std.Thread = &.{};
+        {
+            self.client_threads_mutex.lock();
+            defer self.client_threads_mutex.unlock();
+            client_threads_list = self.client_threads.toOwnedSlice(self.allocator) catch &.{};
+        }
+
+        for (client_threads_list) |thread| {
+            thread.join();
+        }
+        self.allocator.free(client_threads_list);
+    }
+
+    /// Free all resources
+    pub fn deinit(self: *WebSocketManager) void {
+        self.stop();
 
         // Clean up server resources and app_data
         for (self.servers.items) |entry| {
@@ -172,6 +202,8 @@ pub const WebSocketManager = struct {
             self.allocator.destroy(entry.value_ptr.*);
         }
         self.connections.deinit();
+
+        self.client_threads.deinit(self.allocator);
     }
 
     /// Register a connection
@@ -271,12 +303,20 @@ fn runServerLoop(ws_server: *server.Server, app_data: *handler.AppData, manager:
             .config = ws_server.config,
         };
 
-        var thread = std.Thread.spawn(.{}, handleClientThread, .{client_ctx}) catch {
+        const thread = std.Thread.spawn(.{}, handleClientThread, .{client_ctx}) catch {
             manager.allocator.destroy(client_ctx);
             closeSocket(client_socket);
             continue;
         };
-        thread.detach();
+
+        {
+            manager.client_threads_mutex.lock();
+            defer manager.client_threads_mutex.unlock();
+            manager.client_threads.append(manager.allocator, thread) catch {
+                // Fallback if we can't track the thread
+                thread.detach();
+            };
+        }
     }
 }
 
@@ -503,14 +543,14 @@ test "WebSocketManager init and deinit" {
     const allocator = std.testing.allocator;
 
     var manager = try WebSocketManager.init(allocator);
-    manager.stop();
+    manager.deinit();
 }
 
 test "WebSocketManager register server" {
     const allocator = std.testing.allocator;
 
     var manager = try WebSocketManager.init(allocator);
-    defer manager.stop();
+    defer manager.deinit();
 
     const dummy_handler: handler.WebSocketHandler = struct {
         fn h(_: *connection.WebSocketConnection) void {}

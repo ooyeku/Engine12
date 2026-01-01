@@ -180,6 +180,8 @@ pub const ServiceRegistry = struct {
     allocator: std.mem.Allocator,
     health_check_thread: ?std.Thread = null,
     running: std.atomic.Value(bool),
+    loop_mutex: std.Thread.Mutex = .{},
+    loop_condition: std.Thread.Condition = .{},
 
     pub fn init(allocator: std.mem.Allocator) ServiceRegistry {
         return ServiceRegistry{
@@ -187,13 +189,22 @@ pub const ServiceRegistry = struct {
             .allocator = allocator,
             .health_check_thread = null,
             .running = std.atomic.Value(bool).init(false),
+            .loop_mutex = .{},
+            .loop_condition = .{},
         };
     }
 
-    pub fn deinit(self: *ServiceRegistry) void {
+    pub fn deinit(self: *ServiceRegistry, allocator: std.mem.Allocator) void {
+        _ = allocator;
         self.stopAll();
 
         self.running.store(false, .monotonic);
+
+        // Wake up the health check thread so it can exit immediately
+        self.loop_mutex.lock();
+        self.loop_condition.signal();
+        self.loop_mutex.unlock();
+
         if (self.health_check_thread) |thread| {
             thread.join();
         }
@@ -332,7 +343,11 @@ pub const ServiceRegistry = struct {
                 }
             }
 
-            std.time.sleep(min_interval * std.time.ns_per_ms);
+            self.loop_mutex.lock();
+            if (self.running.load(.monotonic)) {
+                self.loop_condition.timedWait(&self.loop_mutex, min_interval * std.time.ns_per_ms) catch {};
+            }
+            self.loop_mutex.unlock();
         }
     }
 };
@@ -368,7 +383,7 @@ test "ServiceRegistry basic operations" {
 
     var mock = MockService{};
     var registry = ServiceRegistry.init(allocator);
-    defer registry.deinit();
+    defer registry.deinit(allocator);
 
     try registry.register(Service.init(MockService, &mock), .{
         .name = "test-service",
@@ -408,7 +423,7 @@ test "ServiceRegistry restart policy" {
 
     var failing = FailingService{ .max_fails = 2 };
     var registry = ServiceRegistry.init(allocator);
-    defer registry.deinit();
+    defer registry.deinit(allocator);
 
     try registry.register(Service.init(FailingService, &failing), .{
         .name = "failing-service",
