@@ -34,6 +34,13 @@ Complete reference for Engine12's public APIs.
   - [Template Integration](#template-integration)
   - [Error Boundary Middleware](#error-boundary-middleware)
   - [Declarative Route Handlers](#declarative-route-handlers)
+- [CSS-in-Zig](#css-in-zig)
+  - [Stylesheet](#stylesheet)
+  - [Style Properties](#style-properties)
+  - [Color](#color)
+  - [Length](#length)
+  - [Keyframes](#keyframes)
+  - [Media Queries](#media-queries)
 - [Error Handling](#error-handling)
 
 ## Engine12 Core
@@ -5702,6 +5709,334 @@ try router.resource("/comments", .{
     // Other handlers remain null
 });
 ```
+
+## CSS-in-Zig
+
+Engine12 provides a type-safe CSS generation system that allows you to write CSS directly in Zig code with compile-time validation.
+
+### Stylesheet
+
+The main container for CSS rules, keyframes, and media queries.
+
+#### `Stylesheet.init(allocator) Stylesheet`
+Create a new stylesheet.
+
+```zig
+const css = E12.css;
+
+var sheet = css.Stylesheet.init(allocator);
+defer sheet.deinit();
+```
+
+#### `addRule(selector, style) !void`
+Add a CSS rule to the stylesheet.
+
+```zig
+try sheet.addRule("body", .{
+    .font_family = "Inter, sans-serif",
+    .background_color = css.Color.fromHex("#0f0f0f"),
+    .color = css.Color.fromHex("#e0e0e0"),
+    .margin = .{ .all = .zero },
+});
+
+try sheet.addRule(".btn", .{
+    .display = .inline_block,
+    .padding = .{ .vertical_horizontal = .{
+        .vertical = css.rem(0.75),
+        .horizontal = css.rem(1.5),
+    }},
+    .background_color = css.Color.fromHex("#4a9eff"),
+    .color = css.Color.white,
+    .border_radius = .{ .all = css.px(8) },
+    .cursor = .pointer,
+});
+```
+
+#### `addCustomProperty(name, value) !void`
+Add a CSS custom property (variable) to `:root`.
+
+```zig
+try sheet.addCustomProperty("primary-color", "#4a9eff");
+try sheet.addCustomProperty("text-color", "#e0e0e0");
+```
+
+Output: `:root { --primary-color: #4a9eff; --text-color: #e0e0e0; }`
+
+#### `addKeyframes(keyframes) !void`
+Add a keyframe animation.
+
+```zig
+try sheet.addKeyframes(.{
+    .name = "fadeIn",
+    .frames = &[_]css.Keyframes.Frame{
+        .{ .position = .from, .style = .{ .opacity = .{ .value = 0 } } },
+        .{ .position = .to, .style = .{ .opacity = .{ .value = 1 } } },
+    },
+});
+```
+
+#### `mediaRule(query) MediaRuleBuilder`
+Create a media rule builder for responsive styles.
+
+```zig
+var mobile = sheet.mediaRule(.{ .max_width = 640 });
+try mobile.addStyle("body", .{ .padding = .{ .all = css.rem(1) } });
+try mobile.addStyle(".sidebar", .{ .display = .none });
+try sheet.addMediaRuleFromBuilder(&mobile);
+```
+
+#### `toCss() ![]const u8`
+Generate the complete CSS string.
+
+```zig
+const css_output = try sheet.toCss();
+defer allocator.free(css_output);
+```
+
+#### `toMinifiedCss() ![]const u8`
+Generate minified CSS output.
+
+```zig
+const minified = try sheet.toMinifiedCss();
+defer allocator.free(minified);
+```
+
+### Style Properties
+
+The `Style` struct supports all common CSS properties. All fields are optional.
+
+**Layout Properties:**
+- `display`: `.none`, `.block`, `.inline`, `.flex`, `.grid`, etc.
+- `position`: `.static`, `.relative`, `.absolute`, `.fixed`, `.sticky`
+- `top`, `right`, `bottom`, `left`: Position offsets (Length)
+- `z_index`: Stack order
+
+**Box Model:**
+- `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height`
+- `margin`, `margin_top`, `margin_right`, `margin_bottom`, `margin_left`
+- `padding`, `padding_top`, `padding_right`, `padding_bottom`, `padding_left`
+- `box_sizing`: `.content_box`, `.border_box`
+
+**Flexbox:**
+- `flex_direction`: `.row`, `.column`, `.row_reverse`, `.column_reverse`
+- `flex_wrap`: `.nowrap`, `.wrap`, `.wrap_reverse`
+- `justify_content`: `.flex_start`, `.flex_end`, `.center`, `.space_between`, `.space_around`
+- `align_items`: `.flex_start`, `.flex_end`, `.center`, `.stretch`, `.baseline`
+- `gap`: Gap between flex/grid items
+
+**Typography:**
+- `font_family`: Font stack string
+- `font_size`: Font size (Length)
+- `font_weight`: `.bold`, `.normal`, `.{ .numeric = 600 }`
+- `line_height`: `.{ .number = 1.5 }`, `.{ .length = css.rem(1.5) }`
+- `text_align`: `.left`, `.center`, `.right`, `.justify`
+- `text_decoration`: `.none`, `.underline`, `.line_through`
+- `color`: Text color (Color)
+
+**Background & Border:**
+- `background_color`: Background color (Color)
+- `border`: Border shorthand
+- `border_radius`: Corner radius
+- `box_shadow`: Box shadow effect
+
+**Effects:**
+- `opacity`: Opacity value
+- `transform`: CSS transforms
+- `transition_property`, `transition_duration`: Transitions
+- `animation`: Animation string
+
+### Color
+
+#### `Color.fromHex(hex) Color`
+Create a color from a hex string (comptime).
+
+```zig
+const primary = css.Color.fromHex("#4a9eff");
+const with_alpha = css.Color.fromHex("#4a9eff80");
+```
+
+#### `Color.rgb(r, g, b) Color`
+Create an opaque RGB color.
+
+```zig
+const red = css.Color.rgb(255, 0, 0);
+```
+
+#### `Color.rgba(r, g, b, a) Color`
+Create an RGBA color with alpha.
+
+```zig
+const semi_transparent = css.Color.rgba(0, 0, 0, 0.5);
+```
+
+#### Named Colors
+```zig
+css.Color.white
+css.Color.black
+css.Color.transparent
+css.Color.red
+css.Color.green
+css.Color.blue
+```
+
+#### Color Manipulation
+```zig
+const lighter = color.lighten(0.2);   // 20% lighter
+const darker = color.darken(0.2);     // 20% darker
+const faded = color.withAlpha(0.5);   // 50% opacity
+```
+
+### Length
+
+Convenience functions for creating CSS lengths:
+
+```zig
+css.px(16)        // 16px
+css.rem(1.5)      // 1.5rem
+css.em(2)         // 2em
+css.percent(100)  // 100%
+```
+
+Direct construction:
+```zig
+const vh = css.Length{ .vh = 100 };
+const vw = css.Length{ .vw = 50 };
+const auto = css.Length.auto;
+const zero = css.Length.zero;
+```
+
+### Keyframes
+
+Define CSS keyframe animations:
+
+```zig
+const fadeIn = css.Keyframes{
+    .name = "fadeIn",
+    .frames = &[_]css.Keyframes.Frame{
+        .{
+            .position = .from,
+            .style = .{
+                .opacity = .{ .value = 0 },
+                .transform = .{ .translateY = .{ .px = 10 } },
+            },
+        },
+        .{
+            .position = .to,
+            .style = .{
+                .opacity = .{ .value = 1 },
+                .transform = .{ .translateY = .zero },
+            },
+        },
+    },
+};
+
+try sheet.addKeyframes(fadeIn);
+```
+
+Frame positions: `.from`, `.to`, `.{ .percent = 50 }`
+
+### Media Queries
+
+#### MediaRuleBuilder
+
+Build responsive styles with runtime allocation (recommended):
+
+```zig
+var mobile = sheet.mediaRule(.{ .max_width = 640 });
+
+try mobile.addStyle("body", .{
+    .padding = .{ .all = css.rem(1) },
+});
+
+try mobile.addStyle(".container", .{
+    .flex_direction = .column,
+});
+
+try sheet.addMediaRuleFromBuilder(&mobile);
+```
+
+#### Query Types
+
+```zig
+.{ .max_width = 640 }              // @media (max-width: 640px)
+.{ .min_width = 768 }              // @media (min-width: 768px)
+.{ .prefers_color_scheme = .dark } // @media (prefers-color-scheme: dark)
+.{ .prefers_reduced_motion = .reduce }
+.{ .hover = .hover }               // @media (hover: hover)
+.{ .pointer = .fine }              // @media (pointer: fine)
+.print                             // @media print
+```
+
+#### Breakpoint Helpers
+
+```zig
+css.Breakpoints.mobile()    // max-width: 639px
+css.Breakpoints.tablet()    // 640px to 1023px
+css.Breakpoints.desktop()   // min-width: 1024px
+css.Breakpoints.up(768)     // min-width: 768px
+css.Breakpoints.down(1024)  // max-width: 1023px
+css.Breakpoints.darkMode()  // prefers-color-scheme: dark
+```
+
+### Complete Example
+
+```zig
+const std = @import("std");
+const E12 = @import("engine12");
+const css = E12.css;
+
+// Design tokens
+const colors = struct {
+    pub const bg = css.Color.fromHex("#0f0f0f");
+    pub const text = css.Color.fromHex("#e0e0e0");
+    pub const accent = css.Color.fromHex("#4a9eff");
+};
+
+pub fn generateCss(allocator: std.mem.Allocator) ![]const u8 {
+    var sheet = css.Stylesheet.init(allocator);
+    defer sheet.deinit();
+
+    // CSS Variables
+    try sheet.addCustomProperty("accent", "#4a9eff");
+
+    // Keyframes
+    try sheet.addKeyframes(.{
+        .name = "fadeIn",
+        .frames = &[_]css.Keyframes.Frame{
+            .{ .position = .from, .style = .{ .opacity = .{ .value = 0 } } },
+            .{ .position = .to, .style = .{ .opacity = .{ .value = 1 } } },
+        },
+    });
+
+    // Global styles
+    try sheet.addRule("body", .{
+        .font_family = "Inter, sans-serif",
+        .background_color = colors.bg,
+        .color = colors.text,
+    });
+
+    // Button component
+    try sheet.addRule(".btn", .{
+        .display = .inline_block,
+        .padding = .{ .vertical_horizontal = .{
+            .vertical = css.rem(0.75),
+            .horizontal = css.rem(1.5),
+        }},
+        .background_color = colors.accent,
+        .border_radius = .{ .all = css.px(8) },
+        .cursor = .pointer,
+    });
+
+    // Responsive styles
+    var mobile = sheet.mediaRule(.{ .max_width = 640 });
+    try mobile.addStyle(".btn", .{ .width = .{ .percent = 100 } });
+    try sheet.addMediaRuleFromBuilder(&mobile);
+
+    return try sheet.toCss();
+}
+```
+
+For the complete CSS-in-Zig guide, see [CSS Documentation](css.md).
 
 ## Error Handling
 

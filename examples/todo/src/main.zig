@@ -37,6 +37,7 @@ const handlers = struct {
     const views = @import("handlers/views.zig");
     const metrics = @import("handlers/metrics.zig");
     const htmx = @import("handlers/htmx.zig");
+    const css = @import("handlers/css.zig");
 };
 
 const allocator = std.heap.page_allocator;
@@ -417,11 +418,9 @@ pub fn createApp() !*E12.Engine12 {
     // Metrics endpoint
     try app.get("/metrics", handlers.metrics.handleMetrics);
 
-    // Serve static CSS files
-    app.discoverStaticFiles("examples/todo/static") catch |err| {
-        std.debug.print("[Todo] Warning: Static file discovery failed: {}\n", .{err});
-        try app.serveStatic("/css", "examples/todo/static/css");
-    };
+    // Serve dynamically generated CSS using Engine12's CSS-in-Zig system
+    // This replaces static CSS files with type-safe, generated CSS
+    try app.get("/css/style.css", handlers.css.handleCss);
 
     // API routes
     // Note: Route groups require comptime evaluation, so we register routes directly

@@ -200,6 +200,7 @@ E12_SECRET_KEY=your-secret-key-here
 - **Background Tasks** - Periodic and one-time task scheduling
 - **Static File Serving** - Serve static assets
 - **OpenAPI/Swagger Documentation** - Automatic API documentation generation with Swagger UI
+- **CSS-in-Zig** - Type-safe CSS generation with design tokens, animations, and responsive styles
 
 
 - **Cross-Platform** - Fully compatible with Linux, macOS, and Windows.
@@ -216,18 +217,20 @@ zig build -Dtarget=x86_64-windows
 ## Documentation
 
 - [API Reference](docs/api-reference.md) - Complete API documentation
+- [CSS-in-Zig](docs/css.md) - Type-safe CSS generation guide
 - [Tutorial](docs/tutorial.md) - Step-by-step guide to building your first app
 - [Architecture Guide](docs/architecture.md) - System design and architecture
 - [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
 ## Example
 
-See the [todo app example](todo/src/app.zig) for a complete working application demonstrating:
+See the [todo app example](examples/todo/src/main.zig) for a complete working application demonstrating:
 
 - Database setup and migrations
 - CRUD operations with the ORM
 - Template rendering
 - Route handlers
+- CSS-in-Zig styling (see [styles.zig](examples/todo/src/styles.zig))
 - Frontend integration
 
 ## Requirements

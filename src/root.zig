@@ -36,6 +36,7 @@ pub const valve = @import("valve/valve.zig");
 pub const websocket = @import("websocket/module.zig");
 pub const hot_reload = @import("hot_reload/module.zig");
 pub const htmx = @import("htmx/module.zig");
+pub const css = @import("css/module.zig");
 pub const services = @import("services/services.zig");
 pub const Engine12 = engine12.Engine12;
 pub const ServerConfig = engine12.ServerConfig;
@@ -81,6 +82,14 @@ pub const HotReloadManager = hot_reload.HotReloadManager;
 pub const FileWatcher = hot_reload.FileWatcher;
 pub const HtmxConfig = htmx.HtmxConfig;
 pub const HtmxRequestInfo = htmx.HtmxRequestInfo;
+// CSS-in-Zig types
+pub const Style = css.Style;
+pub const Stylesheet = css.Stylesheet;
+pub const CssColor = css.Color;
+pub const CssLength = css.Length;
+pub const CssTheme = css.Theme;
+pub const Keyframes = css.Keyframes;
+pub const MediaQuery = css.MediaQuery;
 pub const LoggingMiddleware = logging_middleware.LoggingMiddleware;
 pub const LoggingConfig = logging_middleware.LoggingConfig;
 pub const rest_api = @import("routing/rest_api.zig");
@@ -124,4 +133,14 @@ comptime {
     _ = @import("websocket/server.zig");
     _ = @import("websocket/manager.zig");
     _ = @import("websocket/room.zig");
+
+    // CSS-in-Zig tests
+    _ = @import("css/module.zig");
+    _ = @import("css/values.zig");
+    _ = @import("css/properties.zig");
+    _ = @import("css/style.zig");
+    _ = @import("css/theme.zig");
+    _ = @import("css/responsive.zig");
+    _ = @import("css/animation.zig");
+    _ = @import("css/stylesheet.zig");
 }
