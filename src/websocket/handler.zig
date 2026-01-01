@@ -78,6 +78,7 @@ pub fn createEngine12Connection(
         .is_open = std.atomic.Value(bool).init(true),
         .context = std.StringHashMap([]const u8).init(allocator),
         .allocator = allocator,
+        .on_close = null,
         .cleaned_up = std.atomic.Value(bool).init(false),
     };
 

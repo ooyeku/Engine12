@@ -193,6 +193,9 @@ pub const WebSocketConnection = struct {
     /// Allocator for this connection
     allocator: std.mem.Allocator,
 
+    /// Callback for connection close
+    on_close: ?*const fn (*WebSocketConnection) void = null,
+
     /// Cleanup flag to prevent double cleanup
     cleaned_up: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -280,6 +283,11 @@ pub const WebSocketConnection = struct {
         const already_cleaned = self.cleaned_up.swap(true, .monotonic);
         if (already_cleaned) {
             return; // Already cleaned up
+        }
+
+        // Notify application of closure
+        if (self.on_close) |callback| {
+            callback(self);
         }
 
         // Clean up context
