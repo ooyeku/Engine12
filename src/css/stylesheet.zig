@@ -21,6 +21,7 @@ pub const Stylesheet = struct {
     imports: std.ArrayListUnmanaged([]const u8),
     font_faces: std.ArrayListUnmanaged(FontFace),
     custom_properties: std.ArrayListUnmanaged(CustomProperty),
+    raw_css: std.ArrayListUnmanaged([]const u8),
 
     pub const Rule = struct {
         selector: []const u8,
@@ -58,6 +59,7 @@ pub const Stylesheet = struct {
             .imports = std.ArrayListUnmanaged([]const u8){},
             .font_faces = std.ArrayListUnmanaged(FontFace){},
             .custom_properties = std.ArrayListUnmanaged(CustomProperty){},
+            .raw_css = std.ArrayListUnmanaged([]const u8){},
         };
     }
 
@@ -68,6 +70,7 @@ pub const Stylesheet = struct {
         self.imports.deinit(self.allocator);
         self.font_faces.deinit(self.allocator);
         self.custom_properties.deinit(self.allocator);
+        self.raw_css.deinit(self.allocator);
     }
 
     /// Add a rule to the stylesheet
@@ -155,6 +158,12 @@ pub const Stylesheet = struct {
         });
     }
 
+    /// Add raw CSS that will be appended to the output as-is.
+    /// Useful for CSS that can't be expressed via the Style struct (pseudo-elements, vendor prefixes, etc.)
+    pub fn addRaw(self: *Stylesheet, css: []const u8) !void {
+        try self.raw_css.append(self.allocator, css);
+    }
+
     /// Generate complete CSS output
     pub fn toCss(self: Stylesheet) ![]const u8 {
         var buf = std.ArrayListUnmanaged(u8){};
@@ -224,6 +233,12 @@ pub const Stylesheet = struct {
             const mr_css = try mr.toCss(self.allocator);
             defer self.allocator.free(mr_css);
             try writer.writeAll(mr_css);
+            try writer.writeAll("\n");
+        }
+
+        // Raw CSS (appended as-is)
+        for (self.raw_css.items) |raw| {
+            try writer.writeAll(raw);
             try writer.writeAll("\n");
         }
 

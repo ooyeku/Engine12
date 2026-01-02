@@ -1,1111 +1,326 @@
 <!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ .title | uppercase }} — Engine12</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet" />
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <style>
-        :root {
-            --black: #0a0a0a;
-            --black-light: #111111;
-            --black-lighter: #181818;
-            --black-surface: #1f1f1f;
-            --black-elevated: #262626;
-            --border: #2a2a2a;
-            --border-light: #333333;
-            --gold: #f7a41d;
-            --gold-light: #ffc857;
-            --gold-dim: rgba(247, 164, 29, 0.12);
-            --gold-glow: rgba(247, 164, 29, 0.25);
-            --white: #fafafa;
-            --gray-100: #e5e5e5;
-            --gray-200: #cccccc;
-            --gray-300: #a3a3a3;
-            --gray-400: #737373;
-            --gray-500: #525252;
-            --green: #22c55e;
-            --red: #ef4444;
-            --radius: 8px;
-            --radius-lg: 12px;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--black);
-            color: var(--white);
-            min-height: 100vh;
-            line-height: 1.5;
-            font-size: 14px;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-
-        /* Layout */
-        .app {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 48px 40px;
-        }
-
-        /* Header */
-        .header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            margin-bottom: 48px;
-            padding-bottom: 32px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .logo {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--black);
-            background: var(--gold);
-            padding: 8px 12px;
-            border-radius: 6px;
-            letter-spacing: -0.02em;
-        }
-
-        .title-group h1 {
-            font-size: 28px;
-            font-weight: 600;
-            letter-spacing: -0.03em;
-            color: var(--white);
-        }
-
-        .title-group p {
-            font-size: 14px;
-            color: var(--gray-400);
-            margin-top: 4px;
-        }
-
-        .header-stats {
-            display: flex;
-            gap: 40px;
-        }
-
-        .header-stat {
-            text-align: right;
-        }
-
-        .header-stat-value {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 32px;
-            font-weight: 600;
-            color: var(--white);
-            letter-spacing: -0.02em;
-        }
-
-        .header-stat-value.gold {
-            color: var(--gold);
-        }
-
-        .header-stat-label {
-            font-size: 11px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--gray-500);
-            margin-top: 4px;
-        }
-
-        /* Main Grid */
-        .main-grid {
-            display: grid;
-            grid-template-columns: 1fr 320px;
-            gap: 32px;
-        }
-
-        /* Cards */
-        .card {
-            background: var(--black-light);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 24px;
-        }
-
-        .card+.card {
-            margin-top: 24px;
-        }
-
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 20px;
-        }
-
-        .card-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--gray-500);
-        }
-
-        .card-badge {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 10px;
-            font-weight: 500;
-            padding: 4px 8px;
-            background: var(--gold-dim);
-            color: var(--gold);
-            border-radius: 4px;
-            letter-spacing: 0.02em;
-        }
-
-        /* Form */
-        .form-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 12px;
-        }
-
-        input,
-        select {
-            flex: 1;
-            padding: 12px 16px;
-            background: var(--black-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--white);
-            font-family: inherit;
-            font-size: 14px;
-            transition: border-color 0.15s, box-shadow 0.15s;
-        }
-
-        input:focus,
-        select:focus {
-            outline: none;
-            border-color: var(--gold);
-            box-shadow: 0 0 0 3px var(--gold-dim);
-        }
-
-        input::placeholder {
-            color: var(--gray-500);
-        }
-
-        select {
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23525252' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 14px center;
-            padding-right: 36px;
-        }
-
-        input[type="date"] {
-            color-scheme: dark;
-            min-width: 140px;
-            flex: 0 0 auto;
-        }
-
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: var(--radius);
-            font-family: inherit;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .btn-primary {
-            background: var(--gold);
-            color: var(--black);
-        }
-
-        .btn-primary:hover {
-            background: var(--gold-light);
-        }
-
-        .btn-secondary {
-            background: var(--black-surface);
-            color: var(--gray-300);
-            border: 1px solid var(--border);
-        }
-
-        .btn-secondary:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-            border-color: var(--border-light);
-        }
-
-        .btn-sm {
-            padding: 8px 14px;
-            font-size: 13px;
-        }
-
-        .btn-cancel {
-            background: var(--black-surface);
-            color: var(--gray-300);
-            border: 1px solid var(--border);
-        }
-
-        .btn-cancel:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-        }
-
-        .btn-save {
-            background: var(--gold);
-            color: var(--black);
-        }
-
-        .btn-save:hover {
-            background: var(--gold-light);
-        }
-
-        /* Search */
-        .search-wrapper {
-            margin-bottom: 16px;
-        }
-
-        .search-wrapper input {
-            width: 100%;
-        }
-
-        /* Task List */
-        .task-list {
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            max-height: 440px;
-            overflow-y: auto;
-            padding: 4px 0;
-        }
-
-        .task-list::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        .task-list::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .task-list::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 2px;
-        }
-
-        .task-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 14px;
-            padding: 16px 18px;
-            background: var(--black-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            transition: all 0.15s;
-        }
-
-        .task-item:hover {
-            background: var(--black-elevated);
-            border-color: var(--border);
-        }
-
-        .task-item.priority-high {
-            border-left: 3px solid var(--red);
-        }
-
-        .task-item.priority-medium {
-            border-left: 3px solid var(--gold);
-        }
-
-        .task-item.priority-low {
-            border-left: 3px solid var(--green);
-        }
-
-        .task-item.completed {
-            opacity: 0.5;
-        }
-
-        .task-item.completed .task-title {
-            text-decoration: line-through;
-        }
-
-        .task-checkbox {
-            appearance: none;
-            -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
-            min-width: 18px;
-            max-width: 18px;
-            min-height: 18px;
-            max-height: 18px;
-            flex: 0 0 18px;
-            border: 1.5px solid var(--border-light);
-            border-radius: 4px;
-            cursor: pointer;
-            margin-top: 2px;
-            transition: all 0.15s;
-            position: relative;
-            background: transparent;
-        }
-
-        .task-checkbox:hover {
-            border-color: var(--gold);
-        }
-
-        .task-checkbox:checked {
-            background: var(--gold);
-            border-color: var(--gold);
-        }
-
-        .task-checkbox:checked::after {
-            content: "";
-            position: absolute;
-            left: 5px;
-            top: 2px;
-            width: 5px;
-            height: 9px;
-            border: solid var(--black);
-            border-width: 0 2px 2px 0;
-            transform: rotate(45deg);
-        }
-
-        .task-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .task-title {
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--white);
-            margin-bottom: 4px;
-        }
-
-        .task-desc {
-            font-size: 13px;
-            color: var(--gray-400);
-            margin-bottom: 8px;
-        }
-
-        .task-meta {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .task-date {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 11px;
-            color: var(--gray-500);
-        }
-
-        .task-tag {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 11px;
-            padding: 2px 8px;
-            background: var(--black-lighter);
-            border-radius: 4px;
-            color: var(--gray-400);
-        }
-
-        .task-actions {
-            display: flex;
-            gap: 4px;
-            opacity: 0;
-            transition: opacity 0.15s;
-        }
-
-        .task-item:hover .task-actions {
-            opacity: 1;
-        }
-
-        .action-btn {
-            padding: 6px 10px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--gray-400);
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .action-btn:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-        }
-
-        .action-btn.delete:hover {
-            border-color: var(--red);
-            color: var(--red);
-        }
-
-        /* Sidebar */
-        .sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-
-        /* Progress Ring */
-        .progress-card {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 32px 24px;
-        }
-
-        .progress-ring {
-            position: relative;
-            width: 120px;
-            height: 120px;
-            margin-bottom: 16px;
-        }
-
-        .progress-ring svg {
-            transform: rotate(-90deg);
-        }
-
-        .progress-ring circle {
-            fill: transparent;
-            stroke-width: 6;
-        }
-
-        .progress-ring .bg {
-            stroke: var(--border);
-        }
-
-        .progress-ring .fg {
-            stroke: var(--gold);
-            stroke-linecap: round;
-            transition: stroke-dashoffset 0.5s;
-        }
-
-        .progress-ring-text {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .progress-ring-value {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 24px;
-            font-weight: 600;
-            color: var(--gold);
-        }
-
-        .progress-ring-label {
-            font-size: 10px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--gray-500);
-            margin-top: 2px;
-        }
-
-        /* Filter Section */
-        .filter-section {
-            margin-bottom: 20px;
-        }
-
-        .filter-section:last-child {
-            margin-bottom: 0;
-        }
-
-        .filter-label {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--gray-500);
-            margin-bottom: 10px;
-        }
-
-        .filter-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-        }
-
-        .filter-btn {
-            padding: 8px 14px;
-            background: var(--black-surface);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: var(--gray-400);
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .filter-btn:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-        }
-
-        .filter-btn.active {
-            background: var(--gold);
-            border-color: var(--gold);
-            color: var(--black);
-        }
-
-        .priority-dot {
-            display: inline-block;
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            margin-right: 6px;
-        }
-
-        .priority-dot.high {
-            background: var(--red);
-        }
-
-        .priority-dot.medium {
-            background: var(--gold);
-        }
-
-        .priority-dot.low {
-            background: var(--green);
-        }
-
-        /* Links */
-        .nav-links {
-            display: flex;
-            gap: 8px;
-        }
-
-        .nav-link {
-            flex: 1;
-            padding: 12px;
-            background: var(--black-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--gray-400);
-            text-decoration: none;
-            font-size: 13px;
-            font-weight: 500;
-            text-align: center;
-            transition: all 0.15s;
-        }
-
-        .nav-link:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-        }
-
-        /* Features */
-        .feature-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .feature-item {
-            padding: 14px 16px;
-            background: var(--black-surface);
-            border-radius: var(--radius);
-        }
-
-        .feature-title {
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--white);
-            margin-bottom: 2px;
-        }
-
-        .feature-desc {
-            font-size: 12px;
-            color: var(--gray-500);
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 48px 24px;
-            color: var(--gray-500);
-        }
-
-        .empty-state p {
-            font-size: 14px;
-        }
-
-        /* Loading */
-        .loading {
-            display: flex;
-            justify-content: center;
-            padding: 32px;
-        }
-
-        .spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--border);
-            border-top-color: var(--gold);
-            border-radius: 50%;
-            animation: spin 0.6s linear infinite;
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        /* Toast */
-        #toast {
-            position: fixed;
-            top: 24px;
-            right: 24px;
-            z-index: 1000;
-        }
-
-        .toast {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            background: var(--black-light);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 14px 16px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            animation: slideIn 0.2s ease-out;
-            margin-bottom: 8px;
-            font-size: 13px;
-            min-width: 280px;
-            max-width: 400px;
-        }
-
-        .toast-content {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .toast-icon {
-            flex-shrink: 0;
-            width: 18px;
-            height: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 12px;
-        }
-
-        .toast.success .toast-icon {
-            color: var(--green);
-        }
-
-        .toast.error .toast-icon {
-            color: var(--red);
-        }
-
-        .toast-message {
-            flex: 1;
-            color: var(--gray-100);
-        }
-
-        .toast-close {
-            flex-shrink: 0;
-            width: 24px;
-            height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            border: none;
-            color: var(--gray-500);
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 16px;
-            font-weight: 400;
-            line-height: 1;
-            transition: all 0.15s;
-            margin: -4px -4px -4px 0;
-        }
-
-        .toast-close:hover {
-            background: var(--black-elevated);
-            color: var(--white);
-        }
-
-        .toast.success {
-            border-left: 3px solid var(--green);
-        }
-
-        .toast.error {
-            border-left: 3px solid var(--red);
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(20px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
-
-        /* Count Badge */
-        .count-badge {
-            font-family: "JetBrains Mono", monospace;
-            font-size: 11px;
-            font-weight: 500;
-            background: var(--gold-dim);
-            color: var(--gold);
-            padding: 2px 8px;
-            border-radius: 4px;
-            margin-left: 8px;
-        }
-
-        /* Inline Edit Form */
-        .edit-form {
-            background: var(--black-light);
-            border: 1px solid var(--gold);
-            border-radius: var(--radius-lg);
-            padding: 24px;
-            margin: 4px 0;
-        }
-
-        .edit-form label {
-            display: block;
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--gray-500);
-            margin-bottom: 8px;
-        }
-
-        .edit-form .form-group {
-            margin-bottom: 16px;
-        }
-
-        .edit-form input,
-        .edit-form select,
-        .edit-form textarea {
-            width: 100%;
-            padding: 12px 14px;
-            background: var(--black-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--white);
-            font-family: inherit;
-            font-size: 14px;
-        }
-
-        .edit-form input:focus,
-        .edit-form select:focus,
-        .edit-form textarea:focus {
-            outline: none;
-            border-color: var(--gold);
-            box-shadow: 0 0 0 3px var(--gold-dim);
-        }
-
-        .edit-form input[type="date"] {
-            color-scheme: dark;
-        }
-
-        .edit-form textarea {
-            resize: vertical;
-            min-height: 80px;
-            line-height: 1.5;
-        }
-
-        .edit-form .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-
-        .edit-form .form-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-            padding-top: 16px;
-            border-top: 1px solid var(--border);
-        }
-
-        .edit-form .btn {
-            margin-top: 0;
-        }
-
-        /* HTMX */
-        .htmx-indicator {
-            opacity: 0;
-            transition: opacity 0.15s;
-        }
-
-        .htmx-request .htmx-indicator {
-            opacity: 1;
-        }
-
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .app {
-                padding: 32px 24px;
-            }
-
-            .main-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .sidebar {
-                order: -1;
-            }
-
-            .header {
-                flex-direction: column;
-                gap: 24px;
-            }
-
-            .header-stats {
-                justify-content: flex-start;
-            }
-
-            .header-stat {
-                text-align: left;
-            }
-        }
-
-        @media (max-width: 640px) {
-            .app {
-                padding: 24px 16px;
-            }
-
-            .form-row {
-                flex-direction: column;
-            }
-
-            .header-stats {
-                gap: 24px;
-            }
-        }
-    </style>
-</head>
-
-<body>
-    <div id="toast"></div>
-
-    <div class="app">
-        <!-- Header -->
-        <header class="header">
-            <div class="brand">
-                <span class="logo">E12</span>
-                <div class="title-group">
-                    <h1>{{ .title | uppercase }}</h1>
-                    <p>{{ .subtitle | truncate:60 }}</p>
-                </div>
-            </div>
-            <div class="header-stats" id="header-stats" hx-get="/htmx/todos/stats"
-                hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body, every 30s"
-                hx-swap="innerHTML">
-                <div class="header-stat">
-                    <div class="header-stat-value">0</div>
-                    <div class="header-stat-label">Total</div>
-                </div>
-                <div class="header-stat">
-                    <div class="header-stat-value gold">0</div>
-                    <div class="header-stat-label">Complete</div>
-                </div>
-            </div>
-        </header>
-
-        {# NEW: Demonstration of else blocks and filters #}
-        <div class="info-bar"
-            style="display: flex; gap: 16px; margin-bottom: 24px; padding: 12px 16px; background: var(--black-surface); border-radius: var(--radius); font-size: 12px; color: var(--gray-300);">
-            <span>App: {{ .app_name | uppercase }}</span>
-            <span>v{{ .version }}</span>
-            <span>User: {{ .user_name | trim | capitalize }}</span>
-            {% if .debug_mode %}
-            <span style="color: var(--gold);">🔧 Debug Mode</span>
-            {% else %}
-            <span style="color: var(--green);">✓ Production</span>
-            {% endif %}
-            {% if .notification %}
-            <span style="color: var(--red);">{{ .notification }}</span>
-            {% else %}
-            <span style="color: var(--gray-500);">No notifications</span>
-            {% endif %}
-        </div>
-
-        <!-- Main Grid -->
-        <div class="main-grid">
-            <!-- Left Column -->
-            <div class="main-column">
-                <!-- Add Task Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">New Task</span>
-                        <span class="card-badge">HTMX</span>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{{ .title | uppercase }} — Engine12</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+        <!-- CSS-in-Zig: All styles generated from src/styles.zig -->
+        <link rel="stylesheet" href="/css/style.css" />
+    </head>
+
+    <body>
+        <div id="toast"></div>
+
+        <div class="app">
+            <!-- Header -->
+            <header class="header">
+                <div class="brand">
+                    <span class="logo">E12</span>
+                    <div class="title-group">
+                        <h1>{{ .title | uppercase }}</h1>
+                        <p>{{ .subtitle | truncate:60 }}</p>
                     </div>
-                    <form class="form-grid" hx-post="/htmx/todos" hx-target="#task-list" hx-swap="afterbegin">
-                        <div class="form-row">
-                            <input type="text" name="title" placeholder="What needs to be done?" required
-                                autocomplete="off" />
-                            <button type="submit" class="btn btn-primary">Add Task</button>
+                </div>
+                <div
+                    class="header-stats"
+                    id="header-stats"
+                    hx-get="/htmx/todos/stats"
+                    hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body, every 30s"
+                    hx-swap="innerHTML"
+                >
+                    <div class="header-stat">
+                        <div class="header-stat-value">0</div>
+                        <div class="header-stat-label">Total</div>
+                    </div>
+                    <div class="header-stat">
+                        <div class="header-stat-value gold">0</div>
+                        <div class="header-stat-label">Complete</div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Info Bar -->
+            <div class="info-bar">
+                <span>App: {{ .app_name | uppercase }}</span>
+                <span>v{{ .version }}</span>
+                <span>User: {{ .user_name | trim | capitalize }}</span>
+                {% if .debug_mode %}
+                <span class="debug-mode">Debug Mode</span>
+                {% else %}
+                <span class="production-mode">Production</span>
+                {% endif %} {% if .notification %}
+                <span class="notification">{{ .notification }}</span>
+                {% else %}
+                <span class="no-notification">No notifications</span>
+                {% endif %}
+            </div>
+
+            <!-- Main Grid -->
+            <div class="main-grid">
+                <!-- Left Column -->
+                <div class="main-column">
+                    <!-- Add Task Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">New Task</span>
+                            <span class="card-badge">HTMX</span>
                         </div>
-                        <div class="form-row">
-                            <input type="text" name="description" placeholder="Description" />
-                            <select name="priority">
-                                <option value="low">Low</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="high">High</option>
-                            </select>
-                            <input type="date" name="due_date" />
-                            <input type="text" name="tags" placeholder="Tags" style="max-width: 120px;" />
+                        <form
+                            class="form-grid"
+                            hx-post="/htmx/todos"
+                            hx-target="#task-list"
+                            hx-swap="afterbegin"
+                        >
+                            <div class="form-row">
+                                <input
+                                    type="text"
+                                    name="title"
+                                    placeholder="What needs to be done?"
+                                    required
+                                    autocomplete="off"
+                                />
+                                <button type="submit" class="btn btn-primary">
+                                    Add Task
+                                </button>
+                            </div>
+                            <div class="form-row">
+                                <input
+                                    type="text"
+                                    name="description"
+                                    placeholder="Description"
+                                />
+                                <select name="priority">
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>
+                                        Medium
+                                    </option>
+                                    <option value="high">High</option>
+                                </select>
+                                <input type="date" name="due_date" />
+                                <input
+                                    type="text"
+                                    name="tags"
+                                    placeholder="Tags"
+                                />
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Tasks Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">All Tasks</span>
+                            <div class="card-actions">
+                                <form
+                                    hx-post="/htmx/todos/toggle-all"
+                                    hx-swap="none"
+                                >
+                                    <input
+                                        type="hidden"
+                                        name="completed"
+                                        value="true"
+                                    />
+                                    <button
+                                        type="submit"
+                                        class="btn btn-secondary btn-sm"
+                                    >
+                                        Complete All
+                                    </button>
+                                </form>
+                                <div class="clear-done-wrapper">
+                                    <button
+                                        class="btn btn-secondary btn-sm"
+                                        hx-post="/htmx/todos/clear-completed"
+                                        hx-target="#task-list"
+                                        hx-swap="innerHTML"
+                                        hx-confirm="Clear all completed tasks?"
+                                        hx-trigger="click"
+                                    >
+                                        Clear Done
+                                    </button>
+                                    <span
+                                        id="completed-count"
+                                        hx-get="/htmx/todos/completed-count"
+                                        hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
+                                        hx-swap="innerHTML"
+                                    ></span>
+                                </div>
+                            </div>
                         </div>
-                    </form>
+
+                        <div class="search-wrapper">
+                            <input
+                                type="search"
+                                name="q"
+                                placeholder="Search tasks..."
+                                hx-get="/htmx/todos/search"
+                                hx-trigger="input changed delay:300ms"
+                                hx-target="#task-list"
+                                hx-swap="innerHTML"
+                            />
+                        </div>
+
+                        <ul
+                            id="task-list"
+                            class="task-list"
+                            hx-get="/htmx/todos/all"
+                            hx-trigger="load"
+                            hx-swap="innerHTML"
+                        >
+                            <li class="loading">
+                                <div class="spinner"></div>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
 
-                <!-- Tasks Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">All Tasks</span>
-                        <div style="display: flex; gap: 8px;">
-                            <form hx-post="/htmx/todos/toggle-all" hx-swap="none" style="display: contents;">
-                                <input type="hidden" name="completed" value="true" />
-                                <button type="submit" class="btn btn-secondary btn-sm">Complete All</button>
-                            </form>
-                            <div style="display: flex; align-items: center;">
-                                <button class="btn btn-secondary btn-sm" hx-post="/htmx/todos/clear-completed"
-                                    hx-target="#task-list" hx-swap="innerHTML" hx-confirm="Clear all completed tasks?"
-                                    hx-trigger="click">Clear Done</button>
-                                <span id="completed-count" hx-get="/htmx/todos/completed-count"
-                                    hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
-                                    hx-swap="innerHTML"></span>
+                <!-- Sidebar -->
+                <aside class="sidebar">
+                    <!-- Progress Ring Card -->
+                    <div
+                        class="card progress-card"
+                        id="progress-card"
+                        hx-get="/htmx/todos/stats"
+                        hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
+                        hx-swap="innerHTML"
+                        hx-target="#progress-card"
+                    >
+                        <div class="progress-ring">
+                            <svg width="120" height="120">
+                                <circle class="bg" cx="60" cy="60" r="52" />
+                                <circle
+                                    class="fg"
+                                    cx="60"
+                                    cy="60"
+                                    r="52"
+                                    stroke-dasharray="327"
+                                    stroke-dashoffset="327"
+                                />
+                            </svg>
+                            <div class="progress-ring-text">
+                                <span class="progress-ring-value">0%</span>
+                                <span class="progress-ring-label"
+                                    >Complete</span
+                                >
                             </div>
                         </div>
                     </div>
 
-                    <div class="search-wrapper">
-                        <input type="search" name="q" placeholder="Search tasks..." hx-get="/htmx/todos/search"
-                            hx-trigger="input changed delay:300ms" hx-target="#task-list" hx-swap="innerHTML" />
+                    <!-- Filters Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Filters</span>
+                        </div>
+
+                        <div class="filter-section">
+                            <div class="filter-label">Status</div>
+                            <div class="filter-group">
+                                <button
+                                    class="filter-btn active"
+                                    hx-get="/htmx/todos/filter?priority=all"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    All
+                                </button>
+                                <button
+                                    class="filter-btn"
+                                    hx-get="/htmx/todos/active"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    Active
+                                </button>
+                                <button
+                                    class="filter-btn"
+                                    hx-get="/htmx/todos/completed"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="filter-section">
+                            <div class="filter-label">Priority</div>
+                            <div class="filter-group">
+                                <button
+                                    class="filter-btn"
+                                    hx-get="/htmx/todos/filter?priority=high"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    <span class="priority-dot high"></span>High
+                                </button>
+                                <button
+                                    class="filter-btn"
+                                    hx-get="/htmx/todos/filter?priority=medium"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    <span class="priority-dot medium"></span
+                                    >Medium
+                                </button>
+                                <button
+                                    class="filter-btn"
+                                    hx-get="/htmx/todos/filter?priority=low"
+                                    hx-target="#task-list"
+                                    hx-swap="innerHTML"
+                                >
+                                    <span class="priority-dot low"></span>Low
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="filter-section">
+                            <div class="nav-links">
+                                <a href="/htmx/analytics" class="nav-link"
+                                    >Analytics</a
+                                >
+                                <a href="/docs" class="nav-link" target="_blank"
+                                    >API Docs</a
+                                >
+                            </div>
+                        </div>
                     </div>
 
-                    <ul id="task-list" class="task-list" hx-get="/htmx/todos/all" hx-trigger="load" hx-swap="innerHTML">
-                        <li class="loading">
-                            <div class="spinner"></div>
-                        </li>
-                    </ul>
-                </div>
+                    <!-- Engine12 Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Engine12</span>
+                        </div>
+
+                        <div class="feature-list">
+                            <div class="feature-item">
+                                <div class="feature-title">Zero JavaScript</div>
+                                <div class="feature-desc">
+                                    Server-driven UI with HTMX
+                                </div>
+                            </div>
+                            <div class="feature-item">
+                                <div class="feature-title">Type-Safe</div>
+                                <div class="feature-desc">
+                                    Built with Zig for performance
+                                </div>
+                            </div>
+                            <div class="feature-item">
+                                <div class="feature-title">REST + HTMX</div>
+                                <div class="feature-desc">
+                                    One framework, any frontend
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
             </div>
-
-            <!-- Sidebar -->
-            <aside class="sidebar">
-                <!-- Progress Ring Card -->
-                <div class="card progress-card" id="progress-card" hx-get="/htmx/todos/stats"
-                    hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
-                    hx-swap="innerHTML" hx-target="#progress-card">
-                    <div class="progress-ring">
-                        <svg width="120" height="120">
-                            <circle class="bg" cx="60" cy="60" r="52" />
-                            <circle class="fg" cx="60" cy="60" r="52" stroke-dasharray="327" stroke-dashoffset="327" />
-                        </svg>
-                        <div class="progress-ring-text">
-                            <span class="progress-ring-value">0%</span>
-                            <span class="progress-ring-label">Complete</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Filters Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">Filters</span>
-                    </div>
-
-                    <div class="filter-section">
-                        <div class="filter-label">Status</div>
-                        <div class="filter-group">
-                            <button class="filter-btn active" hx-get="/htmx/todos/filter?priority=all"
-                                hx-target="#task-list" hx-swap="innerHTML">All</button>
-                            <button class="filter-btn" hx-get="/htmx/todos/active" hx-target="#task-list"
-                                hx-swap="innerHTML">Active</button>
-                            <button class="filter-btn" hx-get="/htmx/todos/completed" hx-target="#task-list"
-                                hx-swap="innerHTML">Done</button>
-                        </div>
-                    </div>
-
-                    <div class="filter-section">
-                        <div class="filter-label">Priority</div>
-                        <div class="filter-group">
-                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=high" hx-target="#task-list"
-                                hx-swap="innerHTML"><span class="priority-dot high"></span>High</button>
-                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=medium"
-                                hx-target="#task-list" hx-swap="innerHTML"><span
-                                    class="priority-dot medium"></span>Medium</button>
-                            <button class="filter-btn" hx-get="/htmx/todos/filter?priority=low" hx-target="#task-list"
-                                hx-swap="innerHTML"><span class="priority-dot low"></span>Low</button>
-                        </div>
-                    </div>
-
-                    <div class="filter-section">
-                        <div class="nav-links">
-                            <a href="/htmx/analytics" class="nav-link">Analytics</a>
-                            <a href="/docs" class="nav-link" target="_blank">API Docs</a>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Engine12 Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">Engine12</span>
-                    </div>
-
-                    <div class="feature-list">
-                        <div class="feature-item">
-                            <div class="feature-title">Zero JavaScript</div>
-                            <div class="feature-desc">Server-driven UI with HTMX</div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-title">Type-Safe</div>
-                            <div class="feature-desc">Built with Zig for performance</div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-title">REST + HTMX</div>
-                            <div class="feature-desc">One framework, any frontend</div>
-                        </div>
-                    </div>
-                </div>
-            </aside>
         </div>
-    </div>
-</body>
-
+    </body>
 </html>

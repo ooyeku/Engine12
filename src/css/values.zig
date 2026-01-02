@@ -396,6 +396,21 @@ pub const Border = struct {
     }
 
     pub const none = Border{ .width = .zero, .style = .none, .color = Color.transparent };
+
+    /// Create a solid border with given width and color
+    pub fn solid(width: Length, color: Color) Border {
+        return .{ .width = width, .style = .solid, .color = color };
+    }
+
+    /// Create a dashed border with given width and color
+    pub fn dashed(width: Length, color: Color) Border {
+        return .{ .width = width, .style = .dashed, .color = color };
+    }
+
+    /// Create a dotted border with given width and color
+    pub fn dotted(width: Length, color: Color) Border {
+        return .{ .width = width, .style = .dotted, .color = color };
+    }
 };
 
 /// CSS gradient definition
