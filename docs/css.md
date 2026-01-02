@@ -134,13 +134,79 @@ const style = css.Style{
         .blur = .{ .px = 12 },
         .color = css.Color.rgba(0, 0, 0, 0.1),
     },
+    // OR for multiple shadows:
+    .box_shadows = css.BoxShadowList{ .multiple = &.{
+        css.BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 3 }, .color = css.Color.rgba(0,0,0,0.12) },
+        css.BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 2 }, .color = css.Color.rgba(0,0,0,0.24) },
+    }},
+
     .opacity = .{ .value = 0.9 },
     
+    // Gradients
+    .background_gradient = css.Gradient{ .linear = .{
+        .angle = .{ .deg = 135 },
+        .stops = &.{
+            .{ .color = css.Color.fromHex("#4a9eff"), .position = .{ .percent = 0 } },
+            .{ .color = css.Color.fromHex("#5baaff"), .position = .{ .percent = 100 } },
+        },
+    }},
+
     // Transitions & Animations
     .transition_property = "all",
     .transition_duration = .{ .ms = 200 },
     .animation = "fadeIn 0.3s ease-out",
 };
+```
+
+### `css.Gradient`
+
+Support for linear, radial, and conic gradients in a type-safe way.
+
+```zig
+const gradient = css.Gradient{ .linear = .{
+    .angle = .{ .deg = 180 },
+    .stops = &.{
+        .{ .color = css.Color.black, .position = .{ .percent = 0 } },
+        .{ .color = css.Color.white, .position = .{ .percent = 100 } },
+    },
+}};
+```
+
+### `css.BoxShadowList`
+
+Support for single or multiple box shadows.
+
+```zig
+// Single shadow
+const single = css.BoxShadowList{ .single = myShadow };
+
+// Multiple shadows (layered depth)
+const layered = css.BoxShadowList{ .multiple = &.{
+    shadow1,
+    shadow2,
+    shadow3,
+}};
+```
+
+### `css.CachedStylesheet`
+
+A thread-safe caching wrapper for production usage. It prevents regenerating CSS on every request.
+
+```zig
+var cached_styles: ?css.CachedStylesheet = null;
+var mutex = std.Thread.Mutex{};
+
+pub fn handleCss(_: *Request) Response {
+    mutex.lock();
+    defer mutex.unlock();
+    
+    if (cached_styles == null) {
+        cached_styles = css.CachedStylesheet.init(allocator, generateStyles);
+    }
+    
+    const css = cached_styles.?.getCss() catch return Response.error500();
+    return Response.text(css);
+}
 ```
 
 ### `css.Color`
@@ -437,11 +503,11 @@ The `Style` struct supports all common CSS properties:
 
 **Typography**: `font_family`, `font_size`, `font_weight`, `font_style`, `line_height`, `letter_spacing`, `text_align`, `text_decoration`, `text_transform`, `color`
 
-**Background**: `background_color`, `background_image`, `background_size`, `background_position`, `background_repeat`
+**Background**: `background_color`, `background_image`, `background_gradient`, `background_size`, `background_position`, `background_repeat`
 
 **Border**: `border`, `border_top`, `border_right`, `border_bottom`, `border_left`, `border_radius`, `border_color`, `border_style`, `border_width`
 
-**Effects**: `box_shadow`, `opacity`, `visibility`, `filter`, `backdrop_filter`, `transform`
+**Effects**: `box_shadow`, `box_shadows`, `opacity`, `visibility`, `filter`, `backdrop_filter`, `transform`
 
 **Transitions & Animations**: `transition`, `transition_property`, `transition_duration`, `animation`, `animation_name`, `animation_duration`
 
@@ -452,7 +518,7 @@ The `Style` struct supports all common CSS properties:
 1. **Use design tokens** - Define colors, spacing, and typography as constants for consistency
 2. **Use MediaRuleBuilder** - For responsive styles, use the builder pattern to avoid comptime memory issues
 3. **Organize by component** - Group related styles together
-4. **Cache generated CSS** - In production, cache the generated CSS at startup
+4. **Use CachedStylesheet** - Wrap your generator in `css.CachedStylesheet` to cache output and avoid regeneration
 5. **Use meaningful selectors** - Follow consistent naming conventions (BEM, etc.)
 
 ## Migration from Static CSS

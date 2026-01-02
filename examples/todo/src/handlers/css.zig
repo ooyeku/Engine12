@@ -5,31 +5,43 @@ const Request = E12.Request;
 const Response = E12.Response;
 const styles = @import("../styles.zig");
 
+// Global cache for the stylesheet to avoid regeneration on every request
+var css_mutex = std.Thread.Mutex{};
+var cached_styles: ?styles.CachedStylesheet = null;
+
 /// Handler to serve the generated CSS stylesheet
 pub fn handleCss(_: *Request) Response {
-    const allocator = std.heap.page_allocator;
+    // Protect cache access with mutex
+    css_mutex.lock();
+    defer css_mutex.unlock();
 
-    // Generate the CSS (or use minified for production)
-    const css_content = styles.generateCss(allocator) catch {
+    if (cached_styles == null) {
+        // Initialize cache on first request
+        cached_styles = styles.CachedStylesheet.init(std.heap.page_allocator, styles.generateStylesheet);
+    }
+
+    // Get CSS from cache (generates only if dirty or empty)
+    const css_content = cached_styles.?.getCss() catch {
         return Response.text("/* Error generating CSS */").withStatus(500);
     };
 
-    // Note: In a production app, you'd want to:
-    // 1. Cache this generated CSS at startup
-    // 2. Only regenerate when styles change (during development)
-    // For now, we generate on each request
-
     var resp = Response.text(css_content);
     resp = resp.withContentType("text/css; charset=utf-8");
-    resp = resp.withHeader("Cache-Control", "public, max-age=3600"); // Cache for 1 hour
+    // Cache for 1 hour in browser, but server-side cache handles regeneration efficiency
+    resp = resp.withHeader("Cache-Control", "public, max-age=3600");
     return resp;
 }
 
 /// Handler to serve minified CSS (for production)
 pub fn handleMinifiedCss(_: *Request) Response {
-    const allocator = std.heap.page_allocator;
+    css_mutex.lock();
+    defer css_mutex.unlock();
 
-    const css_content = styles.generateMinifiedCss(allocator) catch {
+    if (cached_styles == null) {
+        cached_styles = styles.CachedStylesheet.init(std.heap.page_allocator, styles.generateStylesheet);
+    }
+
+    const css_content = cached_styles.?.getMinifiedCss() catch {
         return Response.text("/* Error generating CSS */").withStatus(500);
     };
 

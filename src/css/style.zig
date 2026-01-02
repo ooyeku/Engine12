@@ -7,6 +7,7 @@ pub const Color = values.Color;
 pub const Duration = values.Duration;
 pub const Angle = values.Angle;
 pub const BoxShadow = values.BoxShadow;
+pub const BoxShadowList = values.BoxShadowList;
 pub const TextShadow = values.TextShadow;
 pub const Border = values.Border;
 pub const Gradient = values.Gradient;
@@ -111,6 +112,7 @@ pub const Style = struct {
     background: ?Background = null,
     background_color: ?Color = null,
     background_image: ?[]const u8 = null,
+    background_gradient: ?Gradient = null, // Type-safe gradient support
     background_size: ?BackgroundSize = null,
     background_position: ?BackgroundPosition = null,
     background_repeat: ?BackgroundRepeat = null,
@@ -166,6 +168,7 @@ pub const Style = struct {
     opacity: ?Opacity = null,
     visibility: ?Visibility = null,
     box_shadow: ?BoxShadow = null,
+    box_shadows: ?BoxShadowList = null, // Multiple shadows support
     filter: ?Filter = null,
     backdrop_filter: ?Filter = null,
     mix_blend_mode: ?BlendMode = null,
@@ -492,6 +495,7 @@ pub const Style = struct {
         // Background
         if (self.background_color) |v| try writePropertyValue(writer, "background-color", v);
         if (self.background_image) |v| try writeProperty(writer, "background-image", v);
+        if (self.background_gradient) |v| try writePropertyValue(writer, "background-image", v);
         if (self.background_size) |v| try writePropertyValue(writer, "background-size", v);
         if (self.background_position) |v| try writePropertyValue(writer, "background-position", v);
         if (self.background_repeat) |v| try writeProperty(writer, "background-repeat", v.toCss());
@@ -535,6 +539,7 @@ pub const Style = struct {
         if (self.opacity) |v| try writePropertyValue(writer, "opacity", v);
         if (self.visibility) |v| try writeProperty(writer, "visibility", v.toCss());
         if (self.box_shadow) |v| try writePropertyValue(writer, "box-shadow", v);
+        if (self.box_shadows) |v| try writePropertyValue(writer, "box-shadow", v);
         if (self.filter) |v| try writePropertyValue(writer, "filter", v);
         if (self.backdrop_filter) |v| try writePropertyValue(writer, "backdrop-filter", v);
 

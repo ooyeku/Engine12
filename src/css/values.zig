@@ -276,6 +276,51 @@ pub const BoxShadow = struct {
     pub const inner = BoxShadow{ .x = .zero, .y = .{ .px = 2 }, .blur = .{ .px = 4 }, .spread = .zero, .color = Color.rgba(0, 0, 0, 0.05), .inset = true };
 };
 
+/// Box shadow value - supports single shadow or multiple shadows
+/// Example single: .{ .single = BoxShadow{ ... } }
+/// Example multiple: .{ .multiple = &.{ BoxShadow{...}, BoxShadow{...} } }
+pub const BoxShadowList = union(enum) {
+    single: BoxShadow,
+    multiple: []const BoxShadow,
+    none,
+
+    pub fn format(self: BoxShadowList, writer: anytype) !void {
+        switch (self) {
+            .single => |shadow| try shadow.format(writer),
+            .multiple => |shadows| {
+                for (shadows, 0..) |shadow, i| {
+                    if (i > 0) try writer.writeAll(", ");
+                    try shadow.format(writer);
+                }
+            },
+            .none => try writer.writeAll("none"),
+        }
+    }
+
+    pub fn toCss(self: BoxShadowList, allocator: std.mem.Allocator) ![]const u8 {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(allocator);
+        try self.format(buf.writer(allocator));
+        return try buf.toOwnedSlice(allocator);
+    }
+
+    /// Create from a single shadow
+    pub fn fromSingle(shadow: BoxShadow) BoxShadowList {
+        return .{ .single = shadow };
+    }
+
+    /// Preset layered shadows for depth effect
+    pub const elevated = BoxShadowList{ .multiple = &.{
+        BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 3 }, .spread = .zero, .color = Color.rgba(0, 0, 0, 0.12) },
+        BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 2 }, .spread = .zero, .color = Color.rgba(0, 0, 0, 0.24) },
+    } };
+
+    pub const floating = BoxShadowList{ .multiple = &.{
+        BoxShadow{ .x = .zero, .y = .{ .px = 4 }, .blur = .{ .px = 6 }, .spread = .{ .px = -1 }, .color = Color.rgba(0, 0, 0, 0.1) },
+        BoxShadow{ .x = .zero, .y = .{ .px = 10 }, .blur = .{ .px = 15 }, .spread = .{ .px = -3 }, .color = Color.rgba(0, 0, 0, 0.1) },
+    } };
+};
+
 /// Text shadow definition
 pub const TextShadow = struct {
     x: Length = .zero,
@@ -677,4 +722,31 @@ test "BoxShadow formatting" {
     const css = try shadow.toCss(allocator);
     defer allocator.free(css);
     try std.testing.expect(css.len > 0);
+}
+
+test "BoxShadowList multiple shadows" {
+    const allocator = std.testing.allocator;
+    const shadows = BoxShadowList{ .multiple = &.{
+        BoxShadow{ .x = .zero, .y = .{ .px = 2 }, .blur = .{ .px = 4 }, .color = Color.rgba(0, 0, 0, 0.1) },
+        BoxShadow{ .x = .zero, .y = .{ .px = 4 }, .blur = .{ .px = 8 }, .color = Color.rgba(0, 0, 0, 0.2) },
+    } };
+    const css = try shadows.toCss(allocator);
+    defer allocator.free(css);
+    // Should contain comma separator
+    try std.testing.expect(std.mem.indexOf(u8, css, ", ") != null);
+}
+
+test "Gradient linear format" {
+    const allocator = std.testing.allocator;
+    const gradient = Gradient{ .linear = .{
+        .angle = .{ .deg = 135 },
+        .stops = &.{
+            .{ .color = Color.fromHex("#667eea"), .position = .{ .percent = 0 } },
+            .{ .color = Color.fromHex("#764ba2"), .position = .{ .percent = 100 } },
+        },
+    } };
+    const css = try gradient.toCss(allocator);
+    defer allocator.free(css);
+    try std.testing.expect(std.mem.indexOf(u8, css, "linear-gradient(") != null);
+    try std.testing.expect(std.mem.indexOf(u8, css, "135deg") != null);
 }

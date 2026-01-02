@@ -7,6 +7,7 @@ const css = E12.css;
 // Re-export key types for convenience
 pub const Style = css.Style;
 pub const Stylesheet = css.Stylesheet;
+pub const CachedStylesheet = css.CachedStylesheet;
 pub const Color = css.Color;
 pub const Length = css.Length;
 pub const MediaQuery = css.MediaQuery;
@@ -14,6 +15,8 @@ pub const MediaRule = css.MediaRule;
 pub const Keyframes = css.Keyframes;
 pub const Breakpoints = css.Breakpoints;
 pub const BoxShadow = css.BoxShadow;
+pub const BoxShadowList = css.BoxShadowList;
+pub const Gradient = css.Gradient;
 pub const Border = css.Border;
 
 // ============================================================================
@@ -53,6 +56,43 @@ pub const radii = struct {
     pub const sm = css.px(4);
     pub const md = css.px(8);
     pub const lg = css.px(12);
+};
+
+// ============================================================================
+// GRADIENT PRESETS (NEW FEATURE)
+// ============================================================================
+pub const gradients = struct {
+    pub const primary_accent = Gradient{ .linear = .{
+        .angle = .{ .deg = 135 },
+        .stops = &.{
+            .{ .color = colors.accent, .position = .{ .percent = 0 } },
+            .{ .color = colors.accent_hover, .position = .{ .percent = 100 } },
+        },
+    } };
+
+    pub const success_gradient = Gradient{ .linear = .{
+        .angle = .{ .deg = 135 },
+        .stops = &.{
+            .{ .color = Color.fromHex("#4ade80"), .position = .{ .percent = 0 } },
+            .{ .color = Color.fromHex("#22c55e"), .position = .{ .percent = 100 } },
+        },
+    } };
+
+    pub const error_gradient = Gradient{ .linear = .{
+        .angle = .{ .deg = 135 },
+        .stops = &.{
+            .{ .color = Color.fromHex("#f87171"), .position = .{ .percent = 0 } },
+            .{ .color = Color.fromHex("#ef4444"), .position = .{ .percent = 100 } },
+        },
+    } };
+
+    pub const dark_overlay = Gradient{ .linear = .{
+        .angle = .{ .deg = 180 },
+        .stops = &.{
+            .{ .color = Color.rgba(0, 0, 0, 0), .position = .{ .percent = 0 } },
+            .{ .color = Color.rgba(0, 0, 0, 0.8), .position = .{ .percent = 100 } },
+        },
+    } };
 };
 
 // ============================================================================
@@ -151,6 +191,17 @@ pub const shadows = struct {
         .spread = .{ .px = 3 },
         .color = Color.rgba(74, 158, 255, 0.2),
     };
+
+    // Multiple shadow presets for enhanced depth (NEW FEATURE)
+    pub const elevated = BoxShadowList{ .multiple = &.{
+        BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 3 }, .color = Color.rgba(0, 0, 0, 0.12) },
+        BoxShadow{ .x = .zero, .y = .{ .px = 1 }, .blur = .{ .px = 2 }, .color = Color.rgba(0, 0, 0, 0.24) },
+    } };
+
+    pub const floating = BoxShadowList{ .multiple = &.{
+        BoxShadow{ .x = .zero, .y = .{ .px = 4 }, .blur = .{ .px = 6 }, .spread = .{ .px = -1 }, .color = Color.rgba(0, 0, 0, 0.1) },
+        BoxShadow{ .x = .zero, .y = .{ .px = 10 }, .blur = .{ .px = 15 }, .spread = .{ .px = -3 }, .color = Color.rgba(0, 0, 0, 0.1) },
+    } };
 };
 
 // ============================================================================

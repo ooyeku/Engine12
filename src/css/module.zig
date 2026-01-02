@@ -50,6 +50,7 @@ pub const Color = values.Color;
 pub const Duration = values.Duration;
 pub const Angle = values.Angle;
 pub const BoxShadow = values.BoxShadow;
+pub const BoxShadowList = values.BoxShadowList;
 pub const TextShadow = values.TextShadow;
 pub const Border = values.Border;
 pub const Gradient = values.Gradient;
@@ -124,6 +125,7 @@ pub const Transitions = animation.Transitions;
 
 // Stylesheet
 pub const Stylesheet = stylesheet.Stylesheet;
+pub const CachedStylesheet = stylesheet.CachedStylesheet;
 pub const ClassGenerator = stylesheet.ClassGenerator;
 pub const Component = stylesheet.Component;
 pub const Reset = stylesheet.Reset;

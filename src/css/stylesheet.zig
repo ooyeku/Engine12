@@ -257,6 +257,86 @@ pub const Stylesheet = struct {
     }
 };
 
+/// Cached stylesheet for production use - generates CSS once and caches it
+/// Use this in production to avoid regenerating CSS on every request.
+pub const CachedStylesheet = struct {
+    allocator: std.mem.Allocator,
+    generator: *const fn (std.mem.Allocator) anyerror!Stylesheet,
+    cached_css: ?[]const u8 = null,
+    cached_minified: ?[]const u8 = null,
+    is_dirty: bool = true,
+
+    /// Initialize with a stylesheet generator function
+    pub fn init(allocator: std.mem.Allocator, generator: *const fn (std.mem.Allocator) anyerror!Stylesheet) CachedStylesheet {
+        return .{
+            .allocator = allocator,
+            .generator = generator,
+        };
+    }
+
+    /// Free cached CSS
+    pub fn deinit(self: *CachedStylesheet) void {
+        if (self.cached_css) |css| {
+            self.allocator.free(css);
+            self.cached_css = null;
+        }
+        if (self.cached_minified) |min| {
+            self.allocator.free(min);
+            self.cached_minified = null;
+        }
+    }
+
+    /// Get CSS output, generating and caching if needed
+    pub fn getCss(self: *CachedStylesheet) ![]const u8 {
+        if (!self.is_dirty) {
+            if (self.cached_css) |css| return css;
+        }
+
+        // Generate fresh CSS
+        var sheet = try self.generator(self.allocator);
+        defer sheet.deinit();
+
+        // Free old cache
+        if (self.cached_css) |old| {
+            self.allocator.free(old);
+        }
+
+        self.cached_css = try sheet.toCss();
+        self.is_dirty = false;
+        return self.cached_css.?;
+    }
+
+    /// Get minified CSS output, generating and caching if needed
+    pub fn getMinifiedCss(self: *CachedStylesheet) ![]const u8 {
+        if (!self.is_dirty) {
+            if (self.cached_minified) |min| return min;
+        }
+
+        // Generate fresh CSS
+        var sheet = try self.generator(self.allocator);
+        defer sheet.deinit();
+
+        // Free old cache
+        if (self.cached_minified) |old| {
+            self.allocator.free(old);
+        }
+
+        self.cached_minified = try sheet.toMinifiedCss();
+        self.is_dirty = false;
+        return self.cached_minified.?;
+    }
+
+    /// Mark cache as dirty - next getCss() will regenerate
+    pub fn invalidate(self: *CachedStylesheet) void {
+        self.is_dirty = true;
+    }
+
+    /// Check if cache is valid
+    pub fn isCached(self: *const CachedStylesheet) bool {
+        return !self.is_dirty and (self.cached_css != null or self.cached_minified != null);
+    }
+};
+
 /// CSS class generator with automatic unique naming
 pub const ClassGenerator = struct {
     allocator: std.mem.Allocator,
