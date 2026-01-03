@@ -3,30 +3,55 @@ const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const middleware = @import("middleware.zig");
 
+/// Configuration for Cross-Origin Resource Sharing (CORS) middleware.
+/// CORS allows web applications from one origin to access resources from a different origin.
+///
+/// ## Example
+/// ```zig
+/// const cors_config = CorsConfig{
+///     .allowed_origins = &[_][]const u8{ "https://example.com", "https://app.example.com" },
+///     .allowed_methods = &[_][]const u8{ "GET", "POST", "PUT", "DELETE" },
+///     .allowed_headers = &[_][]const u8{ "Content-Type", "Authorization" },
+///     .allow_credentials = true,
+///     .max_age = 86400, // 24 hours
+/// };
+/// ```
 pub const CorsConfig = struct {
+    /// List of allowed origin domains. Use ["*"] to allow all origins (not recommended for production with credentials)
     allowed_origins: []const []const u8 = &[_][]const u8{"*"},
 
+    /// HTTP methods that are allowed in CORS requests
     allowed_methods: []const []const u8 = &[_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" },
 
+    /// HTTP headers that are allowed in CORS requests
     allowed_headers: []const []const u8 = &[_][]const u8{ "Content-Type", "Authorization" },
 
+    /// Maximum time (in seconds) that preflight responses can be cached by browsers
     max_age: u32 = 3600,
 
+    /// Whether to allow credentials (cookies, authorization headers) in CORS requests.
+    /// NOTE: Cannot be used with allowed_origins = ["*"]
     allow_credentials: bool = false,
 
+    /// Headers that can be exposed to the client in the response
     exposed_headers: []const []const u8 = &[_][]const u8{},
 };
 
 var global_cors_config: ?CorsConfig = null;
 var global_cors_config_mutex: std.Thread.Mutex = .{};
 
+/// CORS middleware for handling Cross-Origin Resource Sharing.
+/// Handles preflight OPTIONS requests and sets appropriate CORS headers.
 pub const CorsMiddleware = struct {
     config: CorsConfig,
 
+    /// Initialize CORS middleware with the given configuration.
     pub fn init(config: CorsConfig) CorsMiddleware {
         return CorsMiddleware{ .config = config };
     }
 
+    /// Set this middleware's configuration as the global CORS config.
+    /// This must be called before using the middleware in request processing.
     pub fn setGlobalConfig(self: *const CorsMiddleware) void {
         global_cors_config_mutex.lock();
         defer global_cors_config_mutex.unlock();
@@ -169,6 +194,21 @@ pub const CorsMiddleware = struct {
         return true;
     }
 
+    /// Get the middleware function that handles CORS preflight requests.
+    /// This function should be registered with `app.usePreRequest()`.
+    ///
+    /// The middleware:
+    /// 1. Checks if the request has an Origin header
+    /// 2. Validates the origin against allowed_origins
+    /// 3. For OPTIONS requests, validates the requested method and headers
+    /// 4. Sets appropriate context values that are used by executeResponse() to add CORS headers
+    ///
+    /// ## Example
+    /// ```zig
+    /// var cors = CorsMiddleware.init(.{ .allowed_origins = &[_][]const u8{"https://example.com"} });
+    /// cors.setGlobalConfig();
+    /// app.usePreRequest(cors.preflightMwFn());
+    /// ```
     pub fn preflightMwFn(_: *const CorsMiddleware) middleware.PreRequestMiddlewareFn {
         const Self = @This();
         return struct {

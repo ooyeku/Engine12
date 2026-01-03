@@ -3,16 +3,57 @@ const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const types = @import("../types.zig");
 
+/// Result type returned by pre-request middleware to control execution flow.
 pub const MiddlewareResult = enum {
-    proceed, // Continue to next middleware/handler
-    abort, // Stop processing and return response
+    /// Continue to the next middleware in the chain or the route handler
+    proceed,
+    /// Stop processing immediately and return a response (based on request context)
+    abort,
 };
 
+/// Function signature for pre-request middleware.
+/// Pre-request middleware executes before route handlers and can:
+/// - Inspect and modify the request
+/// - Store data in request.context for later use
+/// - Abort the request chain by returning .abort
+///
+/// ## Example
+/// ```zig
+/// fn authMiddleware(req: *Request) MiddlewareResult {
+///     const token = req.header("Authorization") orelse {
+///         req.context.put("auth_error", "Missing token") catch {};
+///         return .abort;
+///     };
+///     // Validate token...
+///     return .proceed;
+/// }
+/// ```
 pub const PreRequestMiddlewareFn = *const fn (*Request) MiddlewareResult;
 
+/// Function signature for response middleware.
+/// Response middleware executes after route handlers and can:
+/// - Inspect and modify the response
+/// - Add headers, cookies, or modify status codes
+/// - Transform response content
+///
+/// NOTE: Response middleware cannot access request data directly.
+/// Use pre-request middleware if you need request-specific logic.
+///
+/// ## Example
+/// ```zig
+/// fn securityHeadersMiddleware(resp: Response) Response {
+///     var modified = resp;
+///     modified = modified.withHeader("X-Frame-Options", "DENY");
+///     modified = modified.withHeader("X-Content-Type-Options", "nosniff");
+///     return modified;
+/// }
+/// ```
 pub const ResponseMiddlewareFn = *const fn (Response) Response;
 
+/// The middleware chain manages and executes pre-request and response middleware.
+/// Middleware is executed in the order it was added to the chain.
 pub const MiddlewareChain = struct {
+    /// Maximum number of middleware functions that can be registered per type
     pub const MAX_MIDDLEWARE = 16;
 
     pre_request_middleware: [MAX_MIDDLEWARE]?PreRequestMiddlewareFn = [_]?PreRequestMiddlewareFn{null} ** MAX_MIDDLEWARE,
@@ -21,6 +62,7 @@ pub const MiddlewareChain = struct {
     response_middleware: [MAX_MIDDLEWARE]?ResponseMiddlewareFn = [_]?ResponseMiddlewareFn{null} ** MAX_MIDDLEWARE,
     response_count: usize = 0,
 
+    /// Initialize an empty middleware chain.
     pub fn init() MiddlewareChain {
         return .{
             .pre_request_middleware = [_]?PreRequestMiddlewareFn{null} ** MAX_MIDDLEWARE,
@@ -30,6 +72,15 @@ pub const MiddlewareChain = struct {
         };
     }
 
+    /// Execute all pre-request middleware in the chain.
+    /// Returns a Response if any middleware aborts, null if all proceed.
+    ///
+    /// When middleware returns .abort, the response is determined by request context:
+    /// - "rate_limited": Returns 429 (Too Many Requests)
+    /// - "body_size_exceeded": Returns 413 (Request Entity Too Large)
+    /// - "csrf_error": Returns 403 (Forbidden)
+    /// - "cache_hit": Returns 304 (Not Modified)
+    /// - Default: Returns 401 (Unauthorized)
     pub fn executePreRequest(self: *const MiddlewareChain, req: *Request) ?Response {
         for (self.pre_request_middleware[0..self.pre_request_count]) |maybe_middleware| {
             if (maybe_middleware) |middleware| {
@@ -73,6 +124,14 @@ pub const MiddlewareChain = struct {
         return null;
     }
 
+    /// Execute all response middleware in the chain, transforming the response.
+    /// Also applies context-based transformations from the request:
+    /// - Cache headers (ETag, Cache-Control) if "cache_hit" in context
+    /// - CORS headers if "cors_origin" in context
+    /// - Request ID header if "request_id_header" in context
+    ///
+    /// Response middleware is executed in the order it was added.
+    /// Each middleware receives the output of the previous middleware.
     pub fn executeResponse(self: *const MiddlewareChain, response: Response, req: ?*Request) Response {
         var transformed_response = response;
         for (self.response_middleware[0..self.response_count]) |maybe_middleware| {
@@ -126,6 +185,10 @@ pub const MiddlewareChain = struct {
         return transformed_response;
     }
 
+    /// Add a pre-request middleware function to the chain.
+    /// Middleware is executed in the order it is added.
+    ///
+    /// Returns error.TooManyMiddleware if MAX_MIDDLEWARE limit is exceeded.
     pub fn addPreRequest(self: *MiddlewareChain, middleware: PreRequestMiddlewareFn) !void {
         if (self.pre_request_count >= MAX_MIDDLEWARE) {
             return error.TooManyMiddleware;
@@ -134,6 +197,10 @@ pub const MiddlewareChain = struct {
         self.pre_request_count += 1;
     }
 
+    /// Add a response middleware function to the chain.
+    /// Middleware is executed in the order it is added.
+    ///
+    /// Returns error.TooManyMiddleware if MAX_MIDDLEWARE limit is exceeded.
     pub fn addResponse(self: *MiddlewareChain, middleware: ResponseMiddlewareFn) !void {
         if (self.response_count >= MAX_MIDDLEWARE) {
             return error.TooManyMiddleware;
@@ -142,6 +209,7 @@ pub const MiddlewareChain = struct {
         self.response_count += 1;
     }
 
+    /// Remove all middleware from the chain, resetting counts to zero.
     pub fn clear(self: *MiddlewareChain) void {
         self.pre_request_count = 0;
         self.response_count = 0;

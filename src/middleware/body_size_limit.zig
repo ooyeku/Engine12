@@ -35,10 +35,15 @@ const BodySizeLimitMiddleware = struct {
     }
 };
 
-var body_size_limit_instances: [8]*const BodySizeLimitMiddleware = undefined;
+/// Storage for body size limit middleware instances
+/// Limited to 16 instances due to Zig's comptime closure limitations
+var body_size_limit_instances: [16]*const BodySizeLimitMiddleware = undefined;
 var body_size_limit_count: usize = 0;
 var body_size_limit_mutex: std.Thread.Mutex = .{};
 
+/// Create a body size limit middleware with the specified limit.
+/// NOTE: Due to Zig's comptime limitations, this function can only be called 16 times.
+/// If you need more instances, increase the array size and add more switch cases.
 pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreRequestMiddlewareFn {
     body_size_limit_mutex.lock();
     defer body_size_limit_mutex.unlock();
@@ -97,7 +102,47 @@ pub fn createBodySizeLimitMiddleware(limit: BodySizeLimit) middleware_chain.PreR
                 return body_size_limit_instances[7].middleware(req);
             }
         }.mw,
-        else => unreachable,
+        8 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[8].middleware(req);
+            }
+        }.mw,
+        9 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[9].middleware(req);
+            }
+        }.mw,
+        10 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[10].middleware(req);
+            }
+        }.mw,
+        11 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[11].middleware(req);
+            }
+        }.mw,
+        12 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[12].middleware(req);
+            }
+        }.mw,
+        13 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[13].middleware(req);
+            }
+        }.mw,
+        14 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[14].middleware(req);
+            }
+        }.mw,
+        15 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                return body_size_limit_instances[15].middleware(req);
+            }
+        }.mw,
+        else => @panic("Maximum body size limit middleware instances (16) exceeded. Increase body_size_limit_instances array size."),
     };
 }
 

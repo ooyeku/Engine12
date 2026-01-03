@@ -172,22 +172,189 @@ pub const RateLimiter = struct {
     }
 };
 
+/// Storage for rate limiter instances used by middleware factories
+const RateLimiterInstance = struct {
+    limiter: *RateLimiter,
+    route: []const u8,
+};
+
+var rate_limiter_instances: [16]RateLimiterInstance = undefined;
+var rate_limiter_count: usize = 0;
+var rate_limiter_mutex: std.Thread.Mutex = .{};
+
+/// Create a rate limiting middleware function for a specific route.
+/// This middleware will check rate limits before allowing the request to proceed.
 pub fn createRateLimitMiddleware(limiter: *RateLimiter, route: []const u8) middleware_chain.PreRequestMiddlewareFn {
-    _ = limiter;
-    _ = route;
-    return struct {
-        fn mw(req: *Request) middleware_chain.MiddlewareResult {
-            const global_limiter = @import("../engine12.zig").global_rate_limiter orelse return .proceed;
+    rate_limiter_mutex.lock();
+    defer rate_limiter_mutex.unlock();
 
-            const route_path = req.path();
+    const id = rate_limiter_count;
+    rate_limiter_instances[id] = .{ .limiter = limiter, .route = route };
+    rate_limiter_count += 1;
 
-            if (global_limiter.check(req, route_path) catch null) |_| {
-                req.context.put("rate_limited", "true") catch {};
-                return .abort;
+    return switch (id) {
+        0 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[0];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
             }
-            return .proceed;
-        }
-    }.mw;
+        }.mw,
+        1 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[1];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        2 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[2];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        3 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[3];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        4 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[4];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        5 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[5];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        6 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[6];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        7 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[7];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        8 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[8];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        9 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[9];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        10 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[10];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        11 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[11];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        12 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[12];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        13 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[13];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        14 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[14];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        15 => struct {
+            fn mw(req: *Request) middleware_chain.MiddlewareResult {
+                const instance = rate_limiter_instances[15];
+                if (instance.limiter.check(req, instance.route) catch null) |_| {
+                    req.context.put("rate_limited", "true") catch {};
+                    return .abort;
+                }
+                return .proceed;
+            }
+        }.mw,
+        else => @panic("Maximum rate limiter middleware instances (16) exceeded. Increase rate_limiter_instances array size."),
+    };
 }
 
 test "RateLimiter check allows requests within limit" {
