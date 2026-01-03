@@ -138,26 +138,46 @@ pub const WebSocketManager = struct {
 
     /// Stop all WebSocket servers and join threads
     pub fn stop(self: *WebSocketManager) void {
-        if (!self.is_running.load(.monotonic)) {
-            // Even if flagged not running, threads might need joining if stop was interrupted or called concurrently?
-            // But usually we can assume is_running=false means stop initiated.
-            // Check if we need to do anything?
-            // Ideally stop is idempotent.
+        // Make stop idempotent - if already stopped, just return
+        if (!self.is_running.swap(false, .monotonic)) {
+            return; // Already stopped
         }
-        self.is_running.store(false, .monotonic);
 
-        // Stop all servers first
+        // CRITICAL FIX: Close listener sockets FIRST to unblock accept() calls
+        // This ensures threads can exit quickly instead of waiting for timeout
         for (self.servers.items) |*entry| {
             if (entry.server_instance) |ws_server| {
-                ws_server.stop();
+                // Close listener socket to unblock accept() immediately
+                if (ws_server.listener) |listener| {
+                    closeSocket(listener);
+                    ws_server.listener = null;
+                }
+                // Set is_running to false
+                ws_server.is_running.store(false, .monotonic);
             }
         }
 
-        // Wait for server threads to finish
+        // Now wait for server threads to finish (they'll exit quickly since sockets are closed)
         for (self.servers.items) |*entry| {
             if (entry.thread) |thread| {
                 thread.join();
                 entry.thread = null; // Mark as joined
+            }
+        }
+
+        // Stop remaining operations in servers (close client connections)
+        for (self.servers.items) |*entry| {
+            if (entry.server_instance) |ws_server| {
+                // Close all client connections
+                ws_server.clients_mutex.lock();
+                defer ws_server.clients_mutex.unlock();
+
+                for (ws_server.clients.items) |client| {
+                    client.close(.going_away, "Server shutting down") catch {};
+                    client.deinit();
+                    self.allocator.destroy(client);
+                }
+                ws_server.clients.clearRetainingCapacity();
             }
         }
 

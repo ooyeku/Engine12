@@ -374,13 +374,13 @@ pub fn createApp() !*E12.Engine12 {
     try app.get("/analytics", handlers.htmx.handleAnalyticsPage);
 
     // HTMX utility handlers
-    try app.get("/dismiss-toast", handlers.htmx.handleDismissToast);
+    try app.get("/htmx/dismiss-toast", handlers.htmx.handleDismissToast);
 
     // Enable OpenAPI documentation
     try app.enableOpenApiDocs("/docs", .{
         .title = "Todo API",
         .version = "1.0.0",
-        .description = "A simple todo management API with user authentication and filtering",
+        .description = "A simple todo management API with filtering and search (authentication disabled for demo)",
     });
 
     // Auth routes disabled - authentication removed from this demo app
@@ -399,48 +399,43 @@ pub fn createApp() !*E12.Engine12 {
 
     // Middleware
     // Order matters: body size limit -> CSRF -> CORS -> request ID -> logging
-    // TEMPORARILY DISABLE ALL MIDDLEWARE FOR DEBUGGING
-    // try app.usePreRequest(&bodySizeLimitMiddleware);
-    // try app.usePreRequest(&csrfMiddleware);
+    try app.usePreRequest(&bodySizeLimitMiddleware);
+    try app.usePreRequest(&csrfMiddleware);
 
-    // TEMPORARILY DISABLE ALL MIDDLEWARE FOR DEBUGGING
-    // // CORS middleware - allocate on heap to persist beyond this function
-    // // Static arrays to ensure they persist beyond function scope
-    // const static = struct {
-    //     const origins = [_][]const u8{"*"};
-    //     const methods = [_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" };
-    //     const headers = [_][]const u8{ "Content-Type", "Authorization", "X-CSRF-Token" };
-    // };
-    // const cors = try allocator.create(cors_middleware.CorsMiddleware);
-    // cors.* = cors_middleware.CorsMiddleware.init(.{
-    //     .allowed_origins = &static.origins,
-    //     .allowed_methods = &static.methods,
-    //     .allowed_headers = &static.headers,
-    //     .max_age = 3600,
-    //     .allow_credentials = false,
-    // });
-    // cors.setGlobalConfig(); // Set global config before using middleware
-    // const cors_mw_fn = cors.preflightMwFn();
-    // try app.usePreRequest(cors_mw_fn);
+    // CORS middleware - heap-allocated to persist beyond this function
+    const static = struct {
+        const origins = [_][]const u8{"*"};
+        const methods = [_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" };
+        const headers = [_][]const u8{ "Content-Type", "Authorization", "X-CSRF-Token" };
+    };
+    const cors = try allocator.create(cors_middleware.CorsMiddleware);
+    cors.* = cors_middleware.CorsMiddleware.init(.{
+        .allowed_origins = &static.origins,
+        .allowed_methods = &static.methods,
+        .allowed_headers = &static.headers,
+        .max_age = 3600,
+        .allow_credentials = false,
+    });
+    cors.setGlobalConfig();
+    const cors_mw_fn = cors.preflightMwFn();
+    try app.usePreRequest(cors_mw_fn);
 
-    // // Request ID middleware - allocate on heap to persist beyond this function
-    // const req_id_mw = try allocator.create(request_id_middleware.RequestIdMiddleware);
-    // req_id_mw.* = request_id_middleware.RequestIdMiddleware.init(.{});
-    // const req_id_mw_fn = req_id_mw.preRequestMwFn();
-    // try app.usePreRequest(req_id_mw_fn);
+    // Request ID middleware - heap-allocated to persist beyond this function
+    const req_id_mw = try allocator.create(request_id_middleware.RequestIdMiddleware);
+    req_id_mw.* = request_id_middleware.RequestIdMiddleware.init(.{});
+    const req_id_mw_fn = req_id_mw.preRequestMwFn();
+    try app.usePreRequest(req_id_mw_fn);
 
-    // // Enable built-in request/response logging middleware
-    // // Exclude health check endpoints from logging
-    // // Use static array to ensure it persists beyond function scope
-    // const logging_static = struct {
-    //     const exclude_paths = [_][]const u8{ "/metrics", "/health" };
-    // };
-    // const logging_config = LoggingConfig{
-    //     .log_requests = true,
-    //     .log_responses = true,
-    //     .exclude_paths = &logging_static.exclude_paths,
-    // };
-    // try app.enableRequestLogging(logging_config);
+    // Enable built-in request/response logging middleware
+    const logging_static = struct {
+        const exclude_paths = [_][]const u8{ "/metrics", "/health" };
+    };
+    const logging_config = LoggingConfig{
+        .log_requests = true,
+        .log_responses = true,
+        .exclude_paths = &logging_static.exclude_paths,
+    };
+    try app.enableRequestLogging(logging_config);
 
     // Custom error handler
     app.useErrorHandler(customErrorHandler);
@@ -475,20 +470,19 @@ pub fn createApp() !*E12.Engine12 {
     try app.get("/api/todos/stats", handlers.stats.handleGetStats);
 
     // RESTful API endpoints - restApi automatically handles:
-    // - GET /api/todos (list with automatic user_id filtering, pagination, filtering, sorting)
+    // - GET /api/todos (list with pagination, filtering, sorting)
     // - GET /api/todos/:id (show)
     // - POST /api/todos (create)
     // - PUT /api/todos/:id (update)
     // - DELETE /api/todos/:id (delete)
-    // restApi automatically filters by user_id when authenticator is present and model has user_id field
     const orm_for_rest = database.getORM() catch {
         return error.DatabaseNotInitialized;
     };
     try app.restApi("/api/todos", Todo, RestApiConfig(Todo){
         .orm = orm_for_rest,
         .validator = validators.validateTodo,
-        .authenticator = auth.requireAuthForRestApi,
-        .authorization = auth.canAccessTodo,
+        .authenticator = null,
+        .authorization = null,
         .enable_pagination = true,
         .default_limit = 20, // Default items per page
         .max_limit = 100, // Maximum items per page (prevents excessive data transfer)
@@ -498,13 +492,6 @@ pub fn createApp() !*E12.Engine12 {
         // Note: Hooks are not currently supported due to Zig type system limitations
         // User_id and timestamps should be set in the validator or by modifying the model before calling restApi
     });
-
-    // Background tasks - DISABLED due to ReleaseFast crash issues
-    // TODO: Re-enable when vigil supervisor is fixed for release builds
-    // try app.schedulePeriodicTask("cleanup_old_todos", &cleanupOldCompletedTodos, 3600000);
-    // try app.schedulePeriodicTask("check_overdue_todos", &checkOverdueTodos, 3600000);
-    // try app.schedulePeriodicTask("generate_stats", &generateStatistics, 300000);
-    // try app.schedulePeriodicTask("validate_store_health", &validateStoreHealth, 600000);
 
     // Health checks
     try app.registerHealthCheck(&checkTodoStoreHealth);

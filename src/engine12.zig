@@ -44,8 +44,8 @@ fn generateRequestId(alloc: std.mem.Allocator) ![]const u8 {
     return alloc.dupe(u8, id_str);
 }
 
-// Single global context pointer (replaces 8 separate globals)
-// Required because Zig comptime closures in wrapHandler() cannot capture runtime values
+/// Single global context pointer.
+/// Required because Zig comptime closures in wrapHandler() cannot capture runtime values
 pub var global_context: ?*@import("context.zig").EngineContext = null;
 
 var hot_reload_manager_for_ws: ?*hot_reload_mod.HotReloadManager = null;
@@ -67,7 +67,7 @@ fn hotReloadWebSocketHandler(conn: *websocket_mod.connection.WebSocketConnection
 
 var global_openapi_generator: ?*openapi.OpenAPIGenerator = null;
 
-// Global Engine12 pointer for signal handling
+/// Global Engine12 pointer for signal handling
 var global_engine12_instance: ?*Engine12 = null;
 var shutdown_triggered: bool = false;
 
@@ -104,7 +104,6 @@ fn closeSocket(socket: posix.socket_t) void {
 
 const ConnectionQueue = struct {
     const Self = @This();
-
     queue: []posix.socket_t,
     max_size: usize,
     head: usize = 0,
@@ -508,22 +507,84 @@ pub fn wrapHandler(comptime handler_fn: anytype, comptime route_pattern: ?[]cons
     }.wrapper;
 }
 
+/// Configuration options for the HTTP server.
+///
+/// These settings control network behavior, performance tuning, and resource limits.
+/// Default values are suitable for development; production deployments should tune
+/// `worker_threads` and timeout values based on expected load.
+///
+/// ## Example
+/// ```zig
+/// app.configure(.{
+///     .host = "0.0.0.0",      // Bind to all interfaces
+///     .port = 8080,
+///     .worker_threads = 16,   // Match CPU cores for I/O-bound workloads
+///     .read_timeout = 30000,  // 30 second read timeout
+/// });
+/// ```
 pub const ServerConfig = struct {
+    /// IP address to bind the server to. Use "0.0.0.0" to accept connections on all interfaces.
     host: []const u8 = "127.0.0.1",
+    /// TCP port number to listen on. Ports below 1024 require elevated privileges.
     port: u16 = 8080,
+    /// Maximum time in milliseconds to wait for request data from clients.
     read_timeout: u32 = 10000,
+    /// Maximum time in milliseconds to wait when sending response data to clients.
     write_timeout: u32 = 10000,
+    /// Number of worker threads for handling concurrent connections.
+    /// Set to 0 for single-threaded mode. Recommended: number of CPU cores.
     worker_threads: u16 = 12,
+    /// Internal buffer size for reading request data.
     buffer_size: usize = 16384,
+    /// Maximum allowed size for HTTP headers in bytes.
     max_header_size: usize = 32768,
+    /// Maximum allowed size for request body in bytes (default: 10MB).
     max_body_size: usize = 10 * 1024 * 1024,
 };
 
+/// Internal structure for template route registration.
+/// Maps URL paths to template files and their context generation functions.
 pub const TemplateRouteEntry = struct {
+    /// The filesystem path to the template file.
     path: []const u8,
+    /// Opaque pointer to the context generation function.
     context_fn: *const anyopaque,
 };
 
+/// The core Engine12 web application framework.
+///
+/// Engine12 provides a complete, batteries-included web framework for Zig with:
+/// - **HTTP Routing**: GET, POST, PUT, DELETE with dynamic path parameters
+/// - **Middleware**: Pre-request and response transformation pipelines
+/// - **REST API**: Automatic CRUD endpoint generation from ORM models
+/// - **WebSockets**: Real-time bidirectional communication
+/// - **Templates**: Hot-reloading HTML templates with Zig syntax
+/// - **Static Files**: Efficient file serving with caching
+/// - **Health Checks**: Kubernetes-compatible liveness/readiness probes
+/// - **Metrics**: Prometheus-compatible request metrics
+/// - **Graceful Shutdown**: Clean connection draining on SIGTERM
+///
+/// ## Lifecycle
+/// 1. Initialize with `initFromEnv()`, `initDevelopment()`, or `initProduction()`
+/// 2. Register routes with `get()`, `post()`, `put()`, `delete()`
+/// 3. Add middleware with `usePreRequest()`, `useResponse()`
+/// 4. Start server with `listen()` (blocking) or `start()` (non-blocking)
+/// 5. Cleanup with `deinit()` and `allocator.destroy(app)`
+///
+/// ## Example
+/// ```zig
+/// const app = try Engine12.initFromEnv();
+/// defer {
+///     app.deinit();
+///     allocator.destroy(app);
+/// }
+///
+/// try app.get("/", handleIndex);
+/// try app.get("/api/users/:id", handleGetUser);
+/// try app.post("/api/users", handleCreateUser);
+///
+/// try app.listen();
+/// ```
 pub const Engine12 = struct {
     allocator: std.mem.Allocator,
     profile: types.ServerProfile,
@@ -590,11 +651,42 @@ pub const Engine12 = struct {
     // Engine context for dependency injection
     engine_context: ?*@import("context.zig").EngineContext = null,
 
+    /// Initializes a new Engine12 application instance with the specified server profile.
+    ///
+    /// This is the core initialization function that configures the application based on
+    /// the provided profile (development, production, or testing). The returned pointer
+    /// is heap-allocated and must be cleaned up with `deinit()` followed by `allocator.destroy(app)`.
+    ///
+    /// ## Parameters
+    /// - `profile`: A `ServerProfile` that configures logging verbosity, timeouts, and environment settings.
+    ///   Use `ServerProfile_Development`, `ServerProfile_Production`, or `ServerProfile_Testing`.
+    ///
+    /// ## Returns
+    /// A pointer to the initialized Engine12 instance, or an error if initialization fails.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initWithProfile(types.ServerProfile_Production);
+    /// defer {
+    ///     app.deinit();
+    ///     allocator.destroy(app);
+    /// }
+    /// ```
+    ///
+    /// ## Note
+    /// For most use cases, prefer `initFromEnv()` which automatically reads configuration
+    /// from environment variables and .env files, making deployments more flexible.
     pub fn initWithProfile(profile: types.ServerProfile) !*Engine12 {
         const default_limits = config_mod.LimitsConfig{};
         return initWithProfileAndLimits(profile, default_limits);
     }
 
+    /// Internal initialization function that creates the Engine12 instance with both
+    /// a server profile and custom resource limits.
+    ///
+    /// This function heap-allocates the Engine12 struct to prevent dangling pointer issues
+    /// when EngineContext references internal fields. All internal arrays (routes, middleware,
+    /// health checks) are pre-allocated based on the limits configuration.
     fn initWithProfileAndLimits(profile: types.ServerProfile, limits: config_mod.LimitsConfig) !*Engine12 {
         var http_routes = std.ArrayListUnmanaged(?types.Route){};
         try http_routes.ensureTotalCapacity(allocator, limits.max_routes);
@@ -614,7 +706,6 @@ pub const Engine12 = struct {
         var ws_routes = std.ArrayListUnmanaged(?types.WebSocketRoute){};
         try ws_routes.ensureTotalCapacity(allocator, limits.max_ws_routes);
 
-        // CRITICAL: Heap-allocate to prevent dangling pointers in EngineContext
         const app = try allocator.create(Engine12);
         app.* = Engine12{
             .allocator = allocator,
@@ -654,6 +745,31 @@ pub const Engine12 = struct {
         return app;
     }
 
+    /// Initializes Engine12 in development mode with hot reload and HTMX support enabled.
+    ///
+    /// This initialization mode is optimized for local development workflows:
+    /// - **Hot Reload**: Automatically watches template and static files for changes,
+    ///   pushing updates to connected browsers via WebSocket without page refresh.
+    /// - **HTMX Injection**: Automatically injects HTMX library into HTML responses.
+    /// - **Verbose Logging**: Enables detailed request/response logging for debugging.
+    ///
+    /// ## Returns
+    /// A heap-allocated Engine12 pointer configured for development.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initDevelopment();
+    /// defer {
+    ///     app.deinit();
+    ///     allocator.destroy(app);
+    /// }
+    /// try app.get("/", handleIndex);
+    /// try app.listen();
+    /// ```
+    ///
+    /// ## Note
+    /// Do not use this mode in production - it has performance overhead from file watching
+    /// and includes development-only features. Use `initProduction()` or `initFromEnv()` instead.
     pub fn initDevelopment() !*Engine12 {
         const app = try Engine12.initWithProfile(types.ServerProfile_Development);
 
@@ -670,25 +786,128 @@ pub const Engine12 = struct {
         return app;
     }
 
+    /// Initializes Engine12 in production mode with optimized settings.
+    ///
+    /// Production mode configuration includes:
+    /// - **Minimal Logging**: Only errors and critical warnings are logged.
+    /// - **Optimized Timeouts**: Shorter timeouts to quickly recycle stale connections.
+    /// - **No Hot Reload**: File watching is disabled for maximum performance.
+    /// - **No Debug Features**: Development tools and verbose output are disabled.
+    ///
+    /// ## Returns
+    /// A heap-allocated Engine12 pointer configured for production.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initProduction();
+    /// defer {
+    ///     app.deinit();
+    ///     allocator.destroy(app);
+    /// }
+    /// ```
+    ///
+    /// ## Note
+    /// For cloud deployments, prefer `initFromEnv()` which reads configuration from
+    /// environment variables, allowing runtime configuration without recompilation.
     pub fn initProduction() !*Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Production);
     }
 
+    /// Initializes Engine12 in testing mode for unit and integration tests.
+    ///
+    /// Testing mode provides:
+    /// - **Isolated Environment**: Uses staging environment settings.
+    /// - **Fast Initialization**: Minimal feature set for quick test startup.
+    /// - **Predictable Behavior**: Deterministic configuration for reproducible tests.
+    ///
+    /// ## Returns
+    /// A heap-allocated Engine12 pointer configured for testing.
+    ///
+    /// ## Example
+    /// ```zig
+    /// test "API endpoint returns 200" {
+    ///     const app = try Engine12.initTesting();
+    ///     defer {
+    ///         app.deinit();
+    ///         allocator.destroy(app);
+    ///     }
+    ///     try app.get("/test", testHandler);
+    ///     // ... test assertions
+    /// }
+    /// ```
     pub fn initTesting() !*Engine12 {
         return Engine12.initWithProfile(types.ServerProfile_Testing);
     }
 
-    /// Initialize Engine12 from environment variables.
-    /// Reads from .env file (if present) and system environment variables.
-    /// This is the recommended way to initialize for cloud deployments.
+    /// Initializes Engine12 from environment variables and .env files.
+    ///
+    /// This is the **recommended initialization method** for production deployments.
+    /// It automatically reads configuration from:
+    /// 1. `.env` file in the current directory (if present)
+    /// 2. System environment variables (override .env values)
+    ///
+    /// ## Supported Environment Variables
+    /// - `ENGINE12_ENV`: Environment mode (`development`, `staging`, `production`)
+    /// - `ENGINE12_HOST`: Server bind address (default: `127.0.0.1`)
+    /// - `ENGINE12_PORT`: Server port (default: `8080`)
+    /// - `ENGINE12_WORKERS`: Number of worker threads (default: `12`)
+    /// - `ENGINE12_READ_TIMEOUT_MS`: Request read timeout in milliseconds
+    /// - `ENGINE12_WRITE_TIMEOUT_MS`: Response write timeout in milliseconds
+    /// - `ENGINE12_MAX_BODY_SIZE`: Maximum request body size in bytes
+    ///
+    /// ## Returns
+    /// A heap-allocated Engine12 pointer with environment-based configuration.
+    ///
+    /// ## Example
+    /// ```zig
+    /// // .env file:
+    /// // ENGINE12_ENV=production
+    /// // ENGINE12_PORT=3000
+    ///
+    /// const app = try Engine12.initFromEnv();
+    /// defer {
+    ///     app.deinit();
+    ///     allocator.destroy(app);
+    /// }
+    /// try app.listen(); // Listens on port 3000
+    /// ```
+    ///
+    /// ## Note
+    /// In development mode (ENGINE12_ENV=development), hot reload and HTMX are
+    /// automatically enabled. In production mode, they are disabled for performance.
     pub fn initFromEnv() !*Engine12 {
         var cfg = try config_mod.Config.load(allocator);
         defer cfg.deinit();
         return initFromConfigInternal(&cfg);
     }
 
-    /// Initialize Engine12 from a Config struct.
-    /// Note: This copies string values from the config, so the config can be freed after this call.
+    /// Initializes Engine12 from a pre-built Config struct.
+    ///
+    /// Use this when you need programmatic control over configuration, such as
+    /// loading from a custom config file format or building configuration dynamically.
+    ///
+    /// ## Parameters
+    /// - `cfg`: A pointer to a Config struct containing server and limit settings.
+    ///   String values are copied, so the config can be safely freed after this call.
+    ///
+    /// ## Returns
+    /// A heap-allocated Engine12 pointer with the specified configuration.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var cfg = config_mod.Config{
+    ///     .environment = .production,
+    ///     .server = .{
+    ///         .host = "0.0.0.0",
+    ///         .port = 8080,
+    ///         .workers = 16,
+    ///     },
+    /// };
+    /// const app = try Engine12.initFromConfig(&cfg);
+    /// ```
+    ///
+    /// ## Note
+    /// For most use cases, `initFromEnv()` is simpler and more deployment-friendly.
     pub fn initFromConfig(cfg: *const config_mod.Config) !*Engine12 {
         return initFromConfigInternal(cfg);
     }
@@ -736,6 +955,21 @@ pub const Engine12 = struct {
         return app;
     }
 
+    /// Enables automatic HTMX library injection into HTML responses.
+    ///
+    /// When enabled, the HTMX JavaScript library is automatically injected into
+    /// HTML responses, enabling HTMX functionality without manual script includes.
+    /// Uses environment-appropriate defaults (minified in production).
+    ///
+    /// ## Note
+    /// Automatically enabled when using `initDevelopment()` or `initFromEnv()`
+    /// in development mode.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initProduction();
+    /// app.enableHtmx();  // Add HTMX support
+    /// ```
     pub fn enableHtmx(self: *Engine12) void {
         const config = if (self.profile.environment == .production)
             htmx_mod.production_config
@@ -744,6 +978,10 @@ pub const Engine12 = struct {
         self.enableHtmxWithConfig(config);
     }
 
+    /// Enables HTMX injection with custom configuration.
+    ///
+    /// ## Parameters
+    /// - `config`: HTMX configuration options (CDN URL, extensions, etc.)
     pub fn enableHtmxWithConfig(self: *Engine12, config: htmx_mod.HtmxConfig) void {
         self.htmx_config = config;
         htmx_mod.setConfig(config);
@@ -758,36 +996,78 @@ pub const Engine12 = struct {
         };
     }
 
+    /// Disables HTMX injection.
     pub fn disableHtmx(self: *Engine12) void {
         self.htmx_config = null;
         self.htmx_registration_failed = false;
         htmx_mod.setConfig(null);
     }
 
+    /// Returns whether HTMX injection is currently enabled.
+    ///
+    /// HTMX injection automatically adds the HTMX library to HTML responses,
+    /// enabling HTMX functionality without manual script includes.
     pub fn isHtmxEnabled(self: *const Engine12) bool {
         return self.htmx_config != null and self.htmx_config.?.enabled and !self.htmx_registration_failed;
     }
 
+    /// Applies a complete server configuration.
+    ///
+    /// Use this to set all server options at once. For individual settings,
+    /// use `setPort()` or `setHost()` instead.
+    ///
+    /// ## Example
+    /// ```zig
+    /// app.configure(.{
+    ///     .host = "0.0.0.0",
+    ///     .port = 3000,
+    ///     .worker_threads = 8,
+    /// });
+    /// ```
     pub fn configure(self: *Engine12, config: ServerConfig) void {
         self.server_config = config;
     }
 
+    /// Sets the TCP port the server will listen on.
+    ///
+    /// Must be called before `listen()` or `start()`.
+    /// Ports below 1024 require elevated privileges on Unix systems.
     pub fn setPort(self: *Engine12, port: u16) void {
         self.server_config.port = port;
     }
 
+    /// Sets the IP address the server will bind to.
+    ///
+    /// - Use "127.0.0.1" for localhost only (default)
+    /// - Use "0.0.0.0" to accept connections on all interfaces
     pub fn setHost(self: *Engine12, host: []const u8) void {
         self.server_config.host = host;
     }
 
+    /// Returns the configured server port.
     pub fn getPort(self: *Engine12) u16 {
         return self.server_config.port;
     }
 
+    /// Returns the configured server host address.
     pub fn getHost(self: *Engine12) []const u8 {
         return self.server_config.host;
     }
 
+    /// Releases all resources held by the Engine12 instance.
+    ///
+    /// This must be called before destroying the Engine12 pointer.
+    /// Automatically called by `stop()`, but should also be called explicitly
+    /// in defer blocks to ensure cleanup on errors.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initFromEnv();
+    /// defer {
+    ///     app.deinit();
+    ///     allocator.destroy(app);
+    /// }
+    /// ```
     pub fn deinit(self: *Engine12) void {
         self.is_running.store(false, .monotonic);
 
@@ -833,6 +1113,20 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Registers a Valve plugin with the application.
+    ///
+    /// Valves are modular plugins that extend Engine12's functionality.
+    /// They can add routes, middleware, background tasks, and respond to
+    /// application lifecycle events.
+    ///
+    /// ## Parameters
+    /// - `valve_ptr`: Pointer to a Valve struct implementing the valve interface.
+    ///
+    /// ## Example
+    /// ```zig
+    /// var auth_valve = AuthValve.init(config);
+    /// try app.registerValve(&auth_valve.valve);
+    /// ```
     pub fn registerValve(self: *Engine12, valve_ptr: *valve_mod.Valve) !void {
         if (self.valve_registry == null) {
             self.valve_registry = valve_registry_mod.ValveRegistry.init(self.allocator);
@@ -843,6 +1137,13 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Removes a registered valve by name.
+    ///
+    /// ## Parameters
+    /// - `name`: The name of the valve to unregister.
+    ///
+    /// ## Errors
+    /// - `ValveError.ValveNotFound`: No valve with the given name is registered.
     pub fn unregisterValve(self: *Engine12, name: []const u8) !void {
         if (self.valve_registry) |*registry| {
             try registry.unregister(name);
@@ -858,6 +1159,37 @@ pub const Engine12 = struct {
         return null;
     }
 
+    /// Registers a GET route handler for the specified URL path pattern.
+    ///
+    /// GET routes are used to retrieve resources and should be idempotent (calling
+    /// multiple times produces the same result). This is the most common route type
+    /// for serving web pages and API data retrieval.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: A comptime URL path that can include dynamic segments:
+    ///   - Static paths: `/users`, `/api/todos`
+    ///   - Dynamic segments: `/users/:id`, `/posts/:slug/comments`
+    ///   - The `:param` segments are extracted and available via `request.param("id")`
+    /// - `handler`: A function with signature `fn (*Request) Response`
+    ///
+    /// ## Errors
+    /// - `error.TooManyRoutes`: Maximum route limit exceeded (configurable in LimitsConfig)
+    /// - `error.ServerAlreadyBuilt`: Routes cannot be added after `listen()` is called
+    ///
+    /// ## Example
+    /// ```zig
+    /// // Static route
+    /// try app.get("/", handleIndex);
+    ///
+    /// // Dynamic route with parameter
+    /// try app.get("/users/:id", handleUserProfile);
+    ///
+    /// fn handleUserProfile(req: *Request) Response {
+    ///     const user_id = req.param("id") orelse return Response.badRequest("Missing user ID");
+    ///     // Fetch and return user data...
+    ///     return Response.json(user_json);
+    /// }
+    /// ```
     pub fn get(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
@@ -909,18 +1241,44 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
+    /// Registers a GET route with a handler that can return errors.
+    ///
+    /// This is a convenience wrapper for handlers that use Zig's error handling instead
+    /// of manually constructing error responses. Errors are automatically converted to
+    /// appropriate HTTP error responses.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: URL path pattern (see `get()` for pattern syntax)
+    /// - `handler`: A function with signature `fn (*Request) !Response`
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.getTry("/users/:id", handleUser);
+    ///
+    /// fn handleUser(req: *Request) !Response {
+    ///     const id = try std.fmt.parseInt(u32, req.param("id").?, 10);
+    ///     const user = try db.getUser(id);  // Errors auto-convert to 500
+    ///     return Response.json(user);
+    /// }
+    /// ```
     pub fn getTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.get(path_pattern, types.wrapTryHandler(handler));
     }
 
+    /// Registers a POST route with a handler that can return errors.
+    /// See `getTry()` for error handling behavior.
     pub fn postTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.post(path_pattern, types.wrapTryHandler(handler));
     }
 
+    /// Registers a PUT route with a handler that can return errors.
+    /// See `getTry()` for error handling behavior.
     pub fn putTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.put(path_pattern, types.wrapTryHandler(handler));
     }
 
+    /// Registers a DELETE route with a handler that can return errors.
+    /// See `getTry()` for error handling behavior.
     pub fn deleteTry(self: *Engine12, comptime path_pattern: []const u8, comptime handler: types.TryHttpHandler) !void {
         return self.delete(path_pattern, types.wrapTryHandler(handler));
     }
@@ -976,6 +1334,30 @@ pub const Engine12 = struct {
         try self.get(path_pattern, createHandler);
     }
 
+    /// Registers a POST route handler for the specified URL path pattern.
+    ///
+    /// POST routes are used to create new resources or submit data that causes side effects.
+    /// Unlike GET requests, POST requests are not idempotent and typically include a request body.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: A comptime URL path (see `get()` for pattern syntax)
+    /// - `handler`: A function with signature `fn (*Request) Response`
+    ///
+    /// ## Request Body Access
+    /// Access the request body using `request.body()` or parse JSON with `request.json(T)`:
+    /// ```zig
+    /// fn handleCreate(req: *Request) Response {
+    ///     const todo = req.json(Todo) catch return Response.badRequest("Invalid JSON");
+    ///     // Process and save the todo...
+    ///     return Response.json(saved_todo).withStatus(201);
+    /// }
+    /// ```
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.post("/api/todos", handleCreateTodo);
+    /// try app.post("/users/:id/avatar", handleUploadAvatar);
+    /// ```
     pub fn post(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
@@ -1023,10 +1405,37 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
+    /// Alias for `post()`. Registers a POST route handler.
+    /// Useful for semantic clarity when the route doesn't expect a request body.
     pub fn postEmpty(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         return self.post(path_pattern, handler);
     }
 
+    /// Registers a PUT route handler for the specified URL path pattern.
+    ///
+    /// PUT routes are used to update or replace an existing resource entirely.
+    /// PUT requests should be idempotent - calling them multiple times with the
+    /// same data produces the same result.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: A comptime URL path (see `get()` for pattern syntax)
+    /// - `handler`: A function with signature `fn (*Request) Response`
+    ///
+    /// ## PUT vs PATCH
+    /// - **PUT**: Replaces the entire resource with the request body
+    /// - **PATCH**: Partially updates the resource (not yet implemented in Engine12)
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.put("/api/todos/:id", handleUpdateTodo);
+    ///
+    /// fn handleUpdateTodo(req: *Request) Response {
+    ///     const id = req.param("id") orelse return Response.badRequest("Missing ID");
+    ///     const updated_todo = req.json(Todo) catch return Response.badRequest("Invalid JSON");
+    ///     // Update the todo in database...
+    ///     return Response.json(updated_todo);
+    /// }
+    /// ```
     pub fn put(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
@@ -1074,6 +1483,30 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
+    /// Registers a DELETE route handler for the specified URL path pattern.
+    ///
+    /// DELETE routes are used to remove resources. DELETE requests should be idempotent -
+    /// deleting a resource that doesn't exist should return success (or 404), not an error.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: A comptime URL path (see `get()` for pattern syntax)
+    /// - `handler`: A function with signature `fn (*Request) Response`
+    ///
+    /// ## Response Conventions
+    /// - **200 OK**: Resource deleted successfully, response body contains deleted resource
+    /// - **204 No Content**: Resource deleted successfully, no response body
+    /// - **404 Not Found**: Resource didn't exist (optional - some APIs return 200/204)
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.delete("/api/todos/:id", handleDeleteTodo);
+    ///
+    /// fn handleDeleteTodo(req: *Request) Response {
+    ///     const id = req.param("id") orelse return Response.badRequest("Missing ID");
+    ///     // Delete from database...
+    ///     return Response.noContent();  // 204 response
+    /// }
+    /// ```
     pub fn delete(self: *Engine12, comptime path_pattern: []const u8, comptime handler: anytype) !void {
         if (self.routes_count >= self.limits.max_routes) {
             return error.TooManyRoutes;
@@ -1121,6 +1554,24 @@ pub const Engine12 = struct {
         self.routes_count += 1;
     }
 
+    /// Creates a route group with a common URL prefix.
+    ///
+    /// Route groups help organize related routes and can apply shared middleware.
+    /// All routes registered through the group will have the prefix prepended.
+    ///
+    /// ## Parameters
+    /// - `prefix`: URL prefix for all routes in the group (e.g., "/api/v1")
+    ///
+    /// ## Returns
+    /// A RouteGroup that can be used to register routes with the prefix.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const api = app.group("/api/v1");
+    /// try api.get("/users", handleListUsers);     // Registers /api/v1/users
+    /// try api.post("/users", handleCreateUser);   // Registers /api/v1/users
+    /// try api.get("/users/:id", handleGetUser);   // Registers /api/v1/users/:id
+    /// ```
     pub fn group(self: *Engine12, prefix: []const u8) route_group.RouteGroup {
         const get_wrapper = struct {
             fn wrap(ptr: *anyopaque, comptime path: []const u8, handler: anytype) !void {
@@ -1161,6 +1612,10 @@ pub const Engine12 = struct {
         };
     }
 
+    /// Returns the OpenAPI generator for programmatic schema building.
+    ///
+    /// Creates the generator on first access. Use this for advanced customization
+    /// of the OpenAPI specification beyond what `enableOpenApiDocs()` provides.
     pub fn getOpenApiGenerator(self: *Engine12) !*openapi.OpenAPIGenerator {
         if (self.openapi_generator == null) {
             self.openapi_generator = openapi.OpenAPIGenerator.init(self.allocator, .{
@@ -1171,6 +1626,26 @@ pub const Engine12 = struct {
         return &self.openapi_generator.?;
     }
 
+    /// Enables interactive API documentation with Swagger UI.
+    ///
+    /// Mounts a Swagger UI interface at the specified path, providing interactive
+    /// API documentation based on the OpenAPI specification. The JSON spec is
+    /// automatically served at `{mount_path}/openapi.json`.
+    ///
+    /// ## Parameters
+    /// - `mount_path`: URL path for the documentation UI (e.g., "/docs")
+    /// - `info`: API metadata (title, version, description)
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.enableOpenApiDocs("/docs", .{
+    ///     .title = "My API",
+    ///     .version = "1.0.0",
+    ///     .description = "REST API for my application",
+    /// });
+    /// // Swagger UI available at http://localhost:8080/docs
+    /// // OpenAPI JSON at http://localhost:8080/docs/openapi.json
+    /// ```
     pub fn enableOpenApiDocs(self: *Engine12, comptime mount_path: []const u8, info: openapi.OpenApiInfo) !void {
         if (self.openapi_generator == null) {
             self.openapi_generator = openapi.OpenAPIGenerator.init(self.allocator, info);
@@ -1228,10 +1703,53 @@ pub const Engine12 = struct {
         }.handler);
     }
 
+    /// Registers a complete RESTful API for an ORM model.
+    ///
+    /// Automatically generates standard CRUD endpoints for the model:
+    /// - `GET {prefix}` - List all (with pagination, filtering, sorting)
+    /// - `GET {prefix}/:id` - Get single resource
+    /// - `POST {prefix}` - Create new resource
+    /// - `PUT {prefix}/:id` - Update resource
+    /// - `DELETE {prefix}/:id` - Delete resource
+    ///
+    /// ## Parameters
+    /// - `prefix`: URL prefix for the API (e.g., "/api/todos")
+    /// - `Model`: The ORM model type (must have table metadata)
+    /// - `config`: Configuration for validation, auth, caching, etc.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.restApi("/api/todos", Todo, .{
+    ///     .orm = orm,
+    ///     .validator = validateTodo,
+    ///     .enable_pagination = true,
+    ///     .default_limit = 20,
+    ///     .max_limit = 100,
+    ///     .enable_filtering = true,
+    ///     .enable_sorting = true,
+    ///     .cache_ttl_ms = 30000,
+    /// });
+    /// ```
     pub fn restApi(self: *Engine12, comptime prefix: []const u8, comptime Model: type, config: rest_api_mod.RestApiConfig(Model)) !void {
         return rest_api_mod.restApi(self, prefix, Model, config);
     }
 
+    /// Registers a RESTful API with sensible defaults.
+    ///
+    /// Simplified version of `restApi()` that uses default configuration
+    /// with optional overrides. Useful for quick prototyping.
+    ///
+    /// ## Parameters
+    /// - `prefix`: URL prefix for the API
+    /// - `Model`: The ORM model type
+    /// - `overrides`: Struct with fields to override defaults
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.restApiDefault("/api/users", User, .{
+    ///     .validator = validateUser,
+    /// });
+    /// ```
     pub fn restApiDefault(
         self: *Engine12,
         comptime prefix: []const u8,
@@ -1294,22 +1812,76 @@ pub const Engine12 = struct {
         return rest_api_mod.restApi(self, prefix, Model, config);
     }
 
+    /// Registers a custom error handler for transforming errors into HTTP responses.
+    ///
+    /// The error handler receives the request, error details, and an allocator to construct
+    /// a custom error response. Use this to implement consistent error formatting, logging,
+    /// and error-specific status codes across your application.
+    ///
+    /// ## Parameters
+    /// - `handler`: A function with signature `fn (*Request, ErrorResponse, Allocator) Response`
+    ///
+    /// ## Example
+    /// ```zig
+    /// app.useErrorHandler(customErrorHandler);
+    ///
+    /// fn customErrorHandler(req: *Request, err: ErrorResponse, alloc: Allocator) Response {
+    ///     const json = err.toJson(alloc, false) catch return Response.serverError("Error");
+    ///     defer alloc.free(json);
+    ///     return Response.json(json).withStatus(err.statusCode());
+    /// }
+    /// ```
     pub fn useErrorHandler(self: *Engine12, handler: error_handler.ErrorHandler) void {
         self.error_handler_registry.register(handler);
     }
 
+    /// Configures the rate limiter for throttling requests.
+    ///
+    /// Rate limiting protects your API from abuse and ensures fair resource usage.
+    /// The limiter must be heap-allocated to persist for the application lifetime.
+    ///
+    /// ## Parameters
+    /// - `limiter`: A heap-allocated RateLimiter configured with request limits and time windows.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const limiter = try allocator.create(RateLimiter);
+    /// limiter.* = RateLimiter.init(allocator, .{
+    ///     .max_requests = 100,
+    ///     .window_ms = 60000,  // 100 requests per minute
+    /// });
+    /// app.setRateLimiter(limiter);
+    /// ```
     pub fn setRateLimiter(self: *Engine12, limiter: *rate_limit.RateLimiter) void {
         if (self.engine_context) |ctx| {
             ctx.rate_limiter = limiter;
         }
     }
 
+    /// Configures the response cache for caching HTTP responses.
+    ///
+    /// Response caching reduces database load and improves response times for
+    /// frequently accessed, cacheable content. The cache must be heap-allocated.
+    ///
+    /// ## Parameters
+    /// - `response_cache`: A heap-allocated ResponseCache with TTL configuration.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const cache = try allocator.create(ResponseCache);
+    /// cache.* = ResponseCache.init(allocator, 60000);  // 60 second TTL
+    /// app.setCache(cache);
+    /// ```
     pub fn setCache(self: *Engine12, response_cache: *cache.ResponseCache) void {
         if (self.engine_context) |ctx| {
             ctx.cache = response_cache;
         }
     }
 
+    /// Returns the configured response cache, if any.
+    ///
+    /// ## Returns
+    /// A pointer to the ResponseCache, or null if no cache is configured.
     pub fn getCache(self: *Engine12) ?*cache.ResponseCache {
         if (self.engine_context) |ctx| {
             return ctx.cache;
@@ -1317,15 +1889,53 @@ pub const Engine12 = struct {
         return null;
     }
 
+    /// Returns a pointer to the application's logger instance.
+    ///
+    /// The logger provides structured logging with configurable levels and output formats.
+    /// Use this to add application-specific log entries that integrate with Engine12's
+    /// logging infrastructure.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const logger = app.getLogger();
+    /// logger.infoMsg("Application started");
+    /// logger.errorMsg("Database connection failed");
+    /// ```
     pub fn getLogger(self: *Engine12) *dev_tools.Logger {
         return &self.logger;
     }
 
+    /// Replaces the application's logger with a custom implementation.
+    ///
+    /// The previous logger is properly deinitialized before replacement.
+    ///
+    /// ## Parameters
+    /// - `logger`: A new Logger instance to use for all application logging.
     pub fn setLogger(self: *Engine12, logger: dev_tools.Logger) void {
         self.logger.deinit();
         self.logger = logger;
     }
 
+    /// Enables built-in request/response logging middleware.
+    ///
+    /// This middleware logs incoming requests and outgoing responses with timing
+    /// information. Useful for debugging and monitoring in development and production.
+    ///
+    /// ## Parameters
+    /// - `config`: Optional LoggingConfig to customize what is logged. Pass `null` for defaults.
+    ///
+    /// ## Example
+    /// ```zig
+    /// // Use defaults
+    /// try app.enableRequestLogging(null);
+    ///
+    /// // Custom configuration
+    /// try app.enableRequestLogging(.{
+    ///     .log_requests = true,
+    ///     .log_responses = true,
+    ///     .exclude_paths = &.{ "/health", "/metrics" },
+    /// });
+    /// ```
     pub fn enableRequestLogging(self: *Engine12, config: ?@import("middleware/logging_middleware.zig").LoggingConfig) !void {
         const logging_middleware_mod = @import("middleware/logging_middleware.zig");
         const default_config = logging_middleware_mod.LoggingConfig{};
@@ -1339,14 +1949,89 @@ pub const Engine12 = struct {
         try self.useResponse(logging_mw.responseMwFn());
     }
 
+    /// Registers a pre-request middleware function.
+    ///
+    /// Pre-request middleware runs before the route handler and can:
+    /// - Modify the request (add headers, parse data, set context values)
+    /// - Abort the request early by returning a response
+    /// - Allow the request to proceed to the next middleware or handler
+    ///
+    /// Middleware executes in registration order. The first middleware to return
+    /// `.abort` stops the chain and sends its response to the client.
+    ///
+    /// ## Parameters
+    /// - `middleware`: A function with signature `fn (*Request) MiddlewareResult`
+    ///   where MiddlewareResult is `.proceed` or `.abort`
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.usePreRequest(&authMiddleware);
+    ///
+    /// fn authMiddleware(req: *Request) MiddlewareResult {
+    ///     if (req.header("Authorization") == null) {
+    ///         return .abort;  // Returns 401 Unauthorized
+    ///     }
+    ///     return .proceed;
+    /// }
+    /// ```
     pub fn usePreRequest(self: *Engine12, middleware: middleware_chain.PreRequestMiddlewareFn) !void {
         try self.middleware.addPreRequest(middleware);
     }
 
+    /// Registers a response middleware function.
+    ///
+    /// Response middleware runs after the route handler and can transform the
+    /// response before it's sent to the client. Common uses include:
+    /// - Adding security headers (CORS, CSP, etc.)
+    /// - Compressing response bodies
+    /// - Injecting scripts or content (e.g., HTMX, hot reload)
+    /// - Response logging and metrics
+    ///
+    /// ## Parameters
+    /// - `middleware`: A function with signature `fn (Response, *Request) Response`
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.useResponse(&securityHeaders);
+    ///
+    /// fn securityHeaders(response: Response, req: *Request) Response {
+    ///     _ = req;
+    ///     return response
+    ///         .withHeader("X-Content-Type-Options", "nosniff")
+    ///         .withHeader("X-Frame-Options", "DENY");
+    /// }
+    /// ```
     pub fn useResponse(self: *Engine12, middleware: middleware_chain.ResponseMiddlewareFn) !void {
         try self.middleware.addResponse(middleware);
     }
 
+    /// Loads a template file and registers it for hot-reload watching.
+    ///
+    /// This function is only available in development mode (`initDevelopment()`).
+    /// Templates are automatically reloaded when the file changes on disk.
+    ///
+    /// ## Parameters
+    /// - `template_path`: Relative or absolute path to the template file.
+    ///
+    /// ## Returns
+    /// A pointer to the RuntimeTemplate that can be used for rendering.
+    ///
+    /// ## Errors
+    /// - `error.HotReloadNotEnabled`: Called outside development mode.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const app = try Engine12.initDevelopment();
+    /// const template = try app.loadTemplate("templates/index.zt.html");
+    /// const html = try template.render(MyContext, context, allocator);
+    /// ```
+    ///
+    /// ## Note
+    /// In production, use comptime templates with `@embedFile` for better performance:
+    /// ```zig
+    /// const TemplateType = Template.compileFile("templates/index.zt.html");
+    /// const html = try TemplateType.render(Context, context, allocator);
+    /// ```
     pub fn loadTemplate(self: *Engine12, template_path: []const u8) !*hot_reload_mod.RuntimeTemplate {
         if (self.hot_reload_manager) |manager| {
             return try manager.watchTemplate(template_path);
@@ -1359,10 +2044,15 @@ pub const Engine12 = struct {
         return error.HotReloadNotEnabled;
     }
 
+    /// A registry that maps template names to their RuntimeTemplate instances.
+    ///
+    /// Used with `discoverTemplates()` to automatically load all templates from a directory.
+    /// Template names are derived from filenames (e.g., "index.zt.html" becomes "index").
     pub const TemplateRegistry = struct {
         templates: std.StringHashMap(*hot_reload_mod.RuntimeTemplate),
         registry_allocator: std.mem.Allocator,
 
+        /// Creates a new empty TemplateRegistry.
         pub fn init(alloc: std.mem.Allocator) TemplateRegistry {
             return TemplateRegistry{
                 .templates = std.StringHashMap(*hot_reload_mod.RuntimeTemplate).init(alloc),
@@ -1370,18 +2060,23 @@ pub const Engine12 = struct {
             };
         }
 
+        /// Retrieves a template by name.
+        /// Returns null if the template is not found.
         pub fn get(self: *TemplateRegistry, name: []const u8) ?*hot_reload_mod.RuntimeTemplate {
             return self.templates.get(name);
         }
 
+        /// Checks if a template with the given name exists.
         pub fn has(self: *TemplateRegistry, name: []const u8) bool {
             return self.templates.contains(name);
         }
 
+        /// Returns the number of templates in the registry.
         pub fn count(self: *const TemplateRegistry) usize {
             return self.templates.count();
         }
 
+        /// Frees all resources associated with the registry.
         pub fn deinit(self: *TemplateRegistry) void {
             var iter = self.templates.iterator();
             while (iter.next()) |entry| {
@@ -1391,6 +2086,31 @@ pub const Engine12 = struct {
         }
     };
 
+    /// Scans a directory for template files and loads them into a registry.
+    ///
+    /// Automatically discovers all `.zt.html` files in the specified directory,
+    /// loads them with hot-reload support, and creates a registry for easy access.
+    /// Template names are derived from filenames without the extension.
+    ///
+    /// ## Parameters
+    /// - `templates_dir`: Path to the directory containing template files.
+    ///
+    /// ## Returns
+    /// A TemplateRegistry containing all discovered templates.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const registry = try app.discoverTemplates("src/templates");
+    /// defer registry.deinit();
+    ///
+    /// // Access templates by name (filename without .zt.html)
+    /// if (registry.get("index")) |template| {
+    ///     const html = try template.render(Context, ctx, allocator);
+    /// }
+    /// ```
+    ///
+    /// ## Note
+    /// Only available in development mode. Returns an empty registry in production.
     pub fn discoverTemplates(
         self: *Engine12,
         templates_dir: []const u8,
@@ -1454,6 +2174,34 @@ pub const Engine12 = struct {
         return registry;
     }
 
+    /// Registers a WebSocket endpoint at the specified path.
+    ///
+    /// WebSocket connections allow real-time, bidirectional communication between
+    /// the server and clients. Use this for features like live updates, chat,
+    /// collaborative editing, or streaming data.
+    ///
+    /// ## Parameters
+    /// - `path_pattern`: The URL path for WebSocket connections (e.g., "/ws/chat")
+    /// - `handler`: A function called when a new WebSocket connection is established.
+    ///   Signature: `fn (*WebSocketConnection) void`
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.websocket("/ws/notifications", handleNotifications);
+    ///
+    /// fn handleNotifications(conn: *WebSocketConnection) void {
+    ///     // Join a room for broadcasting
+    ///     conn.joinRoom("global") catch return;
+    ///
+    ///     // Handle incoming messages
+    ///     while (conn.receive()) |message| {
+    ///         conn.send(message) catch break;
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## Note
+    /// The WebSocket manager is automatically initialized on first use.
     pub fn websocket(self: *Engine12, comptime path_pattern: []const u8, handler: types.WebSocketHandler) !void {
         if (self.ws_routes_count >= self.limits.max_ws_routes) {
             return error.TooManyWebSocketRoutes;
@@ -1474,6 +2222,26 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Automatically discovers and registers static file routes from a directory.
+    ///
+    /// Scans subdirectories of the given path and mounts each as a static file route.
+    /// For example, a `static/css` directory becomes available at `/css/*`.
+    ///
+    /// ## Parameters
+    /// - `static_dir`: Path to the parent directory containing static asset folders.
+    ///
+    /// ## Example
+    /// ```zig
+    /// // Directory structure:
+    /// // static/
+    /// //   css/
+    /// //     styles.css
+    /// //   js/
+    /// //     app.js
+    ///
+    /// try app.discoverStaticFiles("static");
+    /// // Now accessible at /css/styles.css and /js/app.js
+    /// ```
     pub fn discoverStaticFiles(self: *Engine12, static_dir: []const u8) !void {
         var dir = std.fs.cwd().openDir(static_dir, .{ .iterate = true }) catch |err| {
             std.debug.print("[Engine12] Warning: Could not open static directory '{s}': {}\n", .{ static_dir, err });
@@ -1508,10 +2276,25 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Alias for `discoverStaticFiles()`. Scans and registers static file routes.
     pub fn serveStaticDirectory(self: *Engine12, static_dir: []const u8) !void {
         try self.discoverStaticFiles(static_dir);
     }
 
+    /// Mounts a directory of static files at the specified URL path.
+    ///
+    /// This is a convenience wrapper around `serveStatic()` that handles path
+    /// normalization (removes trailing slashes and wildcards).
+    ///
+    /// ## Parameters
+    /// - `mount_path`: URL path prefix (e.g., "/assets", "/static/*")
+    /// - `directory`: Filesystem path to the directory containing files.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.static("/assets/*", "public/assets");
+    /// // Files in public/assets/ are now served at /assets/*
+    /// ```
     pub fn static(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
         var clean_mount = mount_path;
         if (std.mem.endsWith(u8, clean_mount, "/*")) {
@@ -1528,6 +2311,24 @@ pub const Engine12 = struct {
         try self.serveStatic(clean_mount, directory);
     }
 
+    /// Mounts a directory of static files at the specified URL path.
+    ///
+    /// Files are served with appropriate MIME types based on extension.
+    /// In development mode, caching is disabled for live reload support.
+    ///
+    /// ## Parameters
+    /// - `mount_path`: URL path prefix where files will be accessible.
+    /// - `directory`: Filesystem path to the directory containing files.
+    ///
+    /// ## Errors
+    /// - `error.TooManyStaticRoutes`: Maximum static route limit exceeded.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.serveStatic("/css", "public/stylesheets");
+    /// try app.serveStatic("/js", "public/javascripts");
+    /// try app.serveStatic("/", "public");  // Serve index.html at root
+    /// ```
     pub fn serveStatic(self: *Engine12, mount_path: []const u8, directory: []const u8) !void {
         if (self.static_routes_count >= self.limits.max_static_routes) {
             return error.TooManyStaticRoutes;
@@ -1675,6 +2476,23 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Initializes the database connection from environment configuration.
+    ///
+    /// Reads database configuration from environment variables and establishes
+    /// the connection. The database path can be overridden by the `db_path` parameter.
+    ///
+    /// ## Parameters
+    /// - `db_path`: Default path to the SQLite database file.
+    ///
+    /// ## Environment Variables
+    /// - `DATABASE_URL`: Full database connection URL (overrides db_path)
+    /// - `DATABASE_DRIVER`: Database driver (`sqlite` or `postgresql`)
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.initDatabase("data/app.db");
+    /// const orm = try app.getORM();
+    /// ```
     pub fn initDatabase(self: *Engine12, db_path: []const u8) !void {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
         const loadConfigFromEnv = @import("orm/singleton.zig").loadConfigFromEnv;
@@ -1683,6 +2501,19 @@ pub const Engine12 = struct {
         try DatabaseSingleton.initWithConfig(config, self.allocator);
     }
 
+    /// Initializes the database and runs pending migrations.
+    ///
+    /// Combines `initDatabase()` with automatic migration discovery and execution.
+    /// Migrations are discovered from `.zig` files in the specified directory.
+    ///
+    /// ## Parameters
+    /// - `db_path`: Path to the database file.
+    /// - `migrations_dir`: Path to the directory containing migration files.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.initDatabaseWithMigrations("data/app.db", "src/migrations");
+    /// ```
     pub fn initDatabaseWithMigrations(
         self: *Engine12,
         db_path: []const u8,
@@ -1712,11 +2543,44 @@ pub const Engine12 = struct {
         try orm_instance.runMigrationsFromRegistry(&registry);
     }
 
+    /// Returns the ORM instance for database operations.
+    ///
+    /// The ORM provides a fluent interface for querying and persisting data.
+    /// The database must be initialized with `initDatabase()` before calling this.
+    ///
+    /// ## Returns
+    /// A pointer to the ORM instance.
+    ///
+    /// ## Errors
+    /// Returns an error if the database has not been initialized.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const orm = try app.getORM();
+    /// const users = try orm.findAll(User);
+    /// ```
     pub fn getORM(_: *Engine12) !*orm.ORM {
         const DatabaseSingleton = @import("orm/singleton.zig").DatabaseSingleton;
         return DatabaseSingleton.get();
     }
 
+    /// Registers a one-time background task to run when the server starts.
+    ///
+    /// Background tasks run in separate threads and are supervised for restarts
+    /// on failure. Use this for initialization tasks or long-running processes.
+    ///
+    /// ## Parameters
+    /// - `name`: A descriptive name for the task (used in logs).
+    /// - `task`: A function pointer with signature `fn () void`.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.runTask("cache-warmup", warmupCache);
+    ///
+    /// fn warmupCache() void {
+    ///     // Pre-populate cache with frequently accessed data
+    /// }
+    /// ```
     pub fn runTask(self: *Engine12, name: []const u8, task: types.BackgroundTask) !void {
         if (self.workers_count >= self.limits.max_background_workers) {
             return error.TooManyWorkers;
@@ -1729,6 +2593,25 @@ pub const Engine12 = struct {
         self.workers_count += 1;
     }
 
+    /// Registers a recurring background task that runs at fixed intervals.
+    ///
+    /// Periodic tasks are useful for maintenance operations like cache cleanup,
+    /// health monitoring, or data synchronization.
+    ///
+    /// ## Parameters
+    /// - `name`: A descriptive name for the task.
+    /// - `task`: A function pointer with signature `fn () void`.
+    /// - `interval_ms`: Time between executions in milliseconds.
+    ///
+    /// ## Example
+    /// ```zig
+    /// // Clean up expired sessions every 5 minutes
+    /// try app.schedulePeriodicTask("session-cleanup", cleanupSessions, 300_000);
+    ///
+    /// fn cleanupSessions() void {
+    ///     // Delete expired sessions from database
+    /// }
+    /// ```
     pub fn schedulePeriodicTask(self: *Engine12, name: []const u8, task: types.BackgroundTask, interval_ms: u32) !void {
         if (self.workers_count >= self.limits.max_background_workers) {
             return error.TooManyWorkers;
@@ -1741,6 +2624,30 @@ pub const Engine12 = struct {
         self.workers_count += 1;
     }
 
+    /// Registers a health check function for the `/health` endpoint.
+    ///
+    /// Health checks are called when the `/health` endpoint is accessed and
+    /// determine the overall system health status. Use for checking database
+    /// connectivity, external service availability, or resource thresholds.
+    ///
+    /// ## Parameters
+    /// - `check`: A function returning `HealthStatus` (.healthy, .degraded, .unhealthy)
+    ///
+    /// ## Health Status Logic
+    /// - All checks healthy → system healthy
+    /// - Any check degraded → system degraded
+    /// - Any check unhealthy → system unhealthy (fails fast)
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.registerHealthCheck(&checkDatabaseHealth);
+    ///
+    /// fn checkDatabaseHealth() HealthStatus {
+    ///     const orm = getORM() catch return .unhealthy;
+    ///     orm.db.query("SELECT 1") catch return .unhealthy;
+    ///     return .healthy;
+    /// }
+    /// ```
     pub fn registerHealthCheck(self: *Engine12, check: types.HealthCheckFn) !void {
         if (self.health_checks_count >= self.limits.max_health_checks) {
             return error.TooManyHealthChecks;
@@ -1749,6 +2656,12 @@ pub const Engine12 = struct {
         self.health_checks_count += 1;
     }
 
+    /// Evaluates all registered health checks and returns the overall system status.
+    ///
+    /// ## Returns
+    /// - `.healthy`: All checks passed
+    /// - `.degraded`: At least one check returned degraded, but none unhealthy
+    /// - `.unhealthy`: At least one check failed
     pub fn getSystemHealth(self: *Engine12) types.HealthStatus {
         var overall_status: types.HealthStatus = .healthy;
         var i: usize = 0;
@@ -1767,15 +2680,34 @@ pub const Engine12 = struct {
         return overall_status;
     }
 
+    /// Returns how long the server has been running in milliseconds.
+    ///
+    /// Returns 0 if the server has not been started.
     pub fn getUptimeMs(self: *Engine12) i64 {
         if (self.start_time == 0) return 0;
         return std.time.milliTimestamp() - self.start_time;
     }
 
+    /// Returns the total number of requests processed since server start.
     pub fn getRequestCount(self: *Engine12) u64 {
         return self.request_count;
     }
 
+    /// Starts all server components without blocking.
+    ///
+    /// This starts the HTTP server, background tasks, WebSocket servers, and
+    /// hot reload manager (in development mode). Use this when you need to
+    /// start the server as part of a larger application or test harness.
+    ///
+    /// For most applications, use `listen()` instead which blocks until shutdown.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.start();
+    /// // Server is now running
+    /// // ... do other work ...
+    /// try app.stop();
+    /// ```
     pub fn start(self: *Engine12) !void {
         if (@import("builtin").mode == .Debug) {
             std.debug.print("\n[WARN] Running in Debug mode. Performance is significantly slower.\n", .{});
@@ -1797,6 +2729,37 @@ pub const Engine12 = struct {
         }
     }
 
+    /// Starts the server and blocks until shutdown is triggered.
+    ///
+    /// This is the main entry point for running an Engine12 application.
+    /// It starts all server components, installs signal handlers for graceful
+    /// shutdown (SIGINT/SIGTERM), and blocks until the server is stopped.
+    ///
+    /// ## Signal Handling
+    /// - First Ctrl+C (SIGINT) or SIGTERM: Initiates graceful shutdown
+    /// - Second signal: Forces immediate exit
+    ///
+    /// ## Graceful Shutdown
+    /// On shutdown, the server:
+    /// 1. Stops accepting new connections
+    /// 2. Waits for in-flight requests to complete (with timeout)
+    /// 3. Executes registered shutdown hooks
+    /// 4. Stops background tasks and WebSocket servers
+    /// 5. Releases all resources
+    ///
+    /// ## Example
+    /// ```zig
+    /// pub fn main() !void {
+    ///     const app = try Engine12.initFromEnv();
+    ///     defer {
+    ///         app.deinit();
+    ///         allocator.destroy(app);
+    ///     }
+    ///
+    ///     try app.get("/", handleIndex);
+    ///     try app.listen();  // Blocks until Ctrl+C
+    /// }
+    /// ```
     pub fn listen(self: *Engine12) !void {
         // Store global reference for signal handler
         global_engine12_instance = self;
@@ -1832,6 +2795,25 @@ pub const Engine12 = struct {
         global_engine12_instance = null;
     }
 
+    /// Gracefully shuts down all server components.
+    ///
+    /// This function:
+    /// 1. Signals worker threads to stop
+    /// 2. Closes the listening socket
+    /// 3. Waits for active requests to complete (with configurable timeout)
+    /// 4. Executes shutdown hooks in registration order
+    /// 5. Stops valves, hot reload, WebSocket, and HTTP servers
+    /// 6. Cleans up connection queues
+    ///
+    /// Normally called automatically by `listen()` on signal receipt.
+    /// Call directly when using `start()` for manual lifecycle control.
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.start();
+    /// // ... run tests or other logic ...
+    /// try app.stop();
+    /// ```
     pub fn stop(self: *Engine12) !void {
         std.debug.print("\n[System] Initiating graceful shutdown...\n", .{});
 
@@ -1897,10 +2879,36 @@ pub const Engine12 = struct {
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
 
+    /// Registers a function to be called during graceful shutdown.
+    ///
+    /// Shutdown hooks run after the server stops accepting new connections
+    /// but before resources are fully released. Use for cleanup operations
+    /// like closing database connections, flushing caches, or notifying
+    /// external services.
+    ///
+    /// Hooks execute in registration order.
+    ///
+    /// ## Parameters
+    /// - `hook`: A function with signature `fn () void`
+    ///
+    /// ## Example
+    /// ```zig
+    /// try app.registerShutdownHook(flushMetrics);
+    /// try app.registerShutdownHook(closeDatabase);
+    ///
+    /// fn flushMetrics() void {
+    ///     // Send final metrics before shutdown
+    /// }
+    /// ```
     pub fn registerShutdownHook(self: *Engine12, hook: shutdown_utils.ShutdownHook) !void {
         try self.shutdown_hooks.register(hook, self.allocator);
     }
 
+    /// Returns the number of currently active (in-flight) requests.
+    ///
+    /// Useful for monitoring load or implementing custom backpressure.
+    /// During graceful shutdown, the server waits for this count to reach
+    /// zero before fully stopping.
     pub fn getActiveRequestCount(self: *const Engine12) u64 {
         return self.active_request_tracker.get();
     }

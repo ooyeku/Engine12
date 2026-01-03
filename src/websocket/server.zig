@@ -254,6 +254,7 @@ pub const Server = struct {
 
         // Set socket options
         try setReuseAddr(listener);
+        try setLinger(listener);
         try setSocketTimeouts(listener, self.config.read_timeout_ms, self.config.write_timeout_ms);
 
         try posix.bind(listener, &address.any, address.getOsSockLen());
@@ -303,9 +304,12 @@ pub const Server = struct {
     }
 
     /// Stop the server
+    /// Note: When used with WebSocketManager, the manager handles socket closure and thread joining.
+    /// This method is provided for standalone server usage.
     pub fn stop(self: *Self) void {
         self.is_running.store(false, .monotonic);
 
+        // Close listener socket to unblock accept() calls immediately
         if (self.listener) |listener| {
             closeSocket(listener);
             self.listener = null;
@@ -572,6 +576,29 @@ fn closeSocket(socket: posix.socket_t) void {
 fn setReuseAddr(socket: posix.socket_t) !void {
     const one: u32 = 1;
     try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(one));
+}
+
+fn setLinger(socket: posix.socket_t) !void {
+    // Set SO_LINGER with linger_time=0 to force immediate port release on close
+    // This prevents TIME_WAIT state from holding the port after shutdown
+    if (builtin.os.tag == .windows) {
+        const linger_opt = std.os.windows.ws2_32.linger{
+            .l_onoff = 1,
+            .l_linger = 0,
+        };
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.LINGER, &std.mem.toBytes(linger_opt));
+    } else {
+        // Define linger struct for POSIX systems
+        const LingerStruct = extern struct {
+            l_onoff: c_int,
+            l_linger: c_int,
+        };
+        const linger_opt = LingerStruct{
+            .l_onoff = 1,
+            .l_linger = 0,
+        };
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.LINGER, &std.mem.toBytes(linger_opt));
+    }
 }
 
 fn setSocketTimeouts(socket: posix.socket_t, read_timeout_ms: u32, write_timeout_ms: u32) !void {
