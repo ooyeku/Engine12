@@ -135,7 +135,7 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
 
     // Checkbox with HTMX toggle
     try buf.appendSlice(allocator, "  <input type=\"checkbox\" class=\"task-checkbox\" ");
-    try buf.appendSlice(allocator, "hx-post=\"/htmx/todos/");
+    try buf.appendSlice(allocator, "hx-post=\"/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "/toggle\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
@@ -205,7 +205,7 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
 
     // Edit button (text only)
     try buf.appendSlice(allocator, "    <button class=\"action-btn\" ");
-    try buf.appendSlice(allocator, "hx-get=\"/htmx/todos/");
+    try buf.appendSlice(allocator, "hx-get=\"/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "/edit\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
@@ -213,7 +213,7 @@ fn renderTodoItem(todo: Todo, buf: *std.ArrayListUnmanaged(u8)) !void {
 
     // Delete button (text only) with confirmation
     try buf.appendSlice(allocator, "    <button class=\"action-btn delete\" ");
-    try buf.appendSlice(allocator, "hx-delete=\"/htmx/todos/");
+    try buf.appendSlice(allocator, "hx-delete=\"/todos/");
     try buf.appendSlice(allocator, id_str);
     try buf.appendSlice(allocator, "\" hx-target=\"#todo-");
     try buf.appendSlice(allocator, id_str);
@@ -298,7 +298,7 @@ pub fn handleListTodos(req: *Request) Response {
 
             // Add infinite scroll trigger if more items exist
             if (end_idx < todos.items.len) {
-                const trigger = htmx.nextPageTrigger(allocator, "/htmx/todos/all", page + 1) catch "";
+                const trigger = htmx.nextPageTrigger(allocator, "/todos/all", page + 1) catch "";
                 buf.appendSlice(allocator, trigger) catch {};
                 allocator.free(trigger);
             }
@@ -612,7 +612,7 @@ pub fn handleEditTodo(req: *Request) Response {
     buf.appendSlice(allocator, id_fmt) catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
 
-    buf.appendSlice(allocator, "  <form class=\"edit-form\" hx-put=\"/htmx/todos/") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "  <form class=\"edit-form\" hx-put=\"/todos/") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, id_fmt) catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "\" hx-target=\"#todo-") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, id_fmt) catch return Response.fragment("<li class=\"error\">Error</li>");
@@ -693,7 +693,7 @@ pub fn handleEditTodo(req: *Request) Response {
 
     // Action buttons
     buf.appendSlice(allocator, "    <div class=\"form-actions\">\n") catch return Response.fragment("<li class=\"error\">Error</li>");
-    buf.appendSlice(allocator, "      <button type=\"button\" class=\"btn btn-cancel\" hx-get=\"/htmx/todos/") catch return Response.fragment("<li class=\"error\">Error</li>");
+    buf.appendSlice(allocator, "      <button type=\"button\" class=\"btn btn-cancel\" hx-get=\"/todos/") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, id_fmt) catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, "/view\" hx-target=\"#todo-") catch return Response.fragment("<li class=\"error\">Error</li>");
     buf.appendSlice(allocator, id_fmt) catch return Response.fragment("<li class=\"error\">Error</li>");

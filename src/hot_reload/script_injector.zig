@@ -31,7 +31,6 @@ const HOT_RELOAD_SCRIPT =
     \\                    ws = new WebSocket(wsUrl);
     \\                    
     \\                    ws.onopen = function() {
-    \\                        console.log('[HotReload] Connected to hot reload server');
     \\                        if (reconnectTimeout) {
     \\                            clearTimeout(reconnectTimeout);
     \\                            reconnectTimeout = null;
@@ -42,26 +41,18 @@ const HOT_RELOAD_SCRIPT =
     \\                        try {
     \\                            const message = JSON.parse(event.data);
     \\                            if (message.type === 'reload') {
-    \\                                console.log('[HotReload] File changed:', message.file);
-    \\                                console.log('[HotReload] Reloading page...');
     \\                                window.location.reload();
     \\                            }
-    \\                        } catch (e) {
-    \\                            console.error('[HotReload] Error parsing message:', e);
-    \\                        }
+    \\                        } catch (e) {}
     \\                    };
     \\                    
-    \\                    ws.onerror = function(error) {
-    \\                        console.error('[HotReload] WebSocket error:', error);
-    \\                    };
+    \\                    ws.onerror = function() {};
     \\                    
     \\                    ws.onclose = function() {
-    \\                        console.log('[HotReload] Connection closed, reconnecting in 2 seconds...');
     \\                        ws = null;
     \\                        reconnectTimeout = setTimeout(connect, 2000);
     \\                    };
     \\                } catch (e) {
-    \\                    console.error('[HotReload] Error connecting:', e);
     \\                    reconnectTimeout = setTimeout(connect, 2000);
     \\                }
     \\            }

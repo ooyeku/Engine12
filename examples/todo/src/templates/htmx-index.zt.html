@@ -31,7 +31,7 @@
                 <div
                     class="header-stats"
                     id="header-stats"
-                    hx-get="/htmx/todos/stats"
+                    hx-get="/todos/stats"
                     hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body, every 30s"
                     hx-swap="innerHTML"
                 >
@@ -74,7 +74,7 @@
                         </div>
                         <form
                             class="form-grid"
-                            hx-post="/htmx/todos"
+                            hx-post="/todos"
                             hx-target="#task-list"
                             hx-swap="afterbegin"
                         >
@@ -119,7 +119,7 @@
                             <span class="card-title">All Tasks</span>
                             <div class="card-actions">
                                 <form
-                                    hx-post="/htmx/todos/toggle-all"
+                                    hx-post="/todos/toggle-all"
                                     hx-swap="none"
                                 >
                                     <input
@@ -137,7 +137,7 @@
                                 <div class="clear-done-wrapper">
                                     <button
                                         class="btn btn-secondary btn-sm"
-                                        hx-post="/htmx/todos/clear-completed"
+                                        hx-post="/todos/clear-completed"
                                         hx-target="#task-list"
                                         hx-swap="innerHTML"
                                         hx-confirm="Clear all completed tasks?"
@@ -147,7 +147,7 @@
                                     </button>
                                     <span
                                         id="completed-count"
-                                        hx-get="/htmx/todos/completed-count"
+                                        hx-get="/todos/completed-count"
                                         hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
                                         hx-swap="innerHTML"
                                     ></span>
@@ -160,7 +160,7 @@
                                 type="search"
                                 name="q"
                                 placeholder="Search tasks..."
-                                hx-get="/htmx/todos/search"
+                                hx-get="/todos/search"
                                 hx-trigger="input changed delay:300ms"
                                 hx-target="#task-list"
                                 hx-swap="innerHTML"
@@ -170,7 +170,7 @@
                         <ul
                             id="task-list"
                             class="task-list"
-                            hx-get="/htmx/todos/all"
+                            hx-get="/todos/all"
                             hx-trigger="load"
                             hx-swap="innerHTML"
                         >
@@ -187,7 +187,7 @@
                     <div
                         class="card progress-card"
                         id="progress-card"
-                        hx-get="/htmx/todos/stats"
+                        hx-get="/todos/stats"
                         hx-trigger="load, todoCreated from:body, todoUpdated from:body, todoDeleted from:body, todosCleared from:body"
                         hx-swap="innerHTML"
                         hx-target="#progress-card"
@@ -224,7 +224,7 @@
                             <div class="filter-group">
                                 <button
                                     class="filter-btn active"
-                                    hx-get="/htmx/todos/filter?priority=all"
+                                    hx-get="/todos/filter?priority=all"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -232,7 +232,7 @@
                                 </button>
                                 <button
                                     class="filter-btn"
-                                    hx-get="/htmx/todos/active"
+                                    hx-get="/todos/active"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -240,7 +240,7 @@
                                 </button>
                                 <button
                                     class="filter-btn"
-                                    hx-get="/htmx/todos/completed"
+                                    hx-get="/todos/completed"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -254,7 +254,7 @@
                             <div class="filter-group">
                                 <button
                                     class="filter-btn"
-                                    hx-get="/htmx/todos/filter?priority=high"
+                                    hx-get="/todos/filter?priority=high"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -262,7 +262,7 @@
                                 </button>
                                 <button
                                     class="filter-btn"
-                                    hx-get="/htmx/todos/filter?priority=medium"
+                                    hx-get="/todos/filter?priority=medium"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -271,7 +271,7 @@
                                 </button>
                                 <button
                                     class="filter-btn"
-                                    hx-get="/htmx/todos/filter?priority=low"
+                                    hx-get="/todos/filter?priority=low"
                                     hx-target="#task-list"
                                     hx-swap="innerHTML"
                                 >
@@ -282,7 +282,7 @@
 
                         <div class="filter-section">
                             <div class="nav-links">
-                                <a href="/htmx/analytics" class="nav-link"
+                                <a href="/analytics" class="nav-link"
                                     >Analytics</a
                                 >
                                 <a href="/docs" class="nav-link" target="_blank"

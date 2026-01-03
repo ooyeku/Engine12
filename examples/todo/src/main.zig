@@ -350,31 +350,31 @@ pub fn createApp() !*E12.Engine12 {
     try app.get("/htmx", handlers.views.handleHtmxIndex);
 
     // HTMX todo handlers
-    try app.get("/htmx/todos", handlers.htmx.handlePageAll);
-    try app.get("/htmx/todos/all", handlers.htmx.handlePageAll);
-    try app.get("/htmx/todos/active", handlers.htmx.handlePageActive);
-    try app.get("/htmx/todos/completed", handlers.htmx.handlePageCompleted);
-    try app.post("/htmx/todos", handlers.htmx.handleCreateTodo);
-    try app.get("/htmx/todos/search", handlers.htmx.handleSearchTodos);
-    try app.post("/htmx/todos/:id/toggle", handlers.htmx.handleToggleTodo);
-    try app.get("/htmx/todos/:id/edit", handlers.htmx.handleEditTodo);
-    try app.get("/htmx/todos/:id/view", handlers.htmx.handleViewTodo);
-    try app.put("/htmx/todos/:id", handlers.htmx.handleUpdateTodo);
-    try app.delete("/htmx/todos/:id", handlers.htmx.handleDeleteTodo);
-    try app.post("/htmx/todos/clear-completed", handlers.htmx.handleClearCompleted);
-    try app.get("/htmx/todos/stats", handlers.htmx.handleGetStats);
+    try app.get("/todos", handlers.htmx.handlePageAll);
+    try app.get("/todos/all", handlers.htmx.handlePageAll);
+    try app.get("/todos/active", handlers.htmx.handlePageActive);
+    try app.get("/todos/completed", handlers.htmx.handlePageCompleted);
+    try app.post("/todos", handlers.htmx.handleCreateTodo);
+    try app.get("/todos/search", handlers.htmx.handleSearchTodos);
+    try app.post("/todos/:id/toggle", handlers.htmx.handleToggleTodo);
+    try app.get("/todos/:id/edit", handlers.htmx.handleEditTodo);
+    try app.get("/todos/:id/view", handlers.htmx.handleViewTodo);
+    try app.put("/todos/:id", handlers.htmx.handleUpdateTodo);
+    try app.delete("/todos/:id", handlers.htmx.handleDeleteTodo);
+    try app.post("/todos/clear-completed", handlers.htmx.handleClearCompleted);
+    try app.get("/todos/stats", handlers.htmx.handleGetStats);
 
     // New interactive HTMX handlers (Tier 4 features)
-    try app.get("/htmx/todos/filter", handlers.htmx.handleFilterByPriority);
-    try app.get("/htmx/todos/completed-count", handlers.htmx.handleCompletedCount);
-    try app.post("/htmx/todos/toggle-all", handlers.htmx.handleToggleAll);
-    try app.post("/htmx/todos/restore", handlers.htmx.handleRestoreTodo);
+    try app.get("/todos/filter", handlers.htmx.handleFilterByPriority);
+    try app.get("/todos/completed-count", handlers.htmx.handleCompletedCount);
+    try app.post("/todos/toggle-all", handlers.htmx.handleToggleAll);
+    try app.post("/todos/restore", handlers.htmx.handleRestoreTodo);
 
     // HTMX analytics page
-    try app.get("/htmx/analytics", handlers.htmx.handleAnalyticsPage);
+    try app.get("/analytics", handlers.htmx.handleAnalyticsPage);
 
     // HTMX utility handlers
-    try app.get("/htmx/dismiss-toast", handlers.htmx.handleDismissToast);
+    try app.get("/dismiss-toast", handlers.htmx.handleDismissToast);
 
     // Enable OpenAPI documentation
     try app.enableOpenApiDocs("/docs", .{
