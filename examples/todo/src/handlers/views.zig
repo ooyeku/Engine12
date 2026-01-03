@@ -44,7 +44,7 @@ pub fn handleHtmxIndex(request: *Request) Response {
         .subtitle = "A simple todo app powered by HTMX and Engine12",
         .app_name = "engine12 todo",
         .version = "1.0.0",
-        .debug_mode = true,
+        .debug_mode = @import("builtin").mode == .Debug,
         .user_name = "  developer  ",
         .notification = "",
     };

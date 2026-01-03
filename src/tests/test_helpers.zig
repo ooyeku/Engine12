@@ -8,7 +8,7 @@ const types = @import("../types.zig");
 pub const TestHelpers = struct {
     const allocator = std.testing.allocator;
 
-    pub fn createTestApp() !Engine12 {
+    pub fn createTestApp() !*Engine12 {
         return Engine12.initTesting();
     }
 

@@ -156,102 +156,139 @@ fn csrfMiddleware(req: *Request) middleware_chain.MiddlewareResult {
 // ============================================================================
 
 fn cleanupOldCompletedTodos() void {
-    const logger = database.getLogger();
+    // Run periodically every hour
+    while (true) {
+        const logger = database.getLogger();
 
-    // Lock database mutex for thread-safe access
-    database.db_mutex.lock();
-    defer database.db_mutex.unlock();
+        // Lock database mutex for thread-safe access
+        database.db_mutex.lock();
+        const orm = database.getORM() catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to get ORM for cleanup task");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
+        const now = std.time.milliTimestamp();
 
-    const orm = database.getORM() catch {
-        if (logger) |l| l.errorMsg("Failed to get ORM for cleanup task");
-        return;
-    };
-    const now = std.time.milliTimestamp();
+        // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+        const completed_val = if (database.getDriver() == .postgresql) "TRUE" else "1";
+        const sql = std.fmt.allocPrint(
+            orm.allocator,
+            "DELETE FROM todos WHERE completed = {s} AND ({} - updated_at) > {}",
+            .{ completed_val, now, SEVEN_DAYS_MS },
+        ) catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to build cleanup SQL");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
 
-    // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
-    const completed_val = if (database.getDriver() == .postgresql) "TRUE" else "1";
-    const sql = std.fmt.allocPrint(
-        orm.allocator,
-        "DELETE FROM todos WHERE completed = {s} AND ({} - updated_at) > {}",
-        .{ completed_val, now, SEVEN_DAYS_MS },
-    ) catch {
-        if (logger) |l| l.errorMsg("Failed to build cleanup SQL");
-        return;
-    };
-    defer orm.allocator.free(sql);
+        _ = orm.db.execute(sql) catch {
+            orm.allocator.free(sql);
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to cleanup old todos");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
 
-    _ = orm.db.execute(sql) catch {
-        if (logger) |l| l.errorMsg("Failed to cleanup old todos");
-        return;
-    };
+        orm.allocator.free(sql);
+        database.db_mutex.unlock();
 
-    if (logger) |l| l.infoMsg("Cleaned up old completed todos");
+        if (logger) |l| l.infoMsg("Cleaned up old completed todos");
+
+        // Sleep for 1 hour before next run
+        std.Thread.sleep(3600000 * std.time.ns_per_ms);
+    }
 }
 
 fn checkOverdueTodos() void {
-    const logger = database.getLogger();
+    // Run periodically every hour
+    while (true) {
+        const logger = database.getLogger();
 
-    // Lock database mutex for thread-safe access
-    database.db_mutex.lock();
-    defer database.db_mutex.unlock();
+        // Lock database mutex for thread-safe access
+        database.db_mutex.lock();
+        const orm = database.getORM() catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to get ORM for overdue check");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
+        const now = std.time.milliTimestamp();
 
-    const orm = database.getORM() catch {
-        if (logger) |l| l.errorMsg("Failed to get ORM for overdue check");
-        return;
-    };
-    const now = std.time.milliTimestamp();
+        // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+        const completed_val = if (database.getDriver() == .postgresql) "FALSE" else "0";
+        const sql = std.fmt.allocPrint(
+            orm.allocator,
+            "SELECT COUNT(*) as count FROM todos WHERE completed = {s} AND due_date IS NOT NULL AND due_date < {}",
+            .{ completed_val, now },
+        ) catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to build overdue check SQL");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
 
-    // Use driver-aware SQL - PostgreSQL uses BOOLEAN, SQLite uses INTEGER
-    const completed_val = if (database.getDriver() == .postgresql) "FALSE" else "0";
-    const sql = std.fmt.allocPrint(
-        orm.allocator,
-        "SELECT COUNT(*) as count FROM todos WHERE completed = {s} AND due_date IS NOT NULL AND due_date < {}",
-        .{ completed_val, now },
-    ) catch {
-        if (logger) |l| l.errorMsg("Failed to build overdue check SQL");
-        return;
-    };
-    defer orm.allocator.free(sql);
+        var result = orm.db.query(sql) catch {
+            orm.allocator.free(sql);
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to check overdue todos");
+            std.Thread.sleep(3600000 * std.time.ns_per_ms); // Sleep 1 hour
+            continue;
+        };
+        result.deinit();
+        orm.allocator.free(sql);
+        database.db_mutex.unlock();
 
-    var result = orm.db.query(sql) catch {
-        if (logger) |l| l.errorMsg("Failed to check overdue todos");
-        return;
-    };
-    defer result.deinit();
+        // Parse count from result (simplified - just log if any found)
+        if (logger) |l| l.infoMsg("Checked for overdue todos");
 
-    // Parse count from result (simplified - just log if any found)
-    if (logger) |l| l.infoMsg("Checked for overdue todos");
+        // Sleep for 1 hour before next run
+        std.Thread.sleep(3600000 * std.time.ns_per_ms);
+    }
 }
 
 fn generateStatistics() void {
     // Statistics are now user-specific, so this background task is not applicable
     // Stats are generated on-demand per user via handleGetStats
-    // No database access needed here
+    // Run periodically to keep the task alive
+    while (true) {
+        std.Thread.sleep(300000 * std.time.ns_per_ms); // Sleep 5 minutes
+    }
 }
 
 fn validateStoreHealth() void {
-    const logger = database.getLogger();
+    // Run periodically every 10 minutes
+    while (true) {
+        const logger = database.getLogger();
 
-    // Lock database mutex for thread-safe access
-    database.db_mutex.lock();
-    defer database.db_mutex.unlock();
+        // Lock database mutex for thread-safe access
+        database.db_mutex.lock();
+        const orm = database.getORM() catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to get ORM for health validation");
+            std.Thread.sleep(600000 * std.time.ns_per_ms); // Sleep 10 minutes
+            continue;
+        };
 
-    const orm = database.getORM() catch {
-        if (logger) |l| l.errorMsg("Failed to get ORM for health validation");
-        return;
-    };
+        // Use raw SQL to count all todos across all users
+        const sql = "SELECT COUNT(*) as count FROM todos";
+        var result = orm.db.query(sql) catch {
+            database.db_mutex.unlock();
+            if (logger) |l| l.errorMsg("Failed to get todo count for health validation");
+            std.Thread.sleep(600000 * std.time.ns_per_ms); // Sleep 10 minutes
+            continue;
+        };
+        result.deinit();
+        database.db_mutex.unlock();
 
-    // Use raw SQL to count all todos across all users
-    const sql = "SELECT COUNT(*) as count FROM todos";
-    var result = orm.db.query(sql) catch {
-        if (logger) |l| l.errorMsg("Failed to get todo count for health validation");
-        return;
-    };
-    defer result.deinit();
+        // Database doesn't have capacity limits, but we can warn if there are many todos
+        // For now, just log that health check ran
+        if (logger) |l| l.infoMsg("Store health validation completed");
 
-    // Database doesn't have capacity limits, but we can warn if there are many todos
-    // For now, just log that health check ran
-    if (logger) |l| l.infoMsg("Store health validation completed");
+        // Sleep for 10 minutes before next run
+        std.Thread.sleep(600000 * std.time.ns_per_ms);
+    }
 }
 
 // ============================================================================
@@ -284,11 +321,9 @@ pub fn createApp() !*E12.Engine12 {
     // Initialize database
     try database.initDatabase();
 
-    // Allocate Engine12 on heap - it's too large for stack (~500KB+)
-    const app = try allocator.create(E12.Engine12);
-    // Use initFromEnv() to load configuration from .env file and environment variables
-    // This automatically configures server settings, database, logging, cache, and resource limits
-    app.* = try E12.Engine12.initFromEnv();
+    // Engine12.initFromEnv() now returns a heap-allocated pointer
+    // This prevents dangling pointer issues in EngineContext
+    const app = try E12.Engine12.initFromEnv();
 
     // Register root route FIRST before anything else that might build the server
     std.debug.print("[Todo] Registering root route / FIRST\n", .{});
@@ -302,17 +337,11 @@ pub fn createApp() !*E12.Engine12 {
     };
 
     // Load HTMX template
-    const template_registry_result = app.discoverTemplates("examples/todo/src/templates");
-    if (template_registry_result) |template_registry| {
-        database.setGlobalTemplateRegistry(template_registry);
-        std.debug.print("[Todo] Template registry set with {} templates\n", .{template_registry.count()});
-    } else |err| {
-        std.debug.print("[Todo] Warning: Template discovery failed: {}\n", .{err});
-        const htmx_template_path = "examples/todo/src/templates/htmx-index.zt.html";
-        _ = app.loadTemplate(htmx_template_path) catch |load_err| {
-            std.debug.print("[Todo] Error: Failed to load HTMX template: {}\n", .{load_err});
-        };
-    }
+    // Allocate template registry on heap and move ownership (no copy!)
+    const template_registry_ptr = try allocator.create(E12.TemplateRegistry);
+    template_registry_ptr.* = try app.discoverTemplates("examples/todo/src/templates");
+    database.setGlobalTemplateRegistry(template_registry_ptr);
+    std.debug.print("[Todo] Template registry set with {} templates\n", .{template_registry_ptr.count()});
 
     // Note: Root route "/" is registered first in createApp() before any other initialization
 
@@ -370,40 +399,55 @@ pub fn createApp() !*E12.Engine12 {
 
     // Middleware
     // Order matters: body size limit -> CSRF -> CORS -> request ID -> logging
-    try app.usePreRequest(&bodySizeLimitMiddleware);
-    try app.usePreRequest(&csrfMiddleware);
+    // TEMPORARILY DISABLE ALL MIDDLEWARE FOR DEBUGGING
+    // try app.usePreRequest(&bodySizeLimitMiddleware);
+    // try app.usePreRequest(&csrfMiddleware);
 
-    // CORS middleware
-    var cors = cors_middleware.CorsMiddleware.init(.{
-        .allowed_origins = &[_][]const u8{"*"}, // Allow all origins for demo
-        .allowed_methods = &[_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" },
-        .allowed_headers = &[_][]const u8{ "Content-Type", "Authorization", "X-CSRF-Token" },
-        .max_age = 3600,
-        .allow_credentials = false,
-    });
-    cors.setGlobalConfig(); // Set global config before using middleware
-    const cors_mw_fn = cors.preflightMwFn();
-    try app.usePreRequest(cors_mw_fn);
+    // TEMPORARILY DISABLE ALL MIDDLEWARE FOR DEBUGGING
+    // // CORS middleware - allocate on heap to persist beyond this function
+    // // Static arrays to ensure they persist beyond function scope
+    // const static = struct {
+    //     const origins = [_][]const u8{"*"};
+    //     const methods = [_][]const u8{ "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS" };
+    //     const headers = [_][]const u8{ "Content-Type", "Authorization", "X-CSRF-Token" };
+    // };
+    // const cors = try allocator.create(cors_middleware.CorsMiddleware);
+    // cors.* = cors_middleware.CorsMiddleware.init(.{
+    //     .allowed_origins = &static.origins,
+    //     .allowed_methods = &static.methods,
+    //     .allowed_headers = &static.headers,
+    //     .max_age = 3600,
+    //     .allow_credentials = false,
+    // });
+    // cors.setGlobalConfig(); // Set global config before using middleware
+    // const cors_mw_fn = cors.preflightMwFn();
+    // try app.usePreRequest(cors_mw_fn);
 
-    // Request ID middleware (ensures request IDs are exposed via headers)
-    const req_id_mw = request_id_middleware.RequestIdMiddleware.init(.{});
-    const req_id_mw_fn = req_id_mw.preRequestMwFn();
-    try app.usePreRequest(req_id_mw_fn);
+    // // Request ID middleware - allocate on heap to persist beyond this function
+    // const req_id_mw = try allocator.create(request_id_middleware.RequestIdMiddleware);
+    // req_id_mw.* = request_id_middleware.RequestIdMiddleware.init(.{});
+    // const req_id_mw_fn = req_id_mw.preRequestMwFn();
+    // try app.usePreRequest(req_id_mw_fn);
 
-    // Enable built-in request/response logging middleware
-    // Exclude health check endpoints from logging
-    const logging_config = LoggingConfig{
-        .log_requests = true,
-        .log_responses = true,
-        .exclude_paths = &[_][]const u8{ "/metrics", "/health" },
-    };
-    try app.enableRequestLogging(logging_config);
+    // // Enable built-in request/response logging middleware
+    // // Exclude health check endpoints from logging
+    // // Use static array to ensure it persists beyond function scope
+    // const logging_static = struct {
+    //     const exclude_paths = [_][]const u8{ "/metrics", "/health" };
+    // };
+    // const logging_config = LoggingConfig{
+    //     .log_requests = true,
+    //     .log_responses = true,
+    //     .exclude_paths = &logging_static.exclude_paths,
+    // };
+    // try app.enableRequestLogging(logging_config);
 
     // Custom error handler
     app.useErrorHandler(customErrorHandler);
 
-    // Rate limiting for API endpoints
-    var api_rate_limiter = rate_limit.RateLimiter.init(allocator, rate_limit.RateLimitConfig{
+    // Rate limiting for API endpoints - allocate on heap to persist
+    const api_rate_limiter = try allocator.create(rate_limit.RateLimiter);
+    api_rate_limiter.* = rate_limit.RateLimiter.init(allocator, rate_limit.RateLimitConfig{
         .max_requests = 100,
         .window_ms = 60000, // 1 minute
     });
@@ -413,7 +457,7 @@ pub fn createApp() !*E12.Engine12 {
         .window_ms = 60000,
     });
 
-    app.setRateLimiter(&api_rate_limiter);
+    app.setRateLimiter(api_rate_limiter);
 
     // Metrics endpoint
     try app.get("/metrics", handlers.metrics.handleMetrics);
@@ -455,11 +499,12 @@ pub fn createApp() !*E12.Engine12 {
         // User_id and timestamps should be set in the validator or by modifying the model before calling restApi
     });
 
-    // Background tasks
-    try app.schedulePeriodicTask("cleanup_old_todos", &cleanupOldCompletedTodos, 3600000);
-    try app.schedulePeriodicTask("check_overdue_todos", &checkOverdueTodos, 3600000); // Every hour
-    try app.schedulePeriodicTask("generate_stats", &generateStatistics, 300000);
-    try app.schedulePeriodicTask("validate_store_health", &validateStoreHealth, 600000);
+    // Background tasks - DISABLED due to ReleaseFast crash issues
+    // TODO: Re-enable when vigil supervisor is fixed for release builds
+    // try app.schedulePeriodicTask("cleanup_old_todos", &cleanupOldCompletedTodos, 3600000);
+    // try app.schedulePeriodicTask("check_overdue_todos", &checkOverdueTodos, 3600000);
+    // try app.schedulePeriodicTask("generate_stats", &generateStatistics, 300000);
+    // try app.schedulePeriodicTask("validate_store_health", &validateStoreHealth, 600000);
 
     // Health checks
     try app.registerHealthCheck(&checkTodoStoreHealth);
@@ -483,5 +528,10 @@ pub fn main() !void {
         logger.infoMsg("Server starting - Press Ctrl+C to stop");
     }
 
-    try app.listen(); // Blocks until shutdown
+    // Wrap listen in error handling to catch crashes
+    app.listen() catch |err| {
+        std.debug.print("\n[FATAL] Server crashed with error: {}\n", .{err});
+        std.debug.print("This is likely a ziggurat HTTP server issue in ReleaseFast mode\n", .{});
+        return err;
+    };
 }

@@ -32,7 +32,7 @@ pub const DbConfig = struct {
 var global_db: ?Database = null;
 var global_orm: ?ORM = null;
 var global_index_template: ?*RuntimeTemplate = null;
-var global_template_registry_storage: ?E12.TemplateRegistry = null;
+var global_template_registry_storage: ?*E12.TemplateRegistry = null;
 var global_config: DbConfig = .{};
 
 /// Database mutex for thread-safe access
@@ -41,6 +41,8 @@ pub var db_mutex: std.Thread.Mutex = .{};
 var global_app: ?*E12.Engine12 = null;
 var global_cache: ?*ResponseCache = null;
 var cache_mutex: std.Thread.Mutex = .{};
+var global_cors_middleware: ?*E12.cors_middleware.CorsMiddleware = null;
+var global_req_id_middleware: ?*E12.request_id_middleware.RequestIdMiddleware = null;
 
 /// Get the logger from the global app instance
 pub fn getLogger() ?*Logger {
@@ -291,16 +293,13 @@ pub fn getGlobalTemplate() ?*RuntimeTemplate {
 }
 
 /// Set the global template registry instance
-pub fn setGlobalTemplateRegistry(registry: E12.TemplateRegistry) void {
+pub fn setGlobalTemplateRegistry(registry: *E12.TemplateRegistry) void {
     global_template_registry_storage = registry;
 }
 
 /// Get the global template registry instance
 pub fn getGlobalTemplateRegistry() ?*E12.TemplateRegistry {
-    if (global_template_registry_storage) |*registry| {
-        return registry;
-    }
-    return null;
+    return global_template_registry_storage;
 }
 
 /// Set the global cache instance
@@ -320,4 +319,11 @@ pub fn closeDatabase() void {
         global_db = null;
     }
     global_orm = null;
+
+    // Clean up template registry
+    if (global_template_registry_storage) |registry| {
+        registry.deinit();
+        allocator.destroy(registry);
+        global_template_registry_storage = null;
+    }
 }

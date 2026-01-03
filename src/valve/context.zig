@@ -201,7 +201,7 @@ test "ValveContext hasCapability" {
     try capabilities.append(std.testing.allocator, .middleware);
 
     var ctx = ValveContext{
-        .app = &app,
+        .app = app,
         .allocator = std.testing.allocator,
         .capabilities = capabilities,
         .valve_name = "test",
@@ -220,7 +220,7 @@ test "ValveContext registerRoute requires capability" {
     defer capabilities.deinit(std.testing.allocator);
 
     var ctx = ValveContext{
-        .app = &app,
+        .app = app,
         .allocator = std.testing.allocator,
         .capabilities = capabilities,
         .valve_name = "test",
@@ -243,7 +243,7 @@ test "ValveContext registerMiddleware requires capability" {
     defer capabilities.deinit(std.testing.allocator);
 
     var ctx = ValveContext{
-        .app = &app,
+        .app = app,
         .allocator = std.testing.allocator,
         .capabilities = capabilities,
         .valve_name = "test",
@@ -266,7 +266,7 @@ test "ValveContext registerTask requires capability" {
     defer capabilities.deinit(std.testing.allocator);
 
     var ctx = ValveContext{
-        .app = &app,
+        .app = app,
         .allocator = std.testing.allocator,
         .capabilities = capabilities,
         .valve_name = "test",
@@ -287,7 +287,7 @@ test "ValveContext getCache requires capability" {
     defer capabilities.deinit(std.testing.allocator);
 
     var ctx = ValveContext{
-        .app = &app,
+        .app = app,
         .allocator = std.testing.allocator,
         .capabilities = capabilities,
         .valve_name = "test",

@@ -366,7 +366,7 @@ test "ValveRegistry register and unregister" {
         },
     };
 
-    try registry.register(&test_valve.valve, &app);
+    try registry.register(&test_valve.valve, app);
     try std.testing.expect(test_valve.init_called);
     try std.testing.expectEqual(registry.valves.items.len, 1);
 
@@ -403,8 +403,8 @@ test "ValveRegistry duplicate registration fails" {
         },
     };
 
-    try registry.register(&test_valve.valve, &app);
-    try std.testing.expectError(valve.ValveError.ValveAlreadyRegistered, registry.register(&test_valve.valve, &app));
+    try registry.register(&test_valve.valve, app);
+    try std.testing.expectError(valve.ValveError.ValveAlreadyRegistered, registry.register(&test_valve.valve, app));
 }
 
 test "ValveRegistry getContext" {
@@ -435,7 +435,7 @@ test "ValveRegistry getContext" {
         },
     };
 
-    try registry.register(&test_valve.valve, &app);
+    try registry.register(&test_valve.valve, app);
 
     const ctx = registry.getContext("test");
     try std.testing.expect(ctx != null);
@@ -477,7 +477,7 @@ test "ValveRegistry structured error info" {
         },
     };
 
-    registry.register(&failing_valve.valve, &app) catch |err| {
+    registry.register(&failing_valve.valve, app) catch |err| {
         try std.testing.expectEqual(err, error.TestError);
     };
 
@@ -523,7 +523,7 @@ test "ValveRegistry thread-safe queries" {
         },
     };
 
-    try registry.register(&test_valve.valve, &app);
+    try registry.register(&test_valve.valve, app);
 
     const ctx1 = registry.getContext("test");
     const ctx2 = registry.getContext("test");
@@ -593,8 +593,8 @@ test "ValveRegistry getFailedValves" {
         },
     };
 
-    try registry.register(&success_valve.valve, &app);
-    registry.register(&failing_valve.valve, &app) catch {};
+    try registry.register(&success_valve.valve, app);
+    registry.register(&failing_valve.valve, app) catch {};
 
     const failed = try registry.getFailedValves(std.testing.allocator);
     defer std.testing.allocator.free(failed);
