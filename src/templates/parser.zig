@@ -17,6 +17,7 @@ pub const Parser = struct {
     const MAX_FILTER_ARGS = 4;
 
     pub fn parseComptime(comptime template: []const u8) ast.TemplateAST {
+        @setEvalBranchQuota(1000000);
         comptime {
             var nodes: [MAX_NODES]ast.TemplateAST.Node = undefined;
             var node_count: usize = 0;

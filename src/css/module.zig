@@ -192,6 +192,46 @@ pub fn deg(value: f32) Angle {
     return .{ .deg = value };
 }
 
+/// Convenience function for uniform gap (same gap for rows and columns)
+pub fn gap(length: Length) Gap {
+    return .{ .single = length };
+}
+
+/// Convenience function for separate row and column gaps
+pub fn gapRowColumn(row: Length, column: Length) Gap {
+    return .{ .both = .{ .row = row, .column = column } };
+}
+
+/// Convenience function for uniform scale transform
+pub fn scale(value: f32) Transform {
+    return .{ .scale = .{ .x = value, .y = value } };
+}
+
+/// Convenience function for non-uniform scale transform
+pub fn scaleXY(x: f32, y: f32) Transform {
+    return .{ .scale = .{ .x = x, .y = y } };
+}
+
+/// Convenience function for translate transform
+pub fn translate(x: Length, y: Length) Transform {
+    return .{ .translate = .{ .x = x, .y = y } };
+}
+
+/// Convenience function for translateX transform
+pub fn translateX(x: Length) Transform {
+    return .{ .translateX = x };
+}
+
+/// Convenience function for translateY transform
+pub fn translateY(y: Length) Transform {
+    return .{ .translateY = y };
+}
+
+/// Convenience function for rotate transform
+pub fn rotate(angle: Angle) Transform {
+    return .{ .rotate = angle };
+}
+
 /// Create a simple stylesheet with a single rule
 pub fn createStylesheet(allocator: std.mem.Allocator) Stylesheet {
     return Stylesheet.init(allocator);
