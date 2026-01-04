@@ -13,9 +13,7 @@ pub const Template = struct {
     }
 
     pub fn compile(comptime template_str: []const u8) type {
-        const parsed_ast = comptime Parser.parse(template_str) catch |err| {
-            @compileError("Template parse error: " ++ @errorName(err));
-        };
+        const parsed_ast = comptime Parser.parseComptime(template_str);
 
         return struct {
             const template_ast = parsed_ast;
